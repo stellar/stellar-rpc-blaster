@@ -1,0 +1,104 @@
+package engine
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sync"
+	"time"
+
+	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/metrics"
+	vegeta "github.com/tsenart/vegeta/v12/lib"
+)
+
+type endpointBlast struct {
+	EndpointBlastConfig
+	BlasterConfig
+}
+
+var supported = map[string]string{
+	"getHealth":       "getHealth",
+	"getNetwork":      "getNetwork",
+	"getVersionInfo":  "getVersionInfo",
+	"getLatestLedger": "getLatestLedger",
+}
+
+func RunVegeta(ctx context.Context, cfg RunEngine, out chan<- blasterMetrics.Sample) error {
+	// Build shared HTTP client
+	httpClient := NewHTTPClient(
+		BlasterOptions{
+			Timeout:   30 * time.Second,
+			KeepAlive: true,
+			// TODO: more HTTP client options? if needed, haven't looked into this yet
+		})
+	blasterBuilder := func() *vegeta.Attacker {
+		return NewBlaster(httpClient)
+	}
+
+	// Construct endpoint blast configs
+	// 3... 2... 1...
+	var endpointBlasts []endpointBlast
+	for endpointKey, endpointCfg := range cfg.GetEndpoints() {
+		method, ok := supported[endpointKey]
+		if !ok {
+			return fmt.Errorf("unsupported endpoint key: %s", endpointKey)
+		}
+
+		rps := endpointCfg.GetRPS()
+		numClients := endpointCfg.GetNumClients()
+		if numClients <= 0 {
+			numClients = 1
+		}
+
+		// Form request and Vegeta targeter from that
+		request := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  method,
+			"params":  map[string]any{}, // optional -- to be used when we do PR 573/data-dependent endpoints
+		}
+		body, _ := json.Marshal(request)
+		targeter := NewJSONRPCTargeter(cfg.GetRPCUrl(), body)
+
+		endpointBlasts = append(endpointBlasts, endpointBlast{
+			EndpointBlastConfig: EndpointBlastConfig{
+				EndpointKey: endpointKey,
+				Method:      method,
+				RPS:         rps,
+				NumClients:  numClients,
+				Targeter:    targeter,
+			},
+			BlasterConfig: BlasterConfig{
+				Duration: cfg.GetDuration(),
+				Ramp: Ramp{
+					RampUp: cfg.GetRampUp(),
+					Step:   time.Second,
+					MaxRPS: rps,
+				},
+			},
+		})
+	}
+
+	// Fire!
+	var wg sync.WaitGroup
+	errCh := make(chan error, len(endpointBlasts))
+	for _, blast := range endpointBlasts {
+		wg.Add(1)
+		go func(eb endpointBlast) {
+			defer wg.Done()
+			if err := runEndpointBlast(ctx, eb.EndpointBlastConfig, eb.BlasterConfig, blasterBuilder, out); err != nil {
+				errCh <- fmt.Errorf("endpoint %s: %w", eb.EndpointKey, err)
+			}
+		}(blast)
+	}
+	wg.Wait()
+	close(errCh)
+
+	// Collect errors
+	select {
+	case err := <-errCh:
+		return err
+	default:
+		return nil
+	}
+}
