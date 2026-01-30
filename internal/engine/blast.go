@@ -22,7 +22,8 @@ type BlasterConfig struct {
 	Ramp     Ramp
 }
 
-func runEndpointBlast(
+// blastAtEndpoint runs the load test for a specific endpoint with multiple concurrent clients
+func blastAtEndpoint(
 	ctx context.Context,
 	endpointCfg EndpointBlastConfig,
 	blastCfg BlasterConfig,
@@ -35,9 +36,10 @@ func runEndpointBlast(
 	for id := range endpointCfg.NumClients {
 		blaster := newBlaster()
 
+		// Launch async client goroutine
 		go func() {
 			defer wg.Done()
-			runClient(ctx, endpointCfg, blastCfg, id, blaster, out)
+			runEndpointBlaster(ctx, endpointCfg, blastCfg, id, blaster, out)
 		}()
 	}
 
@@ -55,7 +57,8 @@ func runEndpointBlast(
 	}
 }
 
-func runClient(
+// Single-client function to run the blast at one given endpoint
+func runEndpointBlaster(
 	ctx context.Context,
 	endpointCfg EndpointBlastConfig,
 	blastCfg BlasterConfig,
@@ -63,7 +66,7 @@ func runClient(
 	blaster *vegeta.Attacker,
 	out chan<- blasterMetrics.Sample,
 ) {
-	step := blastCfg.Ramp.step()
+	step := blastCfg.Ramp.stepDuration()
 
 	// Check remaining time
 	sRemaining := blastCfg.Duration
@@ -71,7 +74,7 @@ func runClient(
 		return
 	}
 
-	// Ramping up state
+	// Ramping up period
 	if blastCfg.Ramp.RampUp > 0 {
 		endDuration := min(blastCfg.Ramp.RampUp, sRemaining)
 		for elapsed := time.Duration(0); elapsed < endDuration; {
@@ -88,6 +91,7 @@ func runClient(
 				results := blaster.Attack(endpointCfg.Targeter, rate, phaseStep, endpointCfg.EndpointKey)
 				flushResults(ctx, clientID, endpointCfg, results, out)
 			} else {
+				// defensive, but force sleep/cancellation if RPS is 0
 				sleepCancel(ctx, phaseStep)
 			}
 			elapsed += phaseStep
@@ -95,7 +99,7 @@ func runClient(
 		sRemaining -= endDuration
 	}
 
-	// Steady state
+	// Steady state of full RPS period
 	if sRemaining > 0 {
 		rate := vegeta.Rate{Freq: blastCfg.Ramp.MaxRPS, Per: time.Second}
 		results := blaster.Attack(endpointCfg.Targeter, rate, sRemaining, endpointCfg.EndpointKey)
@@ -103,6 +107,7 @@ func runClient(
 	}
 }
 
+// Reads results from a Vegeta results channel and forwards them to the output channel as a blasterMetrics.Sample
 func flushResults(
 	ctx context.Context,
 	clientId int,

@@ -23,6 +23,9 @@ var supported = map[string]string{
 	"getLatestLedger": "getLatestLedger",
 }
 
+// Entry/exit point from app.go
+// RunVegeta runs a load test using Vegeta using the config settings through the RunEngine interface
+// Sets up shared HTTP client, constructs per-endpoint blast configs, and fires off the blasts asynchronously
 func RunVegeta(ctx context.Context, cfg RunEngine, out chan<- blasterMetrics.Sample) error {
 	// Build shared HTTP client
 	httpClient := NewHTTPClient(
@@ -86,7 +89,7 @@ func RunVegeta(ctx context.Context, cfg RunEngine, out chan<- blasterMetrics.Sam
 		wg.Add(1)
 		go func(eb endpointBlast) {
 			defer wg.Done()
-			if err := runEndpointBlast(ctx, eb.EndpointBlastConfig, eb.BlasterConfig, blasterBuilder, out); err != nil {
+			if err := blastAtEndpoint(ctx, eb.EndpointBlastConfig, eb.BlasterConfig, blasterBuilder, out); err != nil {
 				errCh <- fmt.Errorf("endpoint %s: %w", eb.EndpointKey, err)
 			}
 		}(blast)

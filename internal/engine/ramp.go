@@ -5,13 +5,15 @@ import (
 	"time"
 )
 
+// Vegeta doesn't have any real bre-built ramping support, so we implement
+// a discrete ramping mechanism here
 type Ramp struct {
 	RampUp time.Duration // seconds for RPS to reach max RPS
-	Step   time.Duration
-	MaxRPS int // maximum requests per second
+	Step   time.Duration // discrete time tick before ratching next RPS
+	MaxRPS int           // maximum requests per second (target given in config toml)
 }
 
-func (r Ramp) step() time.Duration {
+func (r Ramp) stepDuration() time.Duration {
 	if r.Step <= 0 {
 		return time.Second
 	}

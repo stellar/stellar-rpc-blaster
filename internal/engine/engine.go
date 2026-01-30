@@ -4,7 +4,7 @@ import (
 	"time"
 )
 
-// RunEngine provides the configuration needed to run a load test
+// RunEngine provides the config getters needed to run a load test
 type RunEngine interface {
 	GetRPCUrl() string
 	GetDuration() time.Duration
@@ -12,7 +12,7 @@ type RunEngine interface {
 	GetEndpoints() map[string]EndpointEngine
 }
 
-// EndpointEngine provides per-endpoint configuration
+// EndpointEngine provides per-endpoint config getters
 type EndpointEngine interface {
 	GetRPS() int
 	GetNumClients() int

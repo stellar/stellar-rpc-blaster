@@ -16,14 +16,13 @@ var blasterCmdRunner = func(blasterSettings blaster.RuntimeSettings) error {
 	return blasterInstance.Run(blasterSettings)
 }
 
-// globalCfg, globalFlags = blaster.Flags() // config state shared across blaster runs
-
 func Execute() error {
-	rootCmd := MakeCommands()
+	rootCmd := makeCommands()
 	return rootCmd.Execute()
 }
 
-func MakeCommands() *cobra.Command {
+// Sets up the (inert) root command and subcommands 'run' and 'generate' with their respective flags
+func makeCommands() *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:           "stellar-blaster",
 		Short:         "CLI load testing tool for Stellar RPC",
@@ -93,6 +92,8 @@ func MakeCommands() *cobra.Command {
 	return rootCmd
 }
 
+// Binds CLI parameters for the 'run' command into RuntimeSettings
+// checks both flags and environment variables
 func bindRunCliParameters(
 	cfgPath *pflag.Flag,
 	networkPassphrase *pflag.Flag,
@@ -125,6 +126,8 @@ func bindRunCliParameters(
 	return settings
 }
 
+// Binds CLI parameters for the 'generate' command into RuntimeSettings
+// checks both flags and environment variables
 func bindGenerateCliParameters(
 	rpcUrl *pflag.Flag,
 	networkPassphrase *pflag.Flag,
