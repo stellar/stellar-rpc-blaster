@@ -1,0 +1,20 @@
+# stellar-blaster configuration example
+# Each endpoint can be configured with:
+#   rps         - requests per second
+#   num_clients - number of concurrent clients performing rps
+
+[endpoints.getHealth]
+rps = 10
+num_clients = 2
+
+[endpoints.getNetwork]
+rps = 5
+num_clients = 1
+
+[endpoints.getVersionInfo]
+rps = 5
+num_clients = 1
+
+[endpoints.getLatestLedger]
+rps = 20
+num_clients = 4
