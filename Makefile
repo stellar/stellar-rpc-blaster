@@ -6,10 +6,12 @@ BIN := $(BINARY_NAME)
 
 .PHONY: all build run test lint fmt tidy clean
 
-all: build
+all: build-rpc-blaster
 
-build:
-	go build -o $(BIN) $(CMD_PKG)
+build: build-rpc-blaster
+
+build-rpc-blaster:
+	make clean && go build -o $(BIN) $(CMD_PKG)
 
 run: build
 	$(BIN) $(ARGS)

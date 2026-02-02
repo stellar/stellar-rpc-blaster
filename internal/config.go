@@ -7,7 +7,6 @@ import (
 
 	"github.com/pelletier/go-toml"
 	"github.com/pkg/errors"
-	"github.com/stellar/stellar-rpc-blaster/internal/engine"
 )
 
 const (
@@ -139,19 +138,18 @@ func (c *Config) GetRampUp() time.Duration {
 	return c.RampUp
 }
 
-func (c *Config) GetEndpoints() map[string]engine.EndpointEngine {
-	result := make(map[string]engine.EndpointEngine)
-	for k, v := range c.Endpoints {
-		result[k] = v
+func (c *Config) GetEndpoints() []string {
+	result := make([]string, 0, len(c.Endpoints))
+	for k := range c.Endpoints {
+		result = append(result, k)
 	}
 	return result
 }
 
-// Implement engine.EndpointEngine interface
-func (e EndpointConfig) GetRPS() int {
-	return e.RPS
+func (c *Config) GetEndpoint(key string) (rps int, numClients int) {
+	if ep, ok := c.Endpoints[key]; ok {
+		return ep.RPS, ep.NumClients
+	}
+	return 0, 0
 }
 
-func (e EndpointConfig) GetNumClients() int {
-	return e.NumClients
-}

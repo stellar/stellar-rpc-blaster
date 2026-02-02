@@ -41,14 +41,13 @@ func RunVegeta(ctx context.Context, cfg RunEngine, out chan<- blasterMetrics.Sam
 	// Construct endpoint blast configs
 	// 3... 2... 1...
 	var endpointBlasts []endpointBlast
-	for endpointKey, endpointCfg := range cfg.GetEndpoints() {
+	for _, endpointKey := range cfg.GetEndpoints() {
 		method, ok := supported[endpointKey]
 		if !ok {
 			return fmt.Errorf("unsupported endpoint key: %s", endpointKey)
 		}
 
-		rps := endpointCfg.GetRPS()
-		numClients := endpointCfg.GetNumClients()
+		rps, numClients := cfg.GetEndpoint(endpointKey)
 		if numClients <= 0 {
 			numClients = 1
 		}
@@ -87,12 +86,14 @@ func RunVegeta(ctx context.Context, cfg RunEngine, out chan<- blasterMetrics.Sam
 	errCh := make(chan error, len(endpointBlasts))
 	for _, blast := range endpointBlasts {
 		wg.Add(1)
+		// if serialization through flags: wg2 goes here
 		go func(eb endpointBlast) {
 			defer wg.Done()
 			if err := blastAtEndpoint(ctx, eb.EndpointBlastConfig, eb.BlasterConfig, blasterBuilder, out); err != nil {
 				errCh <- fmt.Errorf("endpoint %s: %w", eb.EndpointKey, err)
 			}
 		}(blast)
+		// end wg2
 	}
 	wg.Wait()
 	close(errCh)

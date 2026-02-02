@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/pkg/errors"
@@ -20,7 +21,8 @@ const (
 var logger = log.New().WithField("service", nameSpace)
 
 type App struct {
-	config *Config
+	config     *Config
+	aggregator *blasterMetrics.Aggregator
 }
 
 func NewApp() *App {
@@ -74,16 +76,25 @@ func (a *App) close() {
 
 func (a *App) runLoadTest(ctx context.Context) error {
 	out := make(chan blasterMetrics.Sample, 1000)
-	defer close(out)
 
-	// Collect samples (TODO: export to file + modify to log every 5s)
+	endpointToNumClients := make(map[string]int)
+	for endpoint, cfg := range a.config.Endpoints {
+		endpointToNumClients[endpoint] = cfg.NumClients
+	}
+	a.aggregator = blasterMetrics.NewAggregator(logger, a.config.Duration, endpointToNumClients)
+
+	// Aggregator goroutine: consumes samples and prints every 5s
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
-		for sample := range out {
-			logger.Debugf("[%s] latency=%v code=%d ok=%v err=%s",
-				sample.Endpoint, sample.Latency, sample.Code, sample.OK, sample.Err)
-		}
+		defer wg.Done()
+		a.aggregator.Run(ctx, out)
 	}()
 
 	err := engine.RunVegeta(ctx, a.config, out)
+	close(out)
+	wg.Wait()
+
+	a.aggregator.PrintFinal()
 	return err
 }

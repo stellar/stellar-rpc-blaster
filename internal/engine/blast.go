@@ -124,16 +124,17 @@ func flushResults(
 				return
 			}
 			out <- blasterMetrics.Sample{
-				ClientID: clientId,
-				Endpoint: endpointCfg.EndpointKey,
-				Method:   endpointCfg.Method,
-				TS:       result.Timestamp,
-				Latency:  result.Latency,
-				Code:     result.Code,
-				BytesIn:  result.BytesIn,
-				BytesOut: result.BytesOut,
-				Err:      result.Error,
-				OK:       result.Error == "" && result.Code >= 200 && result.Code < 300,
+				ClientId:   clientId,
+				Endpoint:   endpointCfg.EndpointKey,
+				Method:     endpointCfg.Method,
+				CurrentRPS: endpointCfg.RPS,
+				Timestamp:  result.Timestamp,
+				Latency:    result.Latency,
+				Code:       result.Code,
+				BytesIn:    result.BytesIn,
+				BytesOut:   result.BytesOut,
+				Err:        result.Error,
+				OK:         result.Error == "" && result.Code >= 200 && result.Code < 300,
 			}
 		}
 	}
