@@ -8,7 +8,7 @@ rps = 10
 num_clients = 2
 
 [endpoints.getNetwork]
-rps = 5
+rps = 200
 num_clients = 1
 
 [endpoints.getVersionInfo]

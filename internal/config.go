@@ -137,7 +137,7 @@ func (c *Config) validateEndpointConfig() error {
 	return nil
 }
 
-// Implement engine.RunEngine interface
+// Implement config.LoadTestSettings interface
 func (c *Config) GetRpcUrl() string {
 	return c.RPCUrl
 }
@@ -163,4 +163,12 @@ func (c *Config) GetEndpoint(key string) (rps int, numClients int) {
 		return ep.RPS, ep.NumClients
 	}
 	return 0, 0
+}
+
+func (cfg *Config) GetTotalNumClients() int {
+	total := 0
+	for _, endpointData := range cfg.Endpoints {
+		total += endpointData.NumClients
+	}
+	return total
 }

@@ -7,9 +7,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
+	vegeta "github.com/tsenart/vegeta/v12/lib"
+
 	types "github.com/stellar/stellar-rpc-blaster/internal/config"
 	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/metrics"
-	vegeta "github.com/tsenart/vegeta/v12/lib"
 )
 
 type endpointBlast struct {
@@ -21,11 +23,16 @@ type endpointBlast struct {
 // RunVegeta runs a load test using Vegeta using the config settings through the LoadTestSettings interface
 // Sets up shared HTTP client, constructs per-endpoint blast configs, and fires off the blasts asynchronously
 func RunVegeta(ctx context.Context, cfg types.LoadTestSettings, out chan<- blasterMetrics.Sample) error {
+	// have duration + grace period for in-flight requests as timeout to avoid hanging
+	ctx, cancel := context.WithTimeout(ctx, cfg.GetDuration()+5*time.Second)
+	defer cancel()
+
 	// Build shared HTTP client
 	httpClient := NewHTTPClient(
 		BlasterOptions{
-			Timeout:   30 * time.Second,
-			KeepAlive: true,
+			Timeout:         15 * time.Second,
+			KeepAlive:       true,
+			MaxConnsPerHost: cfg.GetTotalNumClients(),
 			// TODO: more HTTP client options? if needed, haven't looked into this yet
 		})
 	blasterBuilder := func() *vegeta.Attacker {
@@ -48,7 +55,10 @@ func RunVegeta(ctx context.Context, cfg types.LoadTestSettings, out chan<- blast
 			"method":  endpointKey,
 			"params":  map[string]any{}, // optional -- to be used when we do PR 573/data-dependent endpoints
 		}
-		body, _ := json.Marshal(request)
+		body, err := json.Marshal(request)
+		if err != nil {
+			return errors.Wrap(err, "error marshalling JSON request")
+		}
 		targeter := NewJSONRPCTargeter(cfg.GetRpcUrl(), body)
 
 		endpointBlasts = append(endpointBlasts, endpointBlast{

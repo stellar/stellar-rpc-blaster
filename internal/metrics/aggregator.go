@@ -4,13 +4,16 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/HdrHistogram/hdrhistogram-go"
+	"github.com/pkg/errors"
+
 	types "github.com/stellar/stellar-rpc-blaster/internal/config"
 
-	"github.com/HdrHistogram/hdrhistogram-go"
 	"github.com/stellar/go-stellar-sdk/support/log"
 )
 
@@ -31,6 +34,7 @@ type EndpointStats struct {
 	clients     []ClientStats
 	success     uint64
 	errors      uint64
+	errorTypes  map[string]ErrorResult
 	percentiles map[float64]time.Duration
 	currentRPS  int
 }
@@ -40,6 +44,7 @@ type ClientStats struct {
 	histogram   *hdrhistogram.Histogram
 	success     uint64
 	errors      uint64
+	errorTypes  map[string]ErrorResult
 	percentiles map[float64]time.Duration
 }
 
@@ -50,7 +55,7 @@ func NewAggregator(logger *log.Entry, settings types.LoadTestSettings) *Aggregat
 		start:    time.Now(),
 		duration: settings.GetDuration(),
 	}
-	endpoints := settings.GetEndpoints() // maps.Keys(a.stats))
+	endpoints := settings.GetEndpoints()
 	sort.Strings(endpoints)
 	a.orderedEndpoints = endpoints // maintain order for consistent output
 
@@ -67,10 +72,12 @@ func newEndpointStats(numClients int) *EndpointStats {
 		clients[i] = ClientStats{
 			histogram:   hdrhistogram.New(1, 60000000, 3),
 			percentiles: make(map[float64]time.Duration),
+			errorTypes:  make(map[string]ErrorResult),
 		}
 	}
 	return &EndpointStats{
-		clients: clients,
+		clients:    clients,
+		errorTypes: make(map[string]ErrorResult),
 	}
 }
 
@@ -78,6 +85,7 @@ func newEndpointStats(numClients int) *EndpointStats {
 func (e *EndpointStats) RefreshEndpointStats() {
 	var success, errors uint64
 	e.percentiles = make(map[float64]time.Duration)
+	e.errorTypes = make(map[string]ErrorResult)
 	// Capture client's stats first to ensure all snapshots are taken at the same time
 	for _, c := range e.clients {
 		c.snapClientState()
@@ -87,6 +95,15 @@ func (e *EndpointStats) RefreshEndpointStats() {
 		errors += e.clients[i].errors
 		for _, p := range capturedPercentiles {
 			e.percentiles[p] += e.clients[i].percentiles[p]
+		}
+		// Merge error types from this client
+		for key, errResult := range e.clients[i].errorTypes {
+			if existing, ok := e.errorTypes[key]; ok {
+				existing.Count += errResult.Count
+				e.errorTypes[key] = existing
+			} else {
+				e.errorTypes[key] = errResult
+			}
 		}
 	}
 	for _, p := range capturedPercentiles {
@@ -111,16 +128,35 @@ func (c *ClientStats) snapClientState() {
 	}
 }
 
-func (a *Aggregator) Record(sample Sample) {
+func (a *Aggregator) Record(sample Sample) error {
+	if _, ok := a.stats[sample.Endpoint]; !ok {
+		return errors.New("unknown endpoint in sample: " + sample.Endpoint)
+	}
+
 	epStats := a.stats[sample.Endpoint]
 	clientStats := &epStats.clients[sample.ClientId]
 	if sample.OK {
 		clientStats.success++
 	} else {
 		clientStats.errors++
+		errKey := sample.Err
+		if errKey == "" {
+			errKey = strconv.Itoa(int(sample.Code))
+		}
+		if existing, ok := clientStats.errorTypes[errKey]; ok {
+			existing.Count++
+			clientStats.errorTypes[errKey] = existing
+		} else {
+			clientStats.errorTypes[errKey] = ErrorResult{
+				ErrorMsg:  sample.Err,
+				ErrorCode: int(sample.Code),
+				Count:     1,
+			}
+		}
 	}
 	clientStats.histogram.RecordValue(int64(sample.Latency / time.Microsecond))
 	epStats.currentRPS = max(epStats.currentRPS, sample.CurrentRPS)
+	return nil
 }
 
 // Run consumes samples from the channel and prints progress every 5 seconds
@@ -134,7 +170,9 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 			if !ok {
 				return // channel closed
 			}
-			a.Record(sample)
+			if err := a.Record(sample); err != nil {
+				a.logger.Error(err)
+			}
 		case <-ticker.C:
 			a.logger.Info(a.makeProgressString())
 		case <-ctx.Done():
@@ -150,7 +188,6 @@ func (a *Aggregator) makeProgressString() string {
 
 	fmt.Fprintf(&line, "\n[%s / %s]", elapsed, a.duration)
 
-	// endpoints := slices.Sorted(maps.Keys(a.stats))
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 

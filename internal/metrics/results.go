@@ -13,11 +13,18 @@ type Results struct {
 
 // EndpointResult holds final stats for one endpoint
 type EndpointResult struct {
-	TotalRequests uint64             `json:"total_requests"`
-	Success       uint64             `json:"success"`
-	Errors        uint64             `json:"errors"`
-	FinalRPS      int                `json:"final_rps"`
-	Percentiles   map[string]float64 `json:"percentiles_ms"`
+	TotalRequests uint64                 `json:"total_requests"`
+	Success       uint64                 `json:"success"`
+	Errors        uint64                 `json:"errors"`
+	FinalRPS      int                    `json:"final_rps"`
+	Percentiles   map[string]float64     `json:"percentiles_ms"`
+	ErrorTypes    map[string]ErrorResult `json:"error_types,omitempty"`
+}
+
+type ErrorResult struct {
+	ErrorMsg  string `json:"error_msg"`
+	ErrorCode int    `json:"error_code"`
+	Count     uint64 `json:"count"`
 }
 
 // Returns the final aggregated results
@@ -36,6 +43,7 @@ func (a *Aggregator) Results() *Results {
 			TotalRequests: stats.success + stats.errors,
 			Success:       stats.success,
 			Errors:        stats.errors,
+			ErrorTypes:    stats.errorTypes,
 			FinalRPS:      stats.currentRPS,
 			Percentiles:   make(map[string]float64),
 		}

@@ -30,16 +30,16 @@ func blastAtEndpoint(
 	out chan<- blasterMetrics.Sample,
 ) error {
 	var wg sync.WaitGroup
-	wg.Add(endpointCfg.NumClients)
+	var blasters []*vegeta.Attacker // track to stop on cancellation
 
 	for id := range endpointCfg.NumClients {
 		blaster := newBlaster()
+		blasters = append(blasters, blaster)
 
 		// Launch async client goroutine
-		go func() {
-			defer wg.Done()
-			runEndpointBlaster(ctx, endpointCfg, blastCfg, id, blaster, out)
-		}()
+		wg.Go(func() {
+			runEndpointBlaster(ctx, endpointCfg, blastCfg, id, newBlaster, out)
+		})
 	}
 
 	done := make(chan struct{})
@@ -50,6 +50,12 @@ func blastAtEndpoint(
 
 	select {
 	case <-ctx.Done():
+		// Stop all attackers to cancel in-flight requests
+		for _, b := range blasters {
+			b.Stop()
+		}
+		// Wait for goroutines to finish draining
+		<-done
 		return ctx.Err()
 	case <-done:
 		return nil
@@ -62,7 +68,7 @@ func runEndpointBlaster(
 	endpointCfg EndpointBlastConfig,
 	blastCfg BlasterConfig,
 	clientID int,
-	blaster *vegeta.Attacker,
+	newBlaster func() *vegeta.Attacker,
 	out chan<- blasterMetrics.Sample,
 ) {
 	step := blastCfg.Ramp.stepDuration()
@@ -87,6 +93,7 @@ func runEndpointBlaster(
 			currentRPS := blastCfg.Ramp.rampRPS(elapsed)
 			if currentRPS > 0 {
 				rate := vegeta.Rate{Freq: currentRPS, Per: time.Second}
+				blaster := newBlaster()
 				results := blaster.Attack(endpointCfg.Targeter, rate, phaseStep, endpointCfg.EndpointKey)
 				flushResults(ctx, clientID, endpointCfg, results, out)
 			} else {
@@ -101,6 +108,7 @@ func runEndpointBlaster(
 	// Steady state of full RPS period
 	if sRemaining > 0 {
 		rate := vegeta.Rate{Freq: blastCfg.Ramp.MaxRPS, Per: time.Second}
+		blaster := newBlaster()
 		results := blaster.Attack(endpointCfg.Targeter, rate, sRemaining, endpointCfg.EndpointKey)
 		flushResults(ctx, clientID, endpointCfg, results, out)
 	}
@@ -149,5 +157,3 @@ func sleepCancel(ctx context.Context, d time.Duration) {
 		return
 	}
 }
-
-

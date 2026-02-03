@@ -81,7 +81,7 @@ func makeCommands() *cobra.Command {
 	commonFlags.String("rpc-url", "", "Target RPC server URL")
 
 	runCmd.Flags().String("config-path", "", "Path to config TOML file")
-	runCmd.Flags().String("test-output-path", "./load-test-results.json", "Path to export metrics output file")
+	runCmd.Flags().String("test-output-path", "./output/load-test-results.json", "Path to export metrics output file")
 	runCmd.Flags().Duration("duration", time.Duration(0), "Duration to run the test (e.g., 5m)")
 	runCmd.Flags().Duration("ramp-up", time.Duration(0), "Ramp-up time before reaching target RPS (e.g., 30s)")
 
