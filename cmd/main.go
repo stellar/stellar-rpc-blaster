@@ -43,6 +43,7 @@ func makeCommands() *cobra.Command {
 				cmd.Flags().Lookup("rpc-url"),
 				cmd.Flags().Lookup("duration"),
 				cmd.Flags().Lookup("ramp-up"),
+				cmd.Flags().Lookup("test-output-path"),
 			)
 			settings.Mode = blaster.Run
 			settings.Ctx = cmd.Context()
@@ -60,7 +61,7 @@ func makeCommands() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			settings := bindGenerateCliParameters(cmd.Flags().Lookup("rpc-url"),
 				cmd.Flags().Lookup("network-passphrase"),
-				cmd.Flags().Lookup("output"),
+				cmd.Flags().Lookup("seed-path"),
 				cmd.Flags().Lookup("ledger-window"),
 			)
 			settings.Mode = blaster.Generate
@@ -80,6 +81,7 @@ func makeCommands() *cobra.Command {
 	commonFlags.String("rpc-url", "", "Target RPC server URL")
 
 	runCmd.Flags().String("config-path", "", "Path to config TOML file")
+	runCmd.Flags().String("test-output-path", "./load-test-results.json", "Path to export metrics output file")
 	runCmd.Flags().Duration("duration", time.Duration(0), "Duration to run the test (e.g., 5m)")
 	runCmd.Flags().Duration("ramp-up", time.Duration(0), "Ramp-up time before reaching target RPS (e.g., 30s)")
 
@@ -100,6 +102,7 @@ func bindRunCliParameters(
 	rpcUrl *pflag.Flag,
 	duration *pflag.Flag,
 	rampUp *pflag.Flag,
+	testOutputPath *pflag.Flag,
 ) blaster.RuntimeSettings {
 	bindFlag := func(flag *pflag.Flag) {
 		viper.BindPFlag(flag.Name, flag)
@@ -110,6 +113,7 @@ func bindRunCliParameters(
 	bindFlag(rpcUrl)
 	bindFlag(duration)
 	bindFlag(rampUp)
+	bindFlag(testOutputPath)
 
 	settings := blaster.RuntimeSettings{}
 	settings.ConfigPath = viper.GetString(cfgPath.Name)
@@ -117,6 +121,7 @@ func bindRunCliParameters(
 	settings.RPCUrl = viper.GetString(rpcUrl.Name)
 	settings.Duration = viper.GetViper().GetDuration(duration.Name)
 	settings.RampUp = viper.GetViper().GetDuration(rampUp.Name)
+	settings.TestOutputPath = viper.GetString(testOutputPath.Name)
 
 	return settings
 }

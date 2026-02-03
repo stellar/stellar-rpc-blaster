@@ -10,8 +10,7 @@ import (
 )
 
 type EndpointBlastConfig struct {
-	EndpointKey string // config key
-	Method      string // JSON-RPC method
+	EndpointKey string // config key / JSON-RPC method
 	RPS         int
 	NumClients  int
 	Targeter    vegeta.Targeter
@@ -84,7 +83,7 @@ func runEndpointBlaster(
 			default:
 			}
 
-			phaseStep := minDuration(step, endDuration-elapsed)
+			phaseStep := min(step, endDuration-elapsed)
 			currentRPS := blastCfg.Ramp.rampRPS(elapsed)
 			if currentRPS > 0 {
 				rate := vegeta.Rate{Freq: currentRPS, Per: time.Second}
@@ -126,7 +125,6 @@ func flushResults(
 			out <- blasterMetrics.Sample{
 				ClientId:   clientId,
 				Endpoint:   endpointCfg.EndpointKey,
-				Method:     endpointCfg.Method,
 				CurrentRPS: endpointCfg.RPS,
 				Timestamp:  result.Timestamp,
 				Latency:    result.Latency,
@@ -152,9 +150,4 @@ func sleepCancel(ctx context.Context, d time.Duration) {
 	}
 }
 
-func minDuration(a, b time.Duration) time.Duration {
-	if a < b {
-		return a
-	}
-	return b
-}
+

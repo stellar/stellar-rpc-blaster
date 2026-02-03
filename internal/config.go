@@ -2,7 +2,6 @@ package blaster
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/pelletier/go-toml"
@@ -40,10 +39,10 @@ type RuntimeSettings struct {
 	RPCUrl            string
 
 	// Run mode settings
-	ConfigPath        string
-	ExportMetricsPath string
-	Duration          time.Duration
-	RampUp            time.Duration
+	ConfigPath     string
+	TestOutputPath string
+	Duration       time.Duration
+	RampUp         time.Duration
 
 	// Generate mode settings
 	SeedPath     string
@@ -63,14 +62,18 @@ type EndpointConfig struct {
 type Config struct {
 	Endpoints map[string]EndpointConfig `toml:"endpoints"`
 
-	// TODO: data-dependent endpoints
-
+	// Common settings
 	ConfigPath        string
 	NetworkPassphrase string
 	RPCUrl            string
-	Duration          time.Duration
-	RampUp            time.Duration
 	Mode              Mode
+
+	// Run mode settings
+	Duration       time.Duration
+	RampUp         time.Duration
+	TestOutputPath string // path to write JSON results
+
+	// TODO: data-dependent endpoints & generate mode settings
 }
 
 func NewConfig(settings RuntimeSettings) (*Config, error) {
@@ -82,6 +85,7 @@ func NewConfig(settings RuntimeSettings) (*Config, error) {
 	config.Duration = settings.Duration
 	config.RampUp = settings.RampUp
 	config.Mode = settings.Mode
+	config.TestOutputPath = settings.TestOutputPath
 
 	logger.Infof("Requested %v mode", settings.Mode.Name())
 
@@ -89,7 +93,7 @@ func NewConfig(settings RuntimeSettings) (*Config, error) {
 	if err = config.processToml(settings.ConfigPath); err != nil {
 		return nil, err
 	}
-	logger.Infof("Sucessfully loaded config from %s", settings.ConfigPath)
+	logger.Infof("Successfully loaded config from %s", settings.ConfigPath)
 
 	return config, nil
 }
@@ -117,12 +121,20 @@ func (c *Config) processToml(tomlPath string) error {
 }
 
 func (c *Config) validateEndpointConfig() error {
-	for _, endpointData := range c.Endpoints {
-		if endpointData.RPS > 0 && endpointData.NumClients > 0 {
-			return nil
+	hasValidEndpoint := false
+	for key, endpointData := range c.Endpoints {
+		if endpointData.RPS > 0 {
+			hasValidEndpoint = true
+			if endpointData.NumClients <= 0 {
+				endpointData.NumClients = 1
+				c.Endpoints[key] = endpointData
+			}
 		}
 	}
-	return fmt.Errorf("at least one endpoint must be configured with RPS > 0 and NumClients > 0")
+	if !hasValidEndpoint {
+		return errors.New("at least one endpoint must be configured with RPS > 0")
+	}
+	return nil
 }
 
 // Implement engine.RunEngine interface

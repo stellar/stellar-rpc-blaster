@@ -3,6 +3,7 @@ package blasterMetrics
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -17,11 +18,12 @@ var capturedPercentiles = []float64{50, 95, 99, 99.9} // treat as const
 
 // Aggregator collects stats across all endpoints
 type Aggregator struct {
-	logger   *log.Entry
-	mu       sync.RWMutex
-	stats    map[string]*EndpointStats
-	start    time.Time
-	duration time.Duration
+	logger           *log.Entry
+	mu               sync.RWMutex
+	stats            map[string]*EndpointStats
+	orderedEndpoints []string
+	start            time.Time
+	duration         time.Duration
 }
 
 // EndpointStats collects stats for all clients of an endpoint
@@ -48,7 +50,11 @@ func NewAggregator(logger *log.Entry, settings types.LoadTestSettings) *Aggregat
 		start:    time.Now(),
 		duration: settings.GetDuration(),
 	}
-	for _, endpointKey := range settings.GetEndpoints() {
+	endpoints := settings.GetEndpoints() // maps.Keys(a.stats))
+	sort.Strings(endpoints)
+	a.orderedEndpoints = endpoints // maintain order for consistent output
+
+	for _, endpointKey := range endpoints {
 		_, numClients := settings.GetEndpoint(endpointKey)
 		a.stats[endpointKey] = newEndpointStats(numClients)
 	}
@@ -68,6 +74,7 @@ func newEndpointStats(numClients int) *EndpointStats {
 	}
 }
 
+// Aggregate current stats across all clients for one endpoint
 func (e *EndpointStats) RefreshEndpointStats() {
 	var success, errors uint64
 	e.percentiles = make(map[float64]time.Duration)
@@ -91,9 +98,9 @@ func (e *EndpointStats) RefreshEndpointStats() {
 
 func (e *EndpointStats) outputStats() string {
 	total := e.success + e.errors
-	out := fmt.Sprintf("%d req (%d ok, %d err) | %d RPS (peak) | ", total, e.success, e.errors, e.currentRPS)
+	out := fmt.Sprintf("%6d req (%6d ok, %4d err) | %5d RPS | ", total, e.success, e.errors, e.currentRPS)
 	for _, p := range capturedPercentiles {
-		out += fmt.Sprintf("p%.1f: %s, ", p, fmtDuration(e.percentiles[p]))
+		out += fmt.Sprintf("p%4.1f: %8s, ", p, fmtDuration(e.percentiles[p]))
 	}
 	return out[:len(out)-2] // trim trailing ", "
 }
@@ -138,26 +145,32 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 
 func (a *Aggregator) makeProgressString() string {
 	var line strings.Builder
+
+	elapsed := time.Since(a.start).Round(time.Second)
+
+	fmt.Fprintf(&line, "\n[%s / %s]", elapsed, a.duration)
+
+	// endpoints := slices.Sorted(maps.Keys(a.stats))
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
-	elapsed := time.Since(a.start).Round(time.Second)
-	fmt.Fprintf(&line, "\n[%s / %s]", elapsed, a.duration)
-
-	for endpointName, endpointStats := range a.stats {
+	for _, endpointName := range a.orderedEndpoints {
+		endpointStats := a.stats[endpointName]
 		endpointStats.RefreshEndpointStats()
-		fmt.Fprintf(&line, "\n%s: %s", endpointName, endpointStats.outputStats())
+		fmt.Fprintf(&line, "\n%-20s: %s", endpointName, endpointStats.outputStats())
+	}
+
+	if elapsed >= a.duration {
+		return "=== Final Results ===" + line.String()
 	}
 	return line.String()
 }
 
-func (a *Aggregator) PrintFinal() {
-	a.logger.Info("=== Final Results ===" + a.makeProgressString())
-}
-
 func fmtDuration(d time.Duration) string {
 	if d < time.Millisecond {
-		return fmt.Sprintf("%dµs", d.Microseconds())
+		return fmt.Sprintf("%4dµs", d.Microseconds())
+	} else if d < time.Second {
+		return fmt.Sprintf("%4.1fms", float64(d.Microseconds())/1e3)
 	}
-	return fmt.Sprintf("%.2fms", float64(d.Milliseconds())+float64(d.Microseconds()%1000)/1000)
+	return fmt.Sprintf("%4.1fs", float64(d.Milliseconds())/1e3)
 }

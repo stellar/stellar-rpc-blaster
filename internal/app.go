@@ -2,7 +2,6 @@ package blaster
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"sync"
@@ -51,9 +50,9 @@ func (a *App) Run(runtimeSettings RuntimeSettings) error {
 			return err
 		}
 	case Generate:
-		return fmt.Errorf("Generate mode not implemented yet")
+		return errors.New("Generate mode not implemented yet")
 	default:
-		return fmt.Errorf("unknown mode: %v", runtimeSettings.Mode)
+		return errors.Errorf("unknown mode: %v", runtimeSettings.Mode)
 	}
 
 	a.logger.Infof("Blaster finished successfully")
@@ -80,10 +79,6 @@ func (a *App) close() {
 func (a *App) runLoadTest(ctx context.Context) error {
 	out := make(chan blasterMetrics.Sample, 1000)
 
-	endpointToNumClients := make(map[string]int)
-	for endpoint, cfg := range a.config.Endpoints {
-		endpointToNumClients[endpoint] = cfg.NumClients
-	}
 	a.aggregator = blasterMetrics.NewAggregator(a.logger, a.config)
 
 	// Aggregator goroutine: consumes samples and prints every 5s
@@ -96,6 +91,15 @@ func (a *App) runLoadTest(ctx context.Context) error {
 	close(out)
 	wg.Wait()
 
-	a.aggregator.PrintFinal()
+	// Write final results to JSON
+	if a.config.TestOutputPath != "" {
+		results := a.aggregator.Results()
+		if writeErr := blasterMetrics.WriteResultsJSON(results, a.config.TestOutputPath); writeErr != nil {
+			a.logger.Errorf("Failed to write results: %v", writeErr)
+		} else {
+			a.logger.Infof("Results written to %s", a.config.TestOutputPath)
+		}
+	}
+
 	return err
 }
