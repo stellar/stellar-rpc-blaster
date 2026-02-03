@@ -7,11 +7,13 @@ import (
 	"sync"
 	"time"
 
+	types "github.com/stellar/stellar-rpc-blaster/internal/config"
+
 	"github.com/HdrHistogram/hdrhistogram-go"
 	"github.com/stellar/go-stellar-sdk/support/log"
 )
 
-var capturedPercentiles = []float64{50, 90, 95, 99, 99.9} // treat as const
+var capturedPercentiles = []float64{50, 95, 99, 99.9} // treat as const
 
 // Aggregator collects stats across all endpoints
 type Aggregator struct {
@@ -39,15 +41,16 @@ type ClientStats struct {
 	percentiles map[float64]time.Duration
 }
 
-func NewAggregator(logger *log.Entry, duration time.Duration, endpointToClient map[string]int) *Aggregator {
+func NewAggregator(logger *log.Entry, settings types.LoadTestSettings) *Aggregator {
 	a := Aggregator{
 		logger:   logger,
 		stats:    make(map[string]*EndpointStats),
 		start:    time.Now(),
-		duration: duration,
+		duration: settings.GetDuration(),
 	}
-	for endpoint, numClients := range endpointToClient {
-		a.stats[endpoint] = newEndpointStats(numClients)
+	for _, endpointKey := range settings.GetEndpoints() {
+		_, numClients := settings.GetEndpoint(endpointKey)
+		a.stats[endpointKey] = newEndpointStats(numClients)
 	}
 	return &a
 }
@@ -122,7 +125,7 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 		select {
 		case sample, ok := <-in:
 			if !ok {
-				return
+				return // channel closed
 			}
 			a.Record(sample)
 		case <-ticker.C:
@@ -149,7 +152,7 @@ func (a *Aggregator) makeProgressString() string {
 }
 
 func (a *Aggregator) PrintFinal() {
-	a.logger.Info("=== Final Results ===\n" + a.makeProgressString())
+	a.logger.Info("=== Final Results ===" + a.makeProgressString())
 }
 
 func fmtDuration(d time.Duration) string {

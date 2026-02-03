@@ -9,7 +9,9 @@ import (
 	"syscall"
 
 	"github.com/pkg/errors"
+
 	"github.com/stellar/go-stellar-sdk/support/log"
+
 	"github.com/stellar/stellar-rpc-blaster/internal/engine"
 	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/metrics"
 )
@@ -21,13 +23,14 @@ const (
 var logger = log.New().WithField("service", nameSpace)
 
 type App struct {
+	logger     *log.Entry
 	config     *Config
 	aggregator *blasterMetrics.Aggregator
 }
 
 func NewApp() *App {
 	logger.SetLevel(log.DebugLevel)
-	app := &App{}
+	app := &App{logger: logger}
 	return app
 }
 
@@ -53,14 +56,14 @@ func (a *App) Run(runtimeSettings RuntimeSettings) error {
 		return fmt.Errorf("unknown mode: %v", runtimeSettings.Mode)
 	}
 
-	logger.Infof("Blaster finished successfully")
+	a.logger.Infof("Blaster finished successfully")
 	return nil
 }
 
 func (a *App) init(runtimeSettings RuntimeSettings) error {
 	var err error
 
-	logger.Info("Starting Blaster")
+	a.logger.Info("Starting Blaster")
 
 	if a.config, err = NewConfig(runtimeSettings); err != nil {
 		return errors.Wrap(err, "Could not load configuration")
@@ -69,7 +72,7 @@ func (a *App) init(runtimeSettings RuntimeSettings) error {
 }
 
 func (a *App) close() {
-	logger.Info("Shutting down Blaster")
+	a.logger.Info("Shutting down Blaster")
 	// TODO: Clean up here if needed (e.g. close DB connection/metrics file)
 	// this isn't implemented yet
 }
@@ -81,15 +84,13 @@ func (a *App) runLoadTest(ctx context.Context) error {
 	for endpoint, cfg := range a.config.Endpoints {
 		endpointToNumClients[endpoint] = cfg.NumClients
 	}
-	a.aggregator = blasterMetrics.NewAggregator(logger, a.config.Duration, endpointToNumClients)
+	a.aggregator = blasterMetrics.NewAggregator(a.logger, a.config)
 
 	// Aggregator goroutine: consumes samples and prints every 5s
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		a.aggregator.Run(ctx, out)
-	}()
+	})
 
 	err := engine.RunVegeta(ctx, a.config, out)
 	close(out)

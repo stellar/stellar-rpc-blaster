@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	types "github.com/stellar/stellar-rpc-blaster/internal/config"
 	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/metrics"
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 )
@@ -16,17 +17,10 @@ type endpointBlast struct {
 	BlasterConfig
 }
 
-var supported = map[string]string{
-	"getHealth":       "getHealth",
-	"getNetwork":      "getNetwork",
-	"getVersionInfo":  "getVersionInfo",
-	"getLatestLedger": "getLatestLedger",
-}
-
 // Entry/exit point from app.go
-// RunVegeta runs a load test using Vegeta using the config settings through the RunEngine interface
+// RunVegeta runs a load test using Vegeta using the config settings through the LoadTestSettings interface
 // Sets up shared HTTP client, constructs per-endpoint blast configs, and fires off the blasts asynchronously
-func RunVegeta(ctx context.Context, cfg RunEngine, out chan<- blasterMetrics.Sample) error {
+func RunVegeta(ctx context.Context, cfg types.LoadTestSettings, out chan<- blasterMetrics.Sample) error {
 	// Build shared HTTP client
 	httpClient := NewHTTPClient(
 		BlasterOptions{
@@ -42,11 +36,6 @@ func RunVegeta(ctx context.Context, cfg RunEngine, out chan<- blasterMetrics.Sam
 	// 3... 2... 1...
 	var endpointBlasts []endpointBlast
 	for _, endpointKey := range cfg.GetEndpoints() {
-		method, ok := supported[endpointKey]
-		if !ok {
-			return fmt.Errorf("unsupported endpoint key: %s", endpointKey)
-		}
-
 		rps, numClients := cfg.GetEndpoint(endpointKey)
 		if numClients <= 0 {
 			numClients = 1
@@ -56,16 +45,15 @@ func RunVegeta(ctx context.Context, cfg RunEngine, out chan<- blasterMetrics.Sam
 		request := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      1,
-			"method":  method,
+			"method":  endpointKey,
 			"params":  map[string]any{}, // optional -- to be used when we do PR 573/data-dependent endpoints
 		}
 		body, _ := json.Marshal(request)
-		targeter := NewJSONRPCTargeter(cfg.GetRPCUrl(), body)
+		targeter := NewJSONRPCTargeter(cfg.GetRpcUrl(), body)
 
 		endpointBlasts = append(endpointBlasts, endpointBlast{
 			EndpointBlastConfig: EndpointBlastConfig{
 				EndpointKey: endpointKey,
-				Method:      method,
 				RPS:         rps,
 				NumClients:  numClients,
 				Targeter:    targeter,

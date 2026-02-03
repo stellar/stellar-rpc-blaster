@@ -126,7 +126,7 @@ func (c *Config) validateEndpointConfig() error {
 }
 
 // Implement engine.RunEngine interface
-func (c *Config) GetRPCUrl() string {
+func (c *Config) GetRpcUrl() string {
 	return c.RPCUrl
 }
 
@@ -152,4 +152,3 @@ func (c *Config) GetEndpoint(key string) (rps int, numClients int) {
 	}
 	return 0, 0
 }
-

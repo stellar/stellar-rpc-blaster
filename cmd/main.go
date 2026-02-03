@@ -101,26 +101,21 @@ func bindRunCliParameters(
 	duration *pflag.Flag,
 	rampUp *pflag.Flag,
 ) blaster.RuntimeSettings {
+	bindFlag := func(flag *pflag.Flag) {
+		viper.BindPFlag(flag.Name, flag)
+		viper.BindEnv(flag.Name, strutils.KebabToConstantCase(flag.Name))
+	}
+	bindFlag(cfgPath)
+	bindFlag(networkPassphrase)
+	bindFlag(rpcUrl)
+	bindFlag(duration)
+	bindFlag(rampUp)
+
 	settings := blaster.RuntimeSettings{}
-
-	viper.BindPFlag(cfgPath.Name, cfgPath)
-	viper.BindEnv(cfgPath.Name, strutils.KebabToConstantCase(cfgPath.Name))
 	settings.ConfigPath = viper.GetString(cfgPath.Name)
-
-	viper.BindPFlag(networkPassphrase.Name, networkPassphrase)
-	viper.BindEnv(networkPassphrase.Name, strutils.KebabToConstantCase(networkPassphrase.Name))
 	settings.NetworkPassphrase = viper.GetString(networkPassphrase.Name)
-
-	viper.BindPFlag(rpcUrl.Name, rpcUrl)
-	viper.BindEnv(rpcUrl.Name, strutils.KebabToConstantCase(rpcUrl.Name))
 	settings.RPCUrl = viper.GetString(rpcUrl.Name)
-
-	viper.BindPFlag(duration.Name, duration)
-	viper.BindEnv(duration.Name, strutils.KebabToConstantCase(duration.Name))
 	settings.Duration = viper.GetViper().GetDuration(duration.Name)
-
-	viper.BindPFlag(rampUp.Name, rampUp)
-	viper.BindEnv(rampUp.Name, strutils.KebabToConstantCase(rampUp.Name))
 	settings.RampUp = viper.GetViper().GetDuration(rampUp.Name)
 
 	return settings
