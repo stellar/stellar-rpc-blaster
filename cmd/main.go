@@ -8,12 +8,13 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"github.com/stellar/go-stellar-sdk/support/strutils"
+
 	blaster "github.com/stellar/stellar-rpc-blaster/internal"
 )
 
 var blasterCmdRunner = func(blasterSettings blaster.RuntimeSettings) error {
 	blasterInstance := blaster.NewApp()
-	return blasterInstance.Run(blasterSettings)
+	return blasterInstance.RunApp(blasterSettings)
 }
 
 func Execute() error {
@@ -118,7 +119,7 @@ func bindRunCliParameters(
 	settings := blaster.RuntimeSettings{}
 	settings.ConfigPath = viper.GetString(cfgPath.Name)
 	settings.NetworkPassphrase = viper.GetString(networkPassphrase.Name)
-	settings.RPCUrl = viper.GetString(rpcUrl.Name)
+	settings.RpcUrl = viper.GetString(rpcUrl.Name)
 	settings.Duration = viper.GetViper().GetDuration(duration.Name)
 	settings.RampUp = viper.GetViper().GetDuration(rampUp.Name)
 	settings.TestOutputPath = viper.GetString(testOutputPath.Name)
@@ -138,7 +139,7 @@ func bindGenerateCliParameters(
 
 	viper.BindPFlag(rpcUrl.Name, rpcUrl)
 	viper.BindEnv(rpcUrl.Name, strutils.KebabToConstantCase(rpcUrl.Name))
-	settings.RPCUrl = viper.GetString(rpcUrl.Name)
+	settings.RpcUrl = viper.GetString(rpcUrl.Name)
 
 	viper.BindPFlag(networkPassphrase.Name, networkPassphrase)
 	viper.BindEnv(networkPassphrase.Name, strutils.KebabToConstantCase(networkPassphrase.Name))

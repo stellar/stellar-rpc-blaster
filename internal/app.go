@@ -33,7 +33,7 @@ func NewApp() *App {
 	return app
 }
 
-func (a *App) Run(runtimeSettings RuntimeSettings) error {
+func (a *App) RunApp(runtimeSettings RuntimeSettings) error {
 	// Handle OS signals and ctx cancellation to terminate the service
 	ctx, cancel := signal.NotifyContext(runtimeSettings.Ctx, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -44,8 +44,23 @@ func (a *App) Run(runtimeSettings RuntimeSettings) error {
 
 	defer a.close()
 
+	var missingFields []string
+	if runtimeSettings.RpcUrl == "" {
+		missingFields = append(missingFields, "rpc-url")
+	}
+	if runtimeSettings.NetworkPassphrase == "" {
+		missingFields = append(missingFields, "network-passphrase")
+	}
+
 	switch runtimeSettings.Mode {
 	case Run:
+		if runtimeSettings.ConfigPath == "" {
+			missingFields = append(missingFields, "config-path")
+		}
+
+		if len(missingFields) > 0 {
+			return errors.Errorf("missing required fields in Run mode: %v", missingFields)
+		}
 		if err := a.runLoadTest(ctx); err != nil {
 			return err
 		}

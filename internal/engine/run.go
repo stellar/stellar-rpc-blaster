@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
-	"time"
 
 	"github.com/pkg/errors"
 	vegeta "github.com/tsenart/vegeta/v12/lib"
@@ -14,8 +13,8 @@ import (
 )
 
 type endpointBlast struct {
-	EndpointBlastConfig
-	BlasterConfig
+	EndpointBlastConfig EndpointBlastConfig
+	BlastPacer          RampToConstantPacer
 }
 
 // Entry/exit point from app.go
@@ -58,13 +57,11 @@ func RunVegeta(ctx context.Context, cfg types.LoadTestSettings, out chan<- blast
 				RPS:         rps,
 				Targeter:    targeter,
 			},
-			BlasterConfig: BlasterConfig{
-				Duration: cfg.GetDuration(),
-				Ramp: Ramp{
-					RampUp: cfg.GetRampUp(),
-					Step:   time.Second,
-					MaxRPS: rps,
-				},
+			BlastPacer: RampToConstantPacer{
+				TotalDuration: cfg.GetDuration(),
+				RampDuration:  cfg.GetRampUp(),
+				StartRPS:      1,
+				MaxRPS:        rps,
 			},
 		})
 	}
@@ -75,7 +72,7 @@ func RunVegeta(ctx context.Context, cfg types.LoadTestSettings, out chan<- blast
 		wg.Add(1)
 		go func(eb endpointBlast) {
 			defer wg.Done()
-			blastAtEndpoint(ctx, eb.EndpointBlastConfig, eb.BlasterConfig, newBlaster, out)
+			blastAtEndpoint(ctx, eb.EndpointBlastConfig, eb.BlastPacer, newBlaster, out)
 		}(blast)
 	}
 	wg.Wait()

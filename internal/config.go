@@ -36,7 +36,7 @@ func (m Mode) Name() string {
 type RuntimeSettings struct {
 	// Common settings
 	NetworkPassphrase string
-	RPCUrl            string
+	RpcUrl            string
 
 	// Run mode settings
 	ConfigPath     string
@@ -64,7 +64,7 @@ type Config struct {
 	// Common settings
 	ConfigPath        string
 	NetworkPassphrase string
-	RPCUrl            string
+	RpcUrl            string
 	Mode              Mode
 
 	// Run mode settings
@@ -80,7 +80,7 @@ func NewConfig(settings RuntimeSettings) (*Config, error) {
 
 	config.ConfigPath = settings.ConfigPath
 	config.NetworkPassphrase = settings.NetworkPassphrase
-	config.RPCUrl = settings.RPCUrl
+	config.RpcUrl = settings.RpcUrl
 	config.Duration = settings.Duration
 	config.RampUp = settings.RampUp
 	config.Mode = settings.Mode
@@ -134,7 +134,7 @@ func (c *Config) validateEndpointConfig() error {
 
 // Implement config.LoadTestSettings interface
 func (c *Config) GetRpcUrl() string {
-	return c.RPCUrl
+	return c.RpcUrl
 }
 
 func (c *Config) GetDuration() time.Duration {
