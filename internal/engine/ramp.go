@@ -21,11 +21,12 @@ func (r Ramp) stepDuration() time.Duration {
 }
 
 // rampRPS calculates the RPS at a given elapsed time during the ramp-up period.
+// Returns at least 1 RPS to avoid Vegeta interpreting 0 as "infinite rate".
 func (r Ramp) rampRPS(elapsed time.Duration) int {
 	if r.RampUp <= 0 || elapsed >= r.RampUp {
 		return r.MaxRPS
 	}
 
 	scale := float64(elapsed) / float64(r.RampUp)
-	return int(math.Round(scale * float64(r.MaxRPS)))
+	return max(int(math.Round(scale*float64(r.MaxRPS))), 1)
 }

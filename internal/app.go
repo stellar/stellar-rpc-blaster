@@ -91,15 +91,5 @@ func (a *App) runLoadTest(ctx context.Context) error {
 	close(out)
 	wg.Wait()
 
-	// Write final results to JSON
-	if a.config.TestOutputPath != "" {
-		results := a.aggregator.Results()
-		if writeErr := blasterMetrics.WriteResultsJSON(results, a.config.TestOutputPath); writeErr != nil {
-			a.logger.Errorf("Failed to write results: %v", writeErr)
-		} else {
-			a.logger.Infof("Results written to %s", a.config.TestOutputPath)
-		}
-	}
-
 	return err
 }

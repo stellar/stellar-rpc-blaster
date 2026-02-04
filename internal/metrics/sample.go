@@ -5,7 +5,6 @@ import (
 )
 
 type Sample struct {
-	ClientId   int       // ID of the client that generated this sample
 	Endpoint   string    // config key / JSON-RPC method (e.g. "getHealth")
 	CurrentRPS int       // RPS at the time of the sample
 	Timestamp  time.Time // timestamp of the sample

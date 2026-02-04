@@ -21,110 +21,99 @@ var capturedPercentiles = []float64{50, 95, 99, 99.9} // treat as const
 
 // Aggregator collects stats across all endpoints
 type Aggregator struct {
-	logger           *log.Entry
-	mu               sync.RWMutex
+	logger          *log.Entry
+	writeOutputPath string
+
 	stats            map[string]*EndpointStats
 	orderedEndpoints []string
-	start            time.Time
-	duration         time.Duration
+
+	start    time.Time
+	duration time.Duration
+	mu       sync.RWMutex
 }
 
-// EndpointStats collects stats for all clients of an endpoint
+// EndpointStats collects stats for all vegeta workers of an endpoint
 type EndpointStats struct {
-	clients     []ClientStats
-	success     uint64
-	errors      uint64
-	errorTypes  map[string]ErrorResult
-	percentiles map[float64]time.Duration
-	currentRPS  int
-}
-
-// ClientStats tracks metrics for a single client of a single endpoint using HDR Histogram
-type ClientStats struct {
 	histogram   *hdrhistogram.Histogram
 	success     uint64
 	errors      uint64
 	errorTypes  map[string]ErrorResult
 	percentiles map[float64]time.Duration
+	targetRPS   int
+	achievedRPS float64
+}
+
+// Main driver function; consumes samples from the channel and prints progress every 5 seconds
+func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case sample, ok := <-in:
+			if !ok {
+				// channel closed
+				if err := a.WriteOutput(); err != nil {
+					a.logger.Error(err)
+				}
+				return
+			}
+			if err := a.Record(sample); err != nil {
+				a.logger.Error(err)
+			}
+		case <-ticker.C:
+			a.logger.Info(a.makeProgressString())
+		case <-ctx.Done():
+			if err := a.WriteOutput(); err != nil {
+				a.logger.Error(errors.Wrap(err, "Failed to write output results"))
+			}
+			return
+		}
+	}
 }
 
 func NewAggregator(logger *log.Entry, settings types.LoadTestSettings) *Aggregator {
 	a := Aggregator{
-		logger:   logger,
-		stats:    make(map[string]*EndpointStats),
-		start:    time.Now(),
-		duration: settings.GetDuration(),
+		logger:          logger,
+		stats:           make(map[string]*EndpointStats),
+		start:           time.Now(),
+		duration:        settings.GetDuration(),
+		writeOutputPath: settings.GetOutputPath(),
 	}
 	endpoints := settings.GetEndpoints()
 	sort.Strings(endpoints)
 	a.orderedEndpoints = endpoints // maintain order for consistent output
 
 	for _, endpointKey := range endpoints {
-		_, numClients := settings.GetEndpoint(endpointKey)
-		a.stats[endpointKey] = newEndpointStats(numClients)
-	}
-	return &a
-}
-
-func newEndpointStats(numClients int) *EndpointStats {
-	clients := make([]ClientStats, numClients)
-	for i := range numClients {
-		clients[i] = ClientStats{
+		a.stats[endpointKey] = &EndpointStats{
 			histogram:   hdrhistogram.New(1, 60000000, 3),
 			percentiles: make(map[float64]time.Duration),
 			errorTypes:  make(map[string]ErrorResult),
 		}
 	}
-	return &EndpointStats{
-		clients:    clients,
-		errorTypes: make(map[string]ErrorResult),
-	}
+
+	return &a
 }
 
-// Aggregate current stats across all clients for one endpoint
-func (e *EndpointStats) RefreshEndpointStats() {
-	var success, errors uint64
-	e.percentiles = make(map[float64]time.Duration)
-	e.errorTypes = make(map[string]ErrorResult)
-	// Capture client's stats first to ensure all snapshots are taken at the same time
-	for _, c := range e.clients {
-		c.snapClientState()
-	}
-	for i := range e.clients {
-		success += e.clients[i].success
-		errors += e.clients[i].errors
-		for _, p := range capturedPercentiles {
-			e.percentiles[p] += e.clients[i].percentiles[p]
+func (a *Aggregator) Close() {
+}
+
+func (a *Aggregator) WriteOutput() error {
+	if a.writeOutputPath != "" {
+		results := a.Results()
+		if writeErr := WriteResultsJSON(results, a.writeOutputPath); writeErr != nil {
+			return errors.Wrapf(writeErr, "Failed to write results to %s", a.writeOutputPath)
 		}
-		// Merge error types from this client
-		for key, errResult := range e.clients[i].errorTypes {
-			if existing, ok := e.errorTypes[key]; ok {
-				existing.Count += errResult.Count
-				e.errorTypes[key] = existing
-			} else {
-				e.errorTypes[key] = errResult
-			}
-		}
+		a.logger.Infof("Results written to %s", a.writeOutputPath)
+		return nil
 	}
-	for _, p := range capturedPercentiles {
-		e.percentiles[p] /= time.Duration(len(e.clients))
-	}
-	e.success = success
-	e.errors = errors
+	return nil
 }
 
-func (e *EndpointStats) outputStats() string {
-	total := e.success + e.errors
-	out := fmt.Sprintf("%6d req (%6d ok, %4d err) | %5d RPS | ", total, e.success, e.errors, e.currentRPS)
+// computes and stores percentiles from the histogram
+func (e *EndpointStats) refreshPercentiles() {
 	for _, p := range capturedPercentiles {
-		out += fmt.Sprintf("p%4.1f: %8s, ", p, fmtDuration(e.percentiles[p]))
-	}
-	return out[:len(out)-2] // trim trailing ", "
-}
-
-func (c *ClientStats) snapClientState() {
-	for _, p := range capturedPercentiles {
-		c.percentiles[p] = time.Duration(c.histogram.ValueAtPercentile(p)) * time.Microsecond
+		e.percentiles[p] = time.Duration(e.histogram.ValueAtPercentile(p)) * time.Microsecond
 	}
 }
 
@@ -134,53 +123,32 @@ func (a *Aggregator) Record(sample Sample) error {
 	}
 
 	epStats := a.stats[sample.Endpoint]
-	clientStats := &epStats.clients[sample.ClientId]
+	epStats.targetRPS = sample.CurrentRPS
 	if sample.OK {
-		clientStats.success++
+		epStats.success++
 	} else {
-		clientStats.errors++
+		epStats.errors++
 		errKey := sample.Err
 		if errKey == "" {
 			errKey = strconv.Itoa(int(sample.Code))
 		}
-		if existing, ok := clientStats.errorTypes[errKey]; ok {
+		if existing, ok := epStats.errorTypes[errKey]; ok {
 			existing.Count++
-			clientStats.errorTypes[errKey] = existing
+			epStats.errorTypes[errKey] = existing
 		} else {
-			clientStats.errorTypes[errKey] = ErrorResult{
+			epStats.errorTypes[errKey] = ErrorResult{
 				ErrorMsg:  sample.Err,
 				ErrorCode: int(sample.Code),
 				Count:     1,
 			}
 		}
 	}
-	clientStats.histogram.RecordValue(int64(sample.Latency / time.Microsecond))
-	epStats.currentRPS = max(epStats.currentRPS, sample.CurrentRPS)
+	epStats.achievedRPS = float64(epStats.success+epStats.errors) / time.Since(a.start).Seconds()
+	epStats.histogram.RecordValue(int64(sample.Latency / time.Microsecond))
 	return nil
 }
 
-// Run consumes samples from the channel and prints progress every 5 seconds
-func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case sample, ok := <-in:
-			if !ok {
-				return // channel closed
-			}
-			if err := a.Record(sample); err != nil {
-				a.logger.Error(err)
-			}
-		case <-ticker.C:
-			a.logger.Info(a.makeProgressString())
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
+// constructs a logging string showing progress for all endpoints
 func (a *Aggregator) makeProgressString() string {
 	var line strings.Builder
 
@@ -193,16 +161,30 @@ func (a *Aggregator) makeProgressString() string {
 
 	for _, endpointName := range a.orderedEndpoints {
 		endpointStats := a.stats[endpointName]
-		endpointStats.RefreshEndpointStats()
 		fmt.Fprintf(&line, "\n%-20s: %s", endpointName, endpointStats.outputStats())
 	}
 
 	if elapsed >= a.duration {
 		return "=== Final Results ===" + line.String()
 	}
+
 	return line.String()
 }
 
+// outputs a prettified one-line summary of one endpoint's stats
+func (e *EndpointStats) outputStats() string {
+	e.refreshPercentiles()
+	total := e.success + e.errors
+
+	out := fmt.Sprintf("%6d req (%6d ok, %4d err) | %6d target RPS vs. %6.2f achieved RPS | ", total, e.success, e.errors, e.targetRPS, e.achievedRPS)
+	for _, p := range capturedPercentiles {
+		out += fmt.Sprintf("p%4.1f: %8s, ", p, fmtDuration(e.percentiles[p]))
+	}
+
+	return out[:len(out)-2] // trim trailing ", "
+}
+
+// Formats duration into microseconds, milliseconds or seconds
 func fmtDuration(d time.Duration) string {
 	if d < time.Millisecond {
 		return fmt.Sprintf("%4dµs", d.Microseconds())

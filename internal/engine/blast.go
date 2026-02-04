@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/metrics"
@@ -12,7 +11,6 @@ import (
 type EndpointBlastConfig struct {
 	EndpointKey string // config key / JSON-RPC method
 	RPS         int
-	NumClients  int
 	Targeter    vegeta.Targeter
 }
 
@@ -21,56 +19,18 @@ type BlasterConfig struct {
 	Ramp     Ramp
 }
 
-// blastAtEndpoint runs the load test for a specific endpoint with multiple concurrent clients
+// Run the blaster at a given endpoint
 func blastAtEndpoint(
 	ctx context.Context,
 	endpointCfg EndpointBlastConfig,
 	blastCfg BlasterConfig,
 	newBlaster func() *vegeta.Attacker,
 	out chan<- blasterMetrics.Sample,
-) error {
-	var wg sync.WaitGroup
-	var blasters []*vegeta.Attacker // track to stop on cancellation
-
-	for id := range endpointCfg.NumClients {
-		blaster := newBlaster()
-		blasters = append(blasters, blaster)
-
-		// Launch async client goroutine
-		wg.Go(func() {
-			runEndpointBlaster(ctx, endpointCfg, blastCfg, id, newBlaster, out)
-		})
-	}
-
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-ctx.Done():
-		// Stop all attackers to cancel in-flight requests
-		for _, b := range blasters {
-			b.Stop()
-		}
-		// Wait for goroutines to finish draining
-		<-done
-		return ctx.Err()
-	case <-done:
-		return nil
-	}
-}
-
-// Single-client function to run the blast at one given endpoint
-func runEndpointBlaster(
-	ctx context.Context,
-	endpointCfg EndpointBlastConfig,
-	blastCfg BlasterConfig,
-	clientID int,
-	newBlaster func() *vegeta.Attacker,
-	out chan<- blasterMetrics.Sample,
 ) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Determine step duration for ramping
 	step := blastCfg.Ramp.stepDuration()
 
 	// Check remaining time
@@ -91,15 +51,12 @@ func runEndpointBlaster(
 
 			phaseStep := min(step, endDuration-elapsed)
 			currentRPS := blastCfg.Ramp.rampRPS(elapsed)
-			if currentRPS > 0 {
-				rate := vegeta.Rate{Freq: currentRPS, Per: time.Second}
-				blaster := newBlaster()
-				results := blaster.Attack(endpointCfg.Targeter, rate, phaseStep, endpointCfg.EndpointKey)
-				flushResults(ctx, clientID, endpointCfg, results, out)
-			} else {
-				// defensive, but force sleep/cancellation if RPS is 0
-				sleepCancel(ctx, phaseStep)
-			}
+			rate := vegeta.Rate{Freq: currentRPS, Per: time.Second}
+
+			blaster := newBlaster()
+			results := blaster.Attack(endpointCfg.Targeter, rate, phaseStep, endpointCfg.EndpointKey)
+
+			flushResults(ctx, endpointCfg.EndpointKey, currentRPS, results, out)
 			elapsed += phaseStep
 		}
 		sRemaining -= endDuration
@@ -110,15 +67,15 @@ func runEndpointBlaster(
 		rate := vegeta.Rate{Freq: blastCfg.Ramp.MaxRPS, Per: time.Second}
 		blaster := newBlaster()
 		results := blaster.Attack(endpointCfg.Targeter, rate, sRemaining, endpointCfg.EndpointKey)
-		flushResults(ctx, clientID, endpointCfg, results, out)
+		flushResults(ctx, endpointCfg.EndpointKey, blastCfg.Ramp.MaxRPS, results, out)
 	}
 }
 
 // Reads results from a Vegeta results channel and forwards them to the output channel as a blasterMetrics.Sample
 func flushResults(
 	ctx context.Context,
-	clientId int,
-	endpointCfg EndpointBlastConfig,
+	endpointKey string,
+	targetRPS int,
 	results <-chan *vegeta.Result,
 	out chan<- blasterMetrics.Sample,
 ) {
@@ -131,9 +88,8 @@ func flushResults(
 				return
 			}
 			out <- blasterMetrics.Sample{
-				ClientId:   clientId,
-				Endpoint:   endpointCfg.EndpointKey,
-				CurrentRPS: endpointCfg.RPS,
+				Endpoint:   endpointKey,
+				CurrentRPS: targetRPS,
 				Timestamp:  result.Timestamp,
 				Latency:    result.Latency,
 				Code:       result.Code,

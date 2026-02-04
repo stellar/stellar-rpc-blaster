@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"sync"
 	"time"
 
@@ -24,29 +23,21 @@ type endpointBlast struct {
 // Sets up shared HTTP client, constructs per-endpoint blast configs, and fires off the blasts asynchronously
 func RunVegeta(ctx context.Context, cfg types.LoadTestSettings, out chan<- blasterMetrics.Sample) error {
 	// have duration + grace period for in-flight requests as timeout to avoid hanging
-	ctx, cancel := context.WithTimeout(ctx, cfg.GetDuration()+5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, cfg.GetDuration())
 	defer cancel()
 
-	// Build shared HTTP client
-	httpClient := NewHTTPClient(
-		BlasterOptions{
-			Timeout:         15 * time.Second,
-			KeepAlive:       true,
-			MaxConnsPerHost: cfg.GetTotalNumClients(),
-			// TODO: more HTTP client options? if needed, haven't looked into this yet
-		})
-	blasterBuilder := func() *vegeta.Attacker {
-		return NewBlaster(httpClient)
+	// Shared HTTP client with connection pooling to prevent ephemeral port exhaustion
+	httpClient, limits := SharedHTTPClient()
+
+	newBlaster := func() *vegeta.Attacker {
+		return NewBlasterWithClient(httpClient, limits)
 	}
 
 	// Construct endpoint blast configs
 	// 3... 2... 1...
 	var endpointBlasts []endpointBlast
 	for _, endpointKey := range cfg.GetEndpoints() {
-		rps, numClients := cfg.GetEndpoint(endpointKey)
-		if numClients <= 0 {
-			numClients = 1
-		}
+		rps := cfg.GetEndpointRPS(endpointKey)
 
 		// Form request and Vegeta targeter from that
 		request := map[string]any{
@@ -65,7 +56,6 @@ func RunVegeta(ctx context.Context, cfg types.LoadTestSettings, out chan<- blast
 			EndpointBlastConfig: EndpointBlastConfig{
 				EndpointKey: endpointKey,
 				RPS:         rps,
-				NumClients:  numClients,
 				Targeter:    targeter,
 			},
 			BlasterConfig: BlasterConfig{
@@ -81,26 +71,13 @@ func RunVegeta(ctx context.Context, cfg types.LoadTestSettings, out chan<- blast
 
 	// Fire!
 	var wg sync.WaitGroup
-	errCh := make(chan error, len(endpointBlasts))
 	for _, blast := range endpointBlasts {
 		wg.Add(1)
-		// if serialization through flags: wg2 goes here
 		go func(eb endpointBlast) {
 			defer wg.Done()
-			if err := blastAtEndpoint(ctx, eb.EndpointBlastConfig, eb.BlasterConfig, blasterBuilder, out); err != nil {
-				errCh <- fmt.Errorf("endpoint %s: %w", eb.EndpointKey, err)
-			}
+			blastAtEndpoint(ctx, eb.EndpointBlastConfig, eb.BlasterConfig, newBlaster, out)
 		}(blast)
-		// end wg2
 	}
 	wg.Wait()
-	close(errCh)
-
-	// Collect errors
-	select {
-	case err := <-errCh:
-		return err
-	default:
-		return nil
-	}
+	return nil
 }

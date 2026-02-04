@@ -7,6 +7,6 @@ type LoadTestSettings interface {
 	GetDuration() time.Duration
 	GetRampUp() time.Duration
 	GetEndpoints() []string
-	GetEndpoint(key string) (rps int, numClients int)
-	GetTotalNumClients() int
+	GetEndpointRPS(key string) int
+	GetOutputPath() string
 }

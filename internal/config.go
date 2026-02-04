@@ -54,9 +54,8 @@ type RuntimeSettings struct {
 
 // Per-endpoint configuration
 type EndpointConfig struct {
-	RPS        int    `toml:"rps"`                 // requests per second
-	NumClients int    `toml:"num_clients"`         // number of concurrent clients performing rps
-	DataPath   string `toml:"data_path,omitempty"` // path to data file for data-dependent endpoints
+	RPS      int    `toml:"rps"`                 // requests per second
+	DataPath string `toml:"data_path,omitempty"` // path to data file for data-dependent endpoints
 }
 
 type Config struct {
@@ -122,13 +121,9 @@ func (c *Config) processToml(tomlPath string) error {
 
 func (c *Config) validateEndpointConfig() error {
 	hasValidEndpoint := false
-	for key, endpointData := range c.Endpoints {
+	for _, endpointData := range c.Endpoints {
 		if endpointData.RPS > 0 {
 			hasValidEndpoint = true
-			if endpointData.NumClients <= 0 {
-				endpointData.NumClients = 1
-				c.Endpoints[key] = endpointData
-			}
 		}
 	}
 	if !hasValidEndpoint {
@@ -150,6 +145,10 @@ func (c *Config) GetRampUp() time.Duration {
 	return c.RampUp
 }
 
+func (c *Config) GetOutputPath() string {
+	return c.TestOutputPath
+}
+
 func (c *Config) GetEndpoints() []string {
 	result := make([]string, 0, len(c.Endpoints))
 	for k := range c.Endpoints {
@@ -158,17 +157,9 @@ func (c *Config) GetEndpoints() []string {
 	return result
 }
 
-func (c *Config) GetEndpoint(key string) (rps int, numClients int) {
+func (c *Config) GetEndpointRPS(key string) int {
 	if ep, ok := c.Endpoints[key]; ok {
-		return ep.RPS, ep.NumClients
+		return ep.RPS
 	}
-	return 0, 0
-}
-
-func (cfg *Config) GetTotalNumClients() int {
-	total := 0
-	for _, endpointData := range cfg.Endpoints {
-		total += endpointData.NumClients
-	}
-	return total
+	return 0
 }
