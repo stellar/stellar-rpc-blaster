@@ -53,7 +53,7 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 		case sample, ok := <-in:
 			if !ok {
 				// channel closed
-				if err := a.WriteOutput(); err != nil {
+				if err := WriteOutput(a); err != nil {
 					a.logger.Error(err)
 				}
 				return
@@ -62,9 +62,9 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 				a.logger.Error(err)
 			}
 		case <-ticker.C:
-			a.logger.Info(a.makeProgressString())
+			a.logger.Info(a)
 		case <-ctx.Done():
-			if err := a.WriteOutput(); err != nil {
+			if err := WriteOutput(a); err != nil {
 				a.logger.Error(errors.Wrap(err, "Failed to write output results"))
 			}
 			return
@@ -93,21 +93,6 @@ func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
 	}
 
 	return &a
-}
-
-func (a *Aggregator) Close() {
-}
-
-func (a *Aggregator) WriteOutput() error {
-	if a.writeOutputPath != "" {
-		results := a.Results()
-		if writeErr := WriteResultsJSON(results, a.writeOutputPath); writeErr != nil {
-			return errors.Wrapf(writeErr, "Failed to write results to %s", a.writeOutputPath)
-		}
-		a.logger.Infof("Results written to %s", a.writeOutputPath)
-		return nil
-	}
-	return nil
 }
 
 // computes and stores percentiles from the histogram
@@ -149,7 +134,7 @@ func (a *Aggregator) Record(sample Sample) error {
 }
 
 // constructs a logging string showing progress for all endpoints
-func (a *Aggregator) makeProgressString() string {
+func (a *Aggregator) String() string {
 	var line strings.Builder
 
 	elapsed := time.Since(a.start).Round(time.Second)
@@ -161,7 +146,7 @@ func (a *Aggregator) makeProgressString() string {
 
 	for _, endpointName := range a.orderedEndpoints {
 		endpointStats := a.stats[endpointName]
-		fmt.Fprintf(&line, "\n%-20s: %s", endpointName, endpointStats.outputStats())
+		fmt.Fprintf(&line, "\n%-20s: %v", endpointName, endpointStats)
 	}
 
 	if elapsed >= a.duration {
@@ -172,7 +157,7 @@ func (a *Aggregator) makeProgressString() string {
 }
 
 // outputs a prettified one-line summary of one endpoint's stats
-func (e *EndpointStats) outputStats() string {
+func (e *EndpointStats) String() string {
 	e.refreshPercentiles()
 	total := e.success + e.errors
 

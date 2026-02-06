@@ -129,21 +129,17 @@ func bindGenerateCliParameters(
 	seedPath *pflag.Flag,
 	ledgerWindow *pflag.Flag,
 ) config.RuntimeSettings {
-	settings := config.RuntimeSettings{}
-
-	viper.BindPFlag(rpcUrl.Name, rpcUrl)
-	viper.BindEnv(rpcUrl.Name, strutils.KebabToConstantCase(rpcUrl.Name))
-	settings.RpcUrl = viper.GetString(rpcUrl.Name)
-
-	viper.BindPFlag(seedPath.Name, seedPath)
-	viper.BindEnv(seedPath.Name, strutils.KebabToConstantCase(seedPath.Name))
-	settings.SeedPath = viper.GetString(seedPath.Name)
-
-	if ledgerWindow != nil {
-		viper.BindPFlag(ledgerWindow.Name, ledgerWindow)
-		viper.BindEnv(ledgerWindow.Name, strutils.KebabToConstantCase(ledgerWindow.Name))
-		settings.LedgerWindow = viper.GetUint32(ledgerWindow.Name)
+	bindFlag := func(flag *pflag.Flag) {
+		viper.BindPFlag(flag.Name, flag)
+		viper.BindEnv(flag.Name, strutils.KebabToConstantCase(flag.Name))
 	}
+	bindFlag(rpcUrl)
+	bindFlag(seedPath)
+
+	settings := config.RuntimeSettings{}
+	settings.RpcUrl = viper.GetString(rpcUrl.Name)
+	settings.SeedPath = viper.GetString(seedPath.Name)
+	settings.LedgerWindow = viper.GetViper().GetUint32(ledgerWindow.Name)
 
 	return settings
 }
