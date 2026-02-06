@@ -12,8 +12,8 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/log"
 
 	"github.com/stellar/stellar-rpc-blaster/internal/config"
-	"github.com/stellar/stellar-rpc-blaster/internal/engine"
-	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/metrics"
+	"github.com/stellar/stellar-rpc-blaster/internal/run/engine"
+	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/run/metrics"
 )
 
 const (
@@ -60,7 +60,19 @@ func (a *App) RunApp(runtimeSettings config.RuntimeSettings) error {
 			return err
 		}
 	case config.Generate:
-		return errors.New("Generate mode not implemented yet")
+		if runtimeSettings.SeedPath == "" {
+			missingFields = append(missingFields, "seed-path")
+		}
+		if runtimeSettings.LedgerWindow == 0 {
+			missingFields = append(missingFields, "ledger-window")
+		}
+
+		if len(missingFields) > 0 {
+			return errors.Errorf("missing required fields in Generate mode: %v", missingFields)
+		}
+		if err := a.runLoadTest(ctx); err != nil {
+			return err
+		}
 	default:
 		return errors.Errorf("unknown mode: %v", runtimeSettings.Mode)
 	}

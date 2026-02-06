@@ -29,6 +29,8 @@ type Config struct {
 	TestOutputPath string // path to write JSON results
 
 	// TODO: data-dependent endpoints & generate mode settings
+	SeedPath     string
+	LedgerWindow uint32
 }
 
 type Mode int
@@ -77,7 +79,7 @@ type EndpointConfig struct {
 func NewConfig(settings RuntimeSettings, logger *log.Entry) (Config, error) {
 	cfg := Config{}
 
-	if passphrase, err := util.FetchResponseField(settings.RpcUrl, "getNetwork", make(map[string]any), "passphrase"); err != nil {
+	if passphrase, err := util.FetchResponseField(settings.RpcUrl, "getNetwork", "passphrase", nil); err != nil {
 		return Config{}, errors.Wrap(err, "failed to fetch network passphrase")
 	} else {
 		cfg.NetworkPassphrase = passphrase
@@ -85,10 +87,18 @@ func NewConfig(settings RuntimeSettings, logger *log.Entry) (Config, error) {
 
 	cfg.ConfigPath = settings.ConfigPath
 	cfg.RpcUrl = settings.RpcUrl
-	cfg.Duration = settings.Duration
-	cfg.RampUp = settings.RampUp
 	cfg.Mode = settings.Mode
-	cfg.TestOutputPath = settings.TestOutputPath
+	switch cfg.Mode {
+	case Run:
+		cfg.Duration = settings.Duration
+		cfg.RampUp = settings.RampUp
+		cfg.TestOutputPath = settings.TestOutputPath
+	case Generate:
+		cfg.SeedPath = settings.SeedPath
+		cfg.LedgerWindow = settings.LedgerWindow
+	default:
+		return Config{}, errors.Errorf("unknown mode: %v", cfg.Mode)
+	}
 
 	logger.Infof("Requested %v mode", settings.Mode.Name())
 

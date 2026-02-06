@@ -84,7 +84,7 @@ func makeCommands() *cobra.Command {
 	runCmd.Flags().Duration("duration", time.Duration(0), "Duration to run the test (e.g., 5m)")
 	runCmd.Flags().Duration("ramp-up", time.Duration(0), "Ramp-up time before reaching target RPS (e.g., 30s)")
 
-	generateCmd.Flags().String("seed-path", "", "Path to seed data file output by generate")
+	generateCmd.Flags().String("seed-path", "./output/seed.json", "Path to seed data file output by generate")
 	generateCmd.Flags().Uint32("ledger-window", 1000, "Ledger window size for data generation")
 
 	runCmd.Flags().AddFlagSet(commonFlags)
@@ -135,7 +135,7 @@ func bindGenerateCliParameters(
 	}
 	bindFlag(rpcUrl)
 	bindFlag(seedPath)
-
+	bindFlag(ledgerWindow)
 	settings := config.RuntimeSettings{}
 	settings.RpcUrl = viper.GetString(rpcUrl.Name)
 	settings.SeedPath = viper.GetString(seedPath.Name)

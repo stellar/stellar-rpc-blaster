@@ -11,7 +11,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/log"
 
 	"github.com/stellar/stellar-rpc-blaster/internal/config"
-	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/metrics"
+	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/run/metrics"
 )
 
 type endpointBlast struct {
@@ -23,7 +23,6 @@ type endpointBlast struct {
 // RunVegeta runs a load test using Vegeta using the config settings through the LoadTestSettings interface
 // Sets up shared HTTP client, constructs per-endpoint blast configs, and fires off the blasts asynchronously
 func RunVegeta(ctx context.Context, logger *log.Entry, cfg config.Config, out chan<- blasterMetrics.Sample) error {
-	// have duration + grace period for in-flight requests as timeout to avoid hanging
 	ctx, cancel := context.WithTimeout(ctx, cfg.Duration)
 	defer cancel()
 

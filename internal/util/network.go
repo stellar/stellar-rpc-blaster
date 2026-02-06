@@ -10,7 +10,7 @@ import (
 )
 
 // FetchNetworkPassphrase makes a getNetwork RPC call to fetch the network passphrase
-func FetchResponseField(rpcURL string, endpoint string, params map[string]any, field string) (string, error) {
+func FetchResponseField(rpcURL string, endpoint string, field string, params map[string]any) (string, error) {
 	reqBody := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,

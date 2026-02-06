@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/metrics"
+	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/run/metrics"
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 )
 
