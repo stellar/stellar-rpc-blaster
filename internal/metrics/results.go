@@ -7,6 +7,8 @@ import (
 
 // JSON serializable final results structure, holding results for all endpoints
 type Results struct {
+	Start           time.Time                  `json:"start"`
+	End             time.Time                  `json:"end"`
 	DurationSeconds float64                    `json:"duration_seconds"`
 	Endpoints       map[string]*EndpointResult `json:"endpoints"`
 }
@@ -35,6 +37,8 @@ func (a *Aggregator) Results() *Results {
 
 	durationSeconds := time.Since(a.start).Round(time.Second).Seconds()
 	results := &Results{
+		Start:           a.start.UTC(),
+		End:             time.Now().UTC(),
 		DurationSeconds: durationSeconds,
 		Endpoints:       make(map[string]*EndpointResult, len(a.stats)),
 	}

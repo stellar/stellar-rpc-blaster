@@ -3,7 +3,7 @@ CLI load testing tool for Stellar RPC
 
 This repo is home to our RPC load testing tool. It has the ability to test various endpoints on one's RPC server. ## Run Tests
 
-Example usage on localhost RPC testnet instance:
+Example usage on localhost RPC testnet instance (note that instance must be running separately):
 ./stellar-rpc-blaster run \
   --rpc-url "http://127.0.0.1:8000" \
   --config-path "./internal/config/config.example.toml" \
