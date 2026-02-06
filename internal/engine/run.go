@@ -72,7 +72,7 @@ func RunVegeta(ctx context.Context, logger *log.Entry, cfg config.Config, out ch
 	var wg sync.WaitGroup
 	for _, blast := range endpointBlasts {
 		wg.Go(func() {
-			blastAtEndpoint(ctx, logger, blast.EndpointBlastConfig, blast.BlastPacer, newBlaster, out)
+			blastAtEndpoint(ctx, blast.EndpointBlastConfig, blast.BlastPacer, newBlaster, out)
 		})
 	}
 	wg.Wait()

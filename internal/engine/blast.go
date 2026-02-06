@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/stellar/go-stellar-sdk/support/log"
 	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/metrics"
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 )
@@ -18,7 +17,6 @@ type EndpointBlastConfig struct {
 // Run the blaster at a given endpoint
 func blastAtEndpoint(
 	ctx context.Context,
-	logger *log.Entry,
 	endpointCfg EndpointBlastConfig,
 	blastPacer RampToConstantPacer,
 	newBlaster func() *vegeta.Attacker,
@@ -51,11 +49,8 @@ func flushBlastResults(
 		out <- blasterMetrics.Sample{
 			Endpoint:   endpointKey,
 			CurrentRPS: expectedRPS,
-			Timestamp:  result.Timestamp,
 			Latency:    result.Latency,
 			Code:       result.Code,
-			BytesIn:    result.BytesIn,
-			BytesOut:   result.BytesOut,
 			Err:        result.Error,
 			OK:         result.Error == "" && result.Code >= 200 && result.Code < 300,
 		}
