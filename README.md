@@ -9,3 +9,12 @@ Example usage on localhost RPC testnet instance (note that instance must be runn
   --config-path "./internal/config/config.example.toml" \
   --duration 30s \
   --ramp-up 10s
+
+To generate data for the `generate` command, example usage is as follows:
+```
+./stellar-rpc-loadtest generate \
+  --rpc-url <RPC_URL> \
+  --network-passphrase <NETWORK_PASSPHRASE> \
+  --output <PATH_TO_REQUEST_DATA_DAT> \
+  [--ledger-window <NUM_LEDGERS>]
+  ```

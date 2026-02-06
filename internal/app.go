@@ -12,6 +12,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/log"
 
 	"github.com/stellar/stellar-rpc-blaster/internal/config"
+	"github.com/stellar/stellar-rpc-blaster/internal/generate"
 	"github.com/stellar/stellar-rpc-blaster/internal/run/engine"
 	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/run/metrics"
 )
@@ -114,4 +115,9 @@ func (a *App) runLoadTest(ctx context.Context) error {
 	wg.Wait()
 
 	return err
+}
+
+func (a *App) runGenerate(ctx context.Context) error {
+	g := generate.NewGenerator(a.config)
+	return g.Generate(ctx, a.logger)
 }

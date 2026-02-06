@@ -82,7 +82,7 @@ func NewConfig(settings RuntimeSettings, logger *log.Entry) (Config, error) {
 	if passphrase, err := util.FetchResponseField(settings.RpcUrl, "getNetwork", "passphrase", nil); err != nil {
 		return Config{}, errors.Wrap(err, "failed to fetch network passphrase")
 	} else {
-		cfg.NetworkPassphrase = passphrase
+		cfg.NetworkPassphrase = passphrase.(string)
 	}
 
 	cfg.ConfigPath = settings.ConfigPath
