@@ -106,6 +106,9 @@ func (e *EndpointStats) refreshPercentiles() {
 }
 
 func (a *Aggregator) Record(sample Sample) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	if _, ok := a.stats[sample.Endpoint]; !ok {
 		return errors.New("unknown endpoint in sample: " + sample.Endpoint)
 	}
