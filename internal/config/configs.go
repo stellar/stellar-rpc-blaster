@@ -2,6 +2,8 @@ package config
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/pelletier/go-toml"
@@ -75,7 +77,7 @@ type EndpointConfig struct {
 func NewConfig(settings RuntimeSettings, logger *log.Entry) (Config, error) {
 	cfg := Config{}
 
-	if passphrase, err := util.FetchResponseField(settings.RpcUrl, "getNetwork", "passphrase"); err != nil {
+	if passphrase, err := util.FetchResponseField(settings.RpcUrl, "getNetwork", make(map[string]any), "passphrase"); err != nil {
 		return Config{}, errors.Wrap(err, "failed to fetch network passphrase")
 	} else {
 		cfg.NetworkPassphrase = passphrase
@@ -134,29 +136,8 @@ func (c *Config) validateEndpointConfig() error {
 	return nil
 }
 
-// Implement config getters
-func (c *Config) GetRpcUrl() string {
-	return c.RpcUrl
-}
-
-func (c *Config) GetDuration() time.Duration {
-	return c.Duration
-}
-
-func (c *Config) GetRampUp() time.Duration {
-	return c.RampUp
-}
-
-func (c *Config) GetOutputPath() string {
-	return c.TestOutputPath
-}
-
 func (c *Config) GetEndpoints() []string {
-	result := make([]string, 0, len(c.Endpoints))
-	for k := range c.Endpoints {
-		result = append(result, k)
-	}
-	return result
+	return slices.Collect(maps.Keys(c.Endpoints))
 }
 
 func (c *Config) GetEndpointRPS(key string) int {

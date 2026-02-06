@@ -39,7 +39,7 @@ type EndpointStats struct {
 	errors      uint64
 	errorTypes  map[string]ErrorResult
 	percentiles map[float64]time.Duration
-	targetRPS   int
+	targetRPS   float64
 	achievedRPS float64
 }
 
@@ -64,6 +64,9 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 		case <-ticker.C:
 			a.logger.Info(a)
 		case <-ctx.Done():
+			if err := ctx.Err(); err != nil {
+				a.logger.Errorf("aggregator.Run terminating due to context error: %v", err)
+			}
 			if err := WriteOutput(a); err != nil {
 				a.logger.Error(errors.Wrap(err, "Failed to write output results"))
 			}
@@ -77,8 +80,8 @@ func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
 		logger:          logger,
 		stats:           make(map[string]*EndpointStats),
 		start:           time.Now(),
-		duration:        settings.GetDuration(),
-		writeOutputPath: settings.GetOutputPath(),
+		duration:        settings.Duration,
+		writeOutputPath: settings.TestOutputPath,
 	}
 	endpoints := settings.GetEndpoints()
 	sort.Strings(endpoints)
@@ -161,7 +164,7 @@ func (e *EndpointStats) String() string {
 	e.refreshPercentiles()
 	total := e.success + e.errors
 
-	out := fmt.Sprintf("%6d req (%6d ok, %4d err) | %6d target RPS vs. %6.2f achieved RPS | ", total, e.success, e.errors, e.targetRPS, e.achievedRPS)
+	out := fmt.Sprintf("%6d req (%6d ok, %4d err) | %6.2f target RPS vs. %6.2f achieved RPS | ", total, e.success, e.errors, e.targetRPS, e.achievedRPS)
 	for _, p := range capturedPercentiles {
 		out += fmt.Sprintf("p%4.1f: %8s, ", p, fmtDuration(e.percentiles[p]))
 	}

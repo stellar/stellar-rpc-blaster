@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"time"
 
 	"github.com/stellar/go-stellar-sdk/support/log"
 	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/metrics"
@@ -30,43 +31,33 @@ func blastAtEndpoint(
 		return
 	}
 
+	start := time.Now()
 	blaster := newBlaster()
 	results := blaster.Attack(endpointCfg.Targeter, blastPacer, blastPacer.TotalDuration, endpointCfg.EndpointKey)
-	flushBlastResults(ctx, logger, endpointCfg.EndpointKey, blastPacer.MaxRPS, results, out)
+	flushBlastResults(endpointCfg.EndpointKey, blastPacer, start, results, out)
 }
 
 // Reads results from a Vegeta results channel and forwards them to the output channel as a blasterMetrics.Sample
 func flushBlastResults(
-	ctx context.Context,
-	logger *log.Entry,
 	endpointKey string,
-	targetRPS int,
+	pacer RampToConstantPacer,
+	start time.Time,
 	results <-chan *vegeta.Result,
 	out chan<- blasterMetrics.Sample,
 ) {
-	for {
-		select {
-		case <-ctx.Done():
-			err := ctx.Err()
-			if err != nil {
-				logger.Errorf("flushBlastResults for endpoint %s terminating due to context error: %v", endpointKey, err)
-			}
-			return
-		case result, ok := <-results:
-			if !ok {
-				return
-			}
-			out <- blasterMetrics.Sample{
-				Endpoint:   endpointKey,
-				CurrentRPS: targetRPS,
-				Timestamp:  result.Timestamp,
-				Latency:    result.Latency,
-				Code:       result.Code,
-				BytesIn:    result.BytesIn,
-				BytesOut:   result.BytesOut,
-				Err:        result.Error,
-				OK:         result.Error == "" && result.Code >= 200 && result.Code < 300,
-			}
+	for result := range results {
+		elapsed := time.Since(start)
+		expectedRPS := pacer.Hits(elapsed) / elapsed.Seconds()
+		out <- blasterMetrics.Sample{
+			Endpoint:   endpointKey,
+			CurrentRPS: expectedRPS,
+			Timestamp:  result.Timestamp,
+			Latency:    result.Latency,
+			Code:       result.Code,
+			BytesIn:    result.BytesIn,
+			BytesOut:   result.BytesOut,
+			Err:        result.Error,
+			OK:         result.Error == "" && result.Code >= 200 && result.Code < 300,
 		}
 	}
 }

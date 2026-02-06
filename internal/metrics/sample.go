@@ -5,9 +5,9 @@ import (
 )
 
 type Sample struct {
-	Endpoint   string    // config key / JSON-RPC method (e.g. "getHealth")
-	CurrentRPS int       // RPS at the time of the sample
-	Timestamp  time.Time // timestamp of the sample
+	Endpoint   string        // config key / JSON-RPC method (e.g. "getHealth")
+	CurrentRPS float64       // expected cumulative RPS at the time of the sample
+	Timestamp  time.Time     // timestamp of the sample
 	Latency    time.Duration
 	Code       uint16
 	BytesIn    uint64

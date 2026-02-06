@@ -24,7 +24,7 @@ type endpointBlast struct {
 // Sets up shared HTTP client, constructs per-endpoint blast configs, and fires off the blasts asynchronously
 func RunVegeta(ctx context.Context, logger *log.Entry, cfg config.Config, out chan<- blasterMetrics.Sample) error {
 	// have duration + grace period for in-flight requests as timeout to avoid hanging
-	ctx, cancel := context.WithTimeout(ctx, cfg.GetDuration())
+	ctx, cancel := context.WithTimeout(ctx, cfg.Duration)
 	defer cancel()
 
 	// Shared HTTP client with connection pooling to prevent ephemeral port exhaustion
@@ -51,7 +51,7 @@ func RunVegeta(ctx context.Context, logger *log.Entry, cfg config.Config, out ch
 		if err != nil {
 			return errors.Wrap(err, "error marshalling JSON request")
 		}
-		targeter := NewJSONRPCTargeter(cfg.GetRpcUrl(), body)
+		targeter := NewJSONRPCTargeter(cfg.RpcUrl, body)
 
 		endpointBlasts = append(endpointBlasts, endpointBlast{
 			EndpointBlastConfig: EndpointBlastConfig{
@@ -60,8 +60,8 @@ func RunVegeta(ctx context.Context, logger *log.Entry, cfg config.Config, out ch
 				Targeter:    targeter,
 			},
 			BlastPacer: RampToConstantPacer{
-				TotalDuration: cfg.GetDuration(),
-				RampDuration:  cfg.GetRampUp(),
+				TotalDuration: cfg.Duration,
+				RampDuration:  cfg.RampUp,
 				StartRPS:      1,
 				MaxRPS:        rps,
 			},
@@ -71,11 +71,9 @@ func RunVegeta(ctx context.Context, logger *log.Entry, cfg config.Config, out ch
 	// Fire!
 	var wg sync.WaitGroup
 	for _, blast := range endpointBlasts {
-		wg.Add(1)
-		go func(eb endpointBlast) {
-			defer wg.Done()
-			blastAtEndpoint(ctx, logger, eb.EndpointBlastConfig, eb.BlastPacer, newBlaster, out)
-		}(blast)
+		wg.Go(func() {
+			blastAtEndpoint(ctx, logger, blast.EndpointBlastConfig, blast.BlastPacer, newBlaster, out)
+		})
 	}
 	wg.Wait()
 	return nil

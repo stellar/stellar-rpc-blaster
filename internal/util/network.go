@@ -10,11 +10,12 @@ import (
 )
 
 // FetchNetworkPassphrase makes a getNetwork RPC call to fetch the network passphrase
-func FetchResponseField(rpcURL string, endpoint string, field string) (string, error) {
+func FetchResponseField(rpcURL string, endpoint string, params map[string]any, field string) (string, error) {
 	reqBody := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  endpoint,
+		"params":  params,
 	}
 
 	jsonData, err := json.Marshal(reqBody)
@@ -34,7 +35,7 @@ func FetchResponseField(rpcURL string, endpoint string, field string) (string, e
 	}
 
 	var result struct {
-		Result map[string]interface{} `json:"result"`
+		Result map[string]any `json:"result"`
 		Error  *struct {
 			Code    int    `json:"code"`
 			Message string `json:"message"`
