@@ -8,7 +8,7 @@
 rps = 10
 
 [endpoints.getNetwork]
-rps = 2000
+rps = 2000000
 
 [endpoints.getVersionInfo]
 rps = 5

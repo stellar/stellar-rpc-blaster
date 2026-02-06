@@ -5,7 +5,6 @@ This repo is home to our RPC load testing tool. It has the ability to test vario
 
 Example usage on localhost RPC testnet instance:
 ./stellar-rpc-blaster run \
-  --network-passphrase "Test SDF Network ; September 2015" \
   --rpc-url "http://127.0.0.1:8000" \
   --config-path "./internal/config/config.example.toml" \
   --duration 30s \

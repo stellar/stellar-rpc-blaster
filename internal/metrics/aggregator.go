@@ -12,7 +12,7 @@ import (
 	"github.com/HdrHistogram/hdrhistogram-go"
 	"github.com/pkg/errors"
 
-	types "github.com/stellar/stellar-rpc-blaster/internal/config"
+	"github.com/stellar/stellar-rpc-blaster/internal/config"
 
 	"github.com/stellar/go-stellar-sdk/support/log"
 )
@@ -72,7 +72,7 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 	}
 }
 
-func NewAggregator(logger *log.Entry, settings types.LoadTestSettings) *Aggregator {
+func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
 	a := Aggregator{
 		logger:          logger,
 		stats:           make(map[string]*EndpointStats),

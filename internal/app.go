@@ -11,6 +11,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/support/log"
 
+	"github.com/stellar/stellar-rpc-blaster/internal/config"
 	"github.com/stellar/stellar-rpc-blaster/internal/engine"
 	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/metrics"
 )
@@ -23,7 +24,7 @@ var logger = log.New().WithField("service", nameSpace)
 
 type App struct {
 	logger     *log.Entry
-	config     *Config
+	config     config.Config
 	aggregator *blasterMetrics.Aggregator
 }
 
@@ -33,7 +34,7 @@ func NewApp() *App {
 	return app
 }
 
-func (a *App) RunApp(runtimeSettings RuntimeSettings) error {
+func (a *App) RunApp(runtimeSettings config.RuntimeSettings) error {
 	// Handle OS signals and ctx cancellation to terminate the service
 	ctx, cancel := signal.NotifyContext(runtimeSettings.Ctx, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -45,15 +46,9 @@ func (a *App) RunApp(runtimeSettings RuntimeSettings) error {
 	defer a.close()
 
 	var missingFields []string
-	if runtimeSettings.RpcUrl == "" {
-		missingFields = append(missingFields, "rpc-url")
-	}
-	if runtimeSettings.NetworkPassphrase == "" {
-		missingFields = append(missingFields, "network-passphrase")
-	}
 
 	switch runtimeSettings.Mode {
-	case Run:
+	case config.Run:
 		if runtimeSettings.ConfigPath == "" {
 			missingFields = append(missingFields, "config-path")
 		}
@@ -64,7 +59,7 @@ func (a *App) RunApp(runtimeSettings RuntimeSettings) error {
 		if err := a.runLoadTest(ctx); err != nil {
 			return err
 		}
-	case Generate:
+	case config.Generate:
 		return errors.New("Generate mode not implemented yet")
 	default:
 		return errors.Errorf("unknown mode: %v", runtimeSettings.Mode)
@@ -74,12 +69,12 @@ func (a *App) RunApp(runtimeSettings RuntimeSettings) error {
 	return nil
 }
 
-func (a *App) init(runtimeSettings RuntimeSettings) error {
+func (a *App) init(runtimeSettings config.RuntimeSettings) error {
 	var err error
 
 	a.logger.Info("Starting Blaster")
 
-	if a.config, err = NewConfig(runtimeSettings); err != nil {
+	if a.config, err = config.NewConfig(runtimeSettings, a.logger); err != nil {
 		return errors.Wrap(err, "Could not load configuration")
 	}
 	return nil
@@ -102,7 +97,7 @@ func (a *App) runLoadTest(ctx context.Context) error {
 		a.aggregator.Run(ctx, out)
 	})
 
-	err := engine.RunVegeta(ctx, a.config, out)
+	err := engine.RunVegeta(ctx, a.logger, a.config, out)
 	close(out)
 	wg.Wait()
 

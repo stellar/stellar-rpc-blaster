@@ -10,9 +10,10 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/strutils"
 
 	blaster "github.com/stellar/stellar-rpc-blaster/internal"
+	"github.com/stellar/stellar-rpc-blaster/internal/config"
 )
 
-var blasterCmdRunner = func(blasterSettings blaster.RuntimeSettings) error {
+var blasterCmdRunner = func(blasterSettings config.RuntimeSettings) error {
 	blasterInstance := blaster.NewApp()
 	return blasterInstance.RunApp(blasterSettings)
 }
@@ -40,13 +41,12 @@ func makeCommands() *cobra.Command {
 		Short: "Run a load test",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			settings := bindRunCliParameters(cmd.Flags().Lookup("config-path"),
-				cmd.Flags().Lookup("network-passphrase"),
 				cmd.Flags().Lookup("rpc-url"),
 				cmd.Flags().Lookup("duration"),
 				cmd.Flags().Lookup("ramp-up"),
 				cmd.Flags().Lookup("test-output-path"),
 			)
-			settings.Mode = blaster.Run
+			settings.Mode = config.Run
 			settings.Ctx = cmd.Context()
 			if settings.Ctx == nil {
 				settings.Ctx = context.Background()
@@ -61,11 +61,10 @@ func makeCommands() *cobra.Command {
 		Short: "Generate load test data",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			settings := bindGenerateCliParameters(cmd.Flags().Lookup("rpc-url"),
-				cmd.Flags().Lookup("network-passphrase"),
 				cmd.Flags().Lookup("seed-path"),
 				cmd.Flags().Lookup("ledger-window"),
 			)
-			settings.Mode = blaster.Generate
+			settings.Mode = config.Generate
 			settings.Ctx = cmd.Context()
 			if settings.Ctx == nil {
 				settings.Ctx = context.Background()
@@ -78,7 +77,6 @@ func makeCommands() *cobra.Command {
 	rootCmd.AddCommand(generateCmd)
 
 	commonFlags := pflag.NewFlagSet("common_flags", pflag.ExitOnError)
-	commonFlags.String("network-passphrase", "", "Network passphrase for the target network")
 	commonFlags.String("rpc-url", "", "Target RPC server URL")
 
 	runCmd.Flags().String("config-path", "", "Path to config TOML file")
@@ -99,26 +97,23 @@ func makeCommands() *cobra.Command {
 // checks both flags and environment variables
 func bindRunCliParameters(
 	cfgPath *pflag.Flag,
-	networkPassphrase *pflag.Flag,
 	rpcUrl *pflag.Flag,
 	duration *pflag.Flag,
 	rampUp *pflag.Flag,
 	testOutputPath *pflag.Flag,
-) blaster.RuntimeSettings {
+) config.RuntimeSettings {
 	bindFlag := func(flag *pflag.Flag) {
 		viper.BindPFlag(flag.Name, flag)
 		viper.BindEnv(flag.Name, strutils.KebabToConstantCase(flag.Name))
 	}
 	bindFlag(cfgPath)
-	bindFlag(networkPassphrase)
 	bindFlag(rpcUrl)
 	bindFlag(duration)
 	bindFlag(rampUp)
 	bindFlag(testOutputPath)
 
-	settings := blaster.RuntimeSettings{}
+	settings := config.RuntimeSettings{}
 	settings.ConfigPath = viper.GetString(cfgPath.Name)
-	settings.NetworkPassphrase = viper.GetString(networkPassphrase.Name)
 	settings.RpcUrl = viper.GetString(rpcUrl.Name)
 	settings.Duration = viper.GetViper().GetDuration(duration.Name)
 	settings.RampUp = viper.GetViper().GetDuration(rampUp.Name)
@@ -131,19 +126,14 @@ func bindRunCliParameters(
 // checks both flags and environment variables
 func bindGenerateCliParameters(
 	rpcUrl *pflag.Flag,
-	networkPassphrase *pflag.Flag,
 	seedPath *pflag.Flag,
 	ledgerWindow *pflag.Flag,
-) blaster.RuntimeSettings {
-	settings := blaster.RuntimeSettings{}
+) config.RuntimeSettings {
+	settings := config.RuntimeSettings{}
 
 	viper.BindPFlag(rpcUrl.Name, rpcUrl)
 	viper.BindEnv(rpcUrl.Name, strutils.KebabToConstantCase(rpcUrl.Name))
 	settings.RpcUrl = viper.GetString(rpcUrl.Name)
-
-	viper.BindPFlag(networkPassphrase.Name, networkPassphrase)
-	viper.BindEnv(networkPassphrase.Name, strutils.KebabToConstantCase(networkPassphrase.Name))
-	settings.NetworkPassphrase = viper.GetString(networkPassphrase.Name)
 
 	viper.BindPFlag(seedPath.Name, seedPath)
 	viper.BindEnv(seedPath.Name, strutils.KebabToConstantCase(seedPath.Name))

@@ -1,4 +1,4 @@
-package blaster
+package config
 
 import (
 	"context"
@@ -6,20 +6,34 @@ import (
 
 	"github.com/pelletier/go-toml"
 	"github.com/pkg/errors"
+
+	"github.com/stellar/go-stellar-sdk/support/log"
+
+	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
-const (
-	GetHealthField       = "getHealth"
-	GetNetworkField      = "getNetwork"
-	GetVersionInfoField  = "getVersionInfo"
-	GetLatestLedgerField = "getLatestLedger"
-)
+type Config struct {
+	Endpoints map[string]EndpointConfig `toml:"endpoints"`
+
+	// Common settings
+	ConfigPath        string
+	NetworkPassphrase string
+	RpcUrl            string
+	Mode              Mode
+
+	// Run mode settings
+	Duration       time.Duration
+	RampUp         time.Duration
+	TestOutputPath string // path to write JSON results
+
+	// TODO: data-dependent endpoints & generate mode settings
+}
 
 type Mode int
 
 const (
-	_   Mode = iota
-	Run Mode = iota
+	_ Mode = iota
+	Run
 	Generate
 )
 
@@ -58,43 +72,31 @@ type EndpointConfig struct {
 	DataPath string `toml:"data_path,omitempty"` // path to data file for data-dependent endpoints
 }
 
-type Config struct {
-	Endpoints map[string]EndpointConfig `toml:"endpoints"`
+func NewConfig(settings RuntimeSettings, logger *log.Entry) (Config, error) {
+	cfg := Config{}
 
-	// Common settings
-	ConfigPath        string
-	NetworkPassphrase string
-	RpcUrl            string
-	Mode              Mode
+	if passphrase, err := util.FetchResponseField(settings.RpcUrl, "getNetwork", "passphrase"); err != nil {
+		return Config{}, errors.Wrap(err, "failed to fetch network passphrase")
+	} else {
+		cfg.NetworkPassphrase = passphrase
+	}
 
-	// Run mode settings
-	Duration       time.Duration
-	RampUp         time.Duration
-	TestOutputPath string // path to write JSON results
-
-	// TODO: data-dependent endpoints & generate mode settings
-}
-
-func NewConfig(settings RuntimeSettings) (*Config, error) {
-	config := &Config{}
-
-	config.ConfigPath = settings.ConfigPath
-	config.NetworkPassphrase = settings.NetworkPassphrase
-	config.RpcUrl = settings.RpcUrl
-	config.Duration = settings.Duration
-	config.RampUp = settings.RampUp
-	config.Mode = settings.Mode
-	config.TestOutputPath = settings.TestOutputPath
+	cfg.ConfigPath = settings.ConfigPath
+	cfg.RpcUrl = settings.RpcUrl
+	cfg.Duration = settings.Duration
+	cfg.RampUp = settings.RampUp
+	cfg.Mode = settings.Mode
+	cfg.TestOutputPath = settings.TestOutputPath
 
 	logger.Infof("Requested %v mode", settings.Mode.Name())
 
 	var err error
-	if err = config.processToml(settings.ConfigPath); err != nil {
-		return nil, err
+	if err = cfg.processToml(settings.ConfigPath); err != nil {
+		return Config{}, err
 	}
 	logger.Infof("Successfully loaded config from %s", settings.ConfigPath)
 
-	return config, nil
+	return cfg, nil
 }
 
 func (c *Config) processToml(tomlPath string) error {
@@ -132,7 +134,7 @@ func (c *Config) validateEndpointConfig() error {
 	return nil
 }
 
-// Implement config.LoadTestSettings interface
+// Implement config getters
 func (c *Config) GetRpcUrl() string {
 	return c.RpcUrl
 }

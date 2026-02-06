@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 
+	"github.com/stellar/go-stellar-sdk/support/log"
 	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/metrics"
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 )
@@ -16,6 +17,7 @@ type EndpointBlastConfig struct {
 // Run the blaster at a given endpoint
 func blastAtEndpoint(
 	ctx context.Context,
+	logger *log.Entry,
 	endpointCfg EndpointBlastConfig,
 	blastPacer RampToConstantPacer,
 	newBlaster func() *vegeta.Attacker,
@@ -30,12 +32,13 @@ func blastAtEndpoint(
 
 	blaster := newBlaster()
 	results := blaster.Attack(endpointCfg.Targeter, blastPacer, blastPacer.TotalDuration, endpointCfg.EndpointKey)
-	flushBlastResults(ctx, endpointCfg.EndpointKey, blastPacer.MaxRPS, results, out)
+	flushBlastResults(ctx, logger, endpointCfg.EndpointKey, blastPacer.MaxRPS, results, out)
 }
 
 // Reads results from a Vegeta results channel and forwards them to the output channel as a blasterMetrics.Sample
 func flushBlastResults(
 	ctx context.Context,
+	logger *log.Entry,
 	endpointKey string,
 	targetRPS int,
 	results <-chan *vegeta.Result,
@@ -44,6 +47,10 @@ func flushBlastResults(
 	for {
 		select {
 		case <-ctx.Done():
+			err := ctx.Err()
+			if err != nil {
+				logger.Errorf("flushBlastResults for endpoint %s terminating due to context error: %v", endpointKey, err)
+			}
 			return
 		case result, ok := <-results:
 			if !ok {
