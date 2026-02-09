@@ -2,6 +2,7 @@ package blaster
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/internal/generate"
 	"github.com/stellar/stellar-rpc-blaster/internal/run/engine"
 	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/run/metrics"
+	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
 const (
@@ -24,9 +26,9 @@ const (
 var logger = log.New().WithField("service", nameSpace)
 
 type App struct {
-	logger     *log.Entry
-	config     config.Config
-	aggregator *blasterMetrics.Aggregator
+	logger *log.Entry
+	config config.Config
+	client *http.Client
 }
 
 func NewApp() *App {
@@ -40,7 +42,7 @@ func (a *App) RunApp(runtimeSettings config.RuntimeSettings) error {
 	ctx, cancel := signal.NotifyContext(runtimeSettings.Ctx, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	if err := a.init(runtimeSettings); err != nil {
+	if err := a.init(ctx, runtimeSettings); err != nil {
 		return err
 	}
 
@@ -82,12 +84,13 @@ func (a *App) RunApp(runtimeSettings config.RuntimeSettings) error {
 	return nil
 }
 
-func (a *App) init(runtimeSettings config.RuntimeSettings) error {
+func (a *App) init(ctx context.Context, runtimeSettings config.RuntimeSettings) error {
 	var err error
 
 	a.logger.Info("Starting Blaster")
 
-	if a.config, err = config.NewConfig(runtimeSettings, a.logger); err != nil {
+	a.client = util.SharedHTTPClient()
+	if a.config, err = config.NewConfig(ctx, runtimeSettings, a.logger, a.client); err != nil {
 		return errors.Wrap(err, "Could not load configuration")
 	}
 	return nil
@@ -102,15 +105,15 @@ func (a *App) close() {
 func (a *App) runLoadTest(ctx context.Context) error {
 	out := make(chan blasterMetrics.Sample, 1000)
 
-	a.aggregator = blasterMetrics.NewAggregator(a.logger, a.config)
+	aggregator := blasterMetrics.NewAggregator(a.logger, a.config)
 
 	// Aggregator goroutine: consumes samples and prints every 5s
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		a.aggregator.Run(ctx, out)
+		aggregator.Run(ctx, out)
 	})
 
-	err := engine.RunVegeta(ctx, a.logger, a.config, out)
+	err := engine.RunVegeta(ctx, a.logger, a.config, a.client, out)
 	close(out)
 	wg.Wait()
 

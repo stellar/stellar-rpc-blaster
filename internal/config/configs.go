@@ -3,19 +3,20 @@ package config
 import (
 	"context"
 	"maps"
+	"net/http"
 	"slices"
 	"time"
 
 	"github.com/pelletier/go-toml"
 	"github.com/pkg/errors"
 
+	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/support/log"
-
-	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
 type Config struct {
 	Endpoints map[string]EndpointConfig `toml:"endpoints"`
+	RpcClient *rpcclient.Client
 
 	// Common settings
 	ConfigPath        string
@@ -76,13 +77,20 @@ type EndpointConfig struct {
 	DataPath string `toml:"data_path,omitempty"` // path to data file for data-dependent endpoints
 }
 
-func NewConfig(settings RuntimeSettings, logger *log.Entry) (Config, error) {
+func NewConfig(
+	ctx context.Context,
+	settings RuntimeSettings,
+	logger *log.Entry,
+	client *http.Client,
+) (Config, error) {
 	cfg := Config{}
+	cfg.RpcClient = rpcclient.NewClient(settings.RpcUrl, client)
 
-	if passphrase, err := util.FetchResponseField(settings.RpcUrl, "getNetwork", "passphrase", nil); err != nil {
+	getNetworkResponse, err := cfg.RpcClient.GetNetwork(ctx)
+	if err != nil {
 		return Config{}, errors.Wrap(err, "failed to fetch network passphrase")
 	} else {
-		cfg.NetworkPassphrase = passphrase.(string)
+		cfg.NetworkPassphrase = getNetworkResponse.Passphrase
 	}
 
 	cfg.ConfigPath = settings.ConfigPath
@@ -102,8 +110,7 @@ func NewConfig(settings RuntimeSettings, logger *log.Entry) (Config, error) {
 
 	logger.Infof("Requested %v mode", settings.Mode.Name())
 
-	var err error
-	if err = cfg.processToml(settings.ConfigPath); err != nil {
+	if err := cfg.processToml(settings.ConfigPath); err != nil {
 		return Config{}, err
 	}
 	logger.Infof("Successfully loaded config from %s", settings.ConfigPath)

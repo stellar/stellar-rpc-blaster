@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/stellar/stellar-rpc-blaster/internal/config"
 	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/run/metrics"
+	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
 type endpointBlast struct {
@@ -22,15 +24,18 @@ type endpointBlast struct {
 // Entry/exit point from app.go
 // RunVegeta runs a load test using Vegeta using the config settings through the LoadTestSettings interface
 // Sets up shared HTTP client, constructs per-endpoint blast configs, and fires off the blasts asynchronously
-func RunVegeta(ctx context.Context, logger *log.Entry, cfg config.Config, out chan<- blasterMetrics.Sample) error {
+func RunVegeta(
+	ctx context.Context,
+	logger *log.Entry,
+	cfg config.Config,
+	httpClient *http.Client,
+	out chan<- blasterMetrics.Sample,
+) error {
 	ctx, cancel := context.WithTimeout(ctx, cfg.Duration)
 	defer cancel()
 
-	// Shared HTTP client with connection pooling to prevent ephemeral port exhaustion
-	httpClient, limits := SharedHTTPClient()
-
 	newBlaster := func() *vegeta.Attacker {
-		return NewBlasterWithClient(httpClient, limits)
+		return NewBlasterWithClient(httpClient, util.MaxWorkers)
 	}
 
 	// Construct endpoint blast configs
