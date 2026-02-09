@@ -30,7 +30,7 @@ type Config struct {
 	TestOutputPath string // path to write JSON results
 
 	// TODO: data-dependent endpoints & generate mode settings
-	SeedPath     string
+	OutputPath   string
 	LedgerWindow uint32
 }
 
@@ -64,7 +64,7 @@ type RuntimeSettings struct {
 	RampUp         time.Duration
 
 	// Generate mode settings
-	SeedPath     string
+	OutputPath   string
 	LedgerWindow uint32
 
 	Mode Mode
@@ -96,23 +96,22 @@ func NewConfig(
 	cfg.ConfigPath = settings.ConfigPath
 	cfg.RpcUrl = settings.RpcUrl
 	cfg.Mode = settings.Mode
+	logger.Debugf("Requested %v mode", settings.Mode.Name())
 	switch cfg.Mode {
 	case Run:
 		cfg.Duration = settings.Duration
 		cfg.RampUp = settings.RampUp
 		cfg.TestOutputPath = settings.TestOutputPath
+		if err := cfg.processToml(settings.ConfigPath); err != nil {
+			return Config{}, err
+		}
 	case Generate:
-		cfg.SeedPath = settings.SeedPath
+		cfg.OutputPath = settings.OutputPath
 		cfg.LedgerWindow = settings.LedgerWindow
 	default:
 		return Config{}, errors.Errorf("unknown mode: %v", cfg.Mode)
 	}
 
-	logger.Infof("Requested %v mode", settings.Mode.Name())
-
-	if err := cfg.processToml(settings.ConfigPath); err != nil {
-		return Config{}, err
-	}
 	logger.Infof("Successfully loaded config from %s", settings.ConfigPath)
 
 	return cfg, nil

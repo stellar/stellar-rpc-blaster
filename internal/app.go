@@ -63,17 +63,14 @@ func (a *App) RunApp(runtimeSettings config.RuntimeSettings) error {
 			return err
 		}
 	case config.Generate:
-		if runtimeSettings.SeedPath == "" {
-			missingFields = append(missingFields, "seed-path")
-		}
-		if runtimeSettings.LedgerWindow == 0 {
-			missingFields = append(missingFields, "ledger-window")
+		if runtimeSettings.OutputPath == "" {
+			missingFields = append(missingFields, "output")
 		}
 
 		if len(missingFields) > 0 {
 			return errors.Errorf("missing required fields in Generate mode: %v", missingFields)
 		}
-		if err := a.runLoadTest(ctx); err != nil {
+		if err := a.runGenerate(ctx); err != nil {
 			return err
 		}
 	default:
@@ -121,6 +118,6 @@ func (a *App) runLoadTest(ctx context.Context) error {
 }
 
 func (a *App) runGenerate(ctx context.Context) error {
-	g := generate.NewGenerator(a.config)
-	return g.Generate(ctx, a.logger)
+	g := generate.NewGenerator(ctx, a.config)
+	return g.Generate(ctx, a.logger, a.config)
 }
