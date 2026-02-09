@@ -61,7 +61,7 @@ func makeCommands() *cobra.Command {
 		Short: "Generate load test data",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			settings := bindGenerateCliParameters(cmd.Flags().Lookup("rpc-url"),
-				cmd.Flags().Lookup("seed-path"),
+				cmd.Flags().Lookup("output"),
 				cmd.Flags().Lookup("ledger-window"),
 			)
 			settings.Mode = config.Generate
@@ -84,11 +84,13 @@ func makeCommands() *cobra.Command {
 	runCmd.Flags().Duration("duration", time.Duration(0), "Duration to run the test (e.g., 5m)")
 	runCmd.Flags().Duration("ramp-up", time.Duration(0), "Ramp-up time before reaching target RPS (e.g., 30s)")
 
-	generateCmd.Flags().String("seed-path", "./output/seed.json", "Path to seed data file output by generate")
+	generateCmd.Flags().String("output", "./output/seed.json", "Path to seed data file output by generate")
 	generateCmd.Flags().Uint32("ledger-window", 1000, "Ledger window size for data generation")
 
 	runCmd.Flags().AddFlagSet(commonFlags)
+	generateCmd.Flags().AddFlagSet(commonFlags)
 	viper.BindPFlags(runCmd.Flags())
+	viper.BindPFlags(generateCmd.Flags())
 
 	return rootCmd
 }
@@ -126,7 +128,7 @@ func bindRunCliParameters(
 // checks both flags and environment variables
 func bindGenerateCliParameters(
 	rpcUrl *pflag.Flag,
-	seedPath *pflag.Flag,
+	outputPath *pflag.Flag,
 	ledgerWindow *pflag.Flag,
 ) config.RuntimeSettings {
 	bindFlag := func(flag *pflag.Flag) {
@@ -134,11 +136,11 @@ func bindGenerateCliParameters(
 		viper.BindEnv(flag.Name, strutils.KebabToConstantCase(flag.Name))
 	}
 	bindFlag(rpcUrl)
-	bindFlag(seedPath)
+	bindFlag(outputPath)
 	bindFlag(ledgerWindow)
 	settings := config.RuntimeSettings{}
 	settings.RpcUrl = viper.GetString(rpcUrl.Name)
-	settings.SeedPath = viper.GetString(seedPath.Name)
+	settings.OutputPath = viper.GetString(outputPath.Name)
 	settings.LedgerWindow = viper.GetViper().GetUint32(ledgerWindow.Name)
 
 	return settings

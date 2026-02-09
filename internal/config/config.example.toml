@@ -3,7 +3,7 @@
 #   rps          - requests per second
 #   [data_path]  - path to JSON data for parameters
 
-
+# No-parameter/run-only endpoints
 [endpoints.getHealth]
 rps = 10
 
@@ -15,3 +15,22 @@ rps = 5
 
 [endpoints.getLatestLedger]
 rps = 20
+
+[endpoints.getFeeStats]
+rps = 10
+
+# Parameter-based/generate-required endpoints
+[endpoints.getLedgers]
+rps = 0
+
+[endpoints.getLedgerEntries]
+rps = 0
+
+[endpoints.getTransaction]
+rps = 0
+
+[endpoints.getTransactions]
+rps = 0
+
+[endpoints.getEvents]
+rps = 0
