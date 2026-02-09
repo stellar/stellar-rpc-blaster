@@ -41,7 +41,7 @@ func (a *App) RunApp(runtimeSettings config.RuntimeSettings) error {
 	ctx, cancel := signal.NotifyContext(runtimeSettings.Ctx, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	if err := a.init(runtimeSettings); err != nil {
+	if err := a.init(ctx, runtimeSettings); err != nil {
 		return err
 	}
 
@@ -83,15 +83,15 @@ func (a *App) RunApp(runtimeSettings config.RuntimeSettings) error {
 	return nil
 }
 
-func (a *App) init(runtimeSettings config.RuntimeSettings) error {
+func (a *App) init(ctx context.Context, runtimeSettings config.RuntimeSettings) error {
 	var err error
 
 	a.logger.Info("Starting Blaster")
 
-	if a.config, err = config.NewConfig(runtimeSettings, a.logger); err != nil {
+	a.client = util.SharedHTTPClient()
+	if a.config, err = config.NewConfig(ctx, runtimeSettings, a.logger, a.client); err != nil {
 		return errors.Wrap(err, "Could not load configuration")
 	}
-	a.client = util.SharedHTTPClient()
 	return nil
 }
 
