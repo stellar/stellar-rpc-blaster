@@ -18,6 +18,8 @@ require (
 	cloud.google.com/go/storage v1.42.0 // indirect
 	github.com/aws/aws-sdk-go v1.45.27 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
+	github.com/creachadair/jrpc2 v1.2.0 // indirect
+	github.com/creachadair/mds v0.13.4 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/djherbis/fscache v0.10.1 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
