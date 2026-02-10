@@ -65,11 +65,17 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 	}
 	defer writer.Close()
 
+	// Write the relevant ledger range as the first entry
 	if err := seed.WriteLedgerRangeEntry(g.parameters, writer); err != nil {
 		return errors.Wrap(err, "failed to write ledger range entry")
 	}
+	// Bootstrap transaction hashes and success status within the ledger range
 	if err := seed.SeedTxHashData(ctx, g.client, writer, g.parameters); err != nil {
 		return errors.Wrap(err, "failed to seed transaction hash data")
+	}
+	// Bootstrap active contract IDs within the ledger range
+	if err := seed.SeedContractIdData(ctx, g.client, writer, g.parameters); err != nil {
+		return errors.Wrap(err, "failed to seed contract id data")
 	}
 
 	// TODO: add more seed functions here, e.g.:

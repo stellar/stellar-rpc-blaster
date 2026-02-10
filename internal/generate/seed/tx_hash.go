@@ -7,14 +7,13 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
 var (
 	TxSuccess string = "SUCCESS"
 	TxFailed  string = "FAILED"
 )
-
-const TxLimit uint32 = 200
 
 type TxData struct {
 	TxHash  string `json:"txHash"`
@@ -27,13 +26,13 @@ func SeedTxHashData(
 	writer *SeedWriter,
 	parameters PreseedParameters,
 ) error {
-	if err := writer.StartArray("txs"); err != nil {
-		return errors.Wrap(err, "failed to start txs array")
+	if err := writer.StartArray("tx_hashes"); err != nil {
+		return errors.Wrap(err, "failed to start tx_hashes array")
 	}
 
-	limit := min(TxLimit, parameters.Range.Last-parameters.Range.First+1)
+	limit := min(util.TxPageLimit, parameters.Range.Last-parameters.Range.First+1)
 
-	for ; parameters.Range.First < parameters.Range.Last; parameters.Range.First += TxLimit {
+	for ; parameters.Range.First < parameters.Range.Last; parameters.Range.First += limit {
 		req := protocol.GetTransactionsRequest{
 			StartLedger: parameters.Range.First,
 			Pagination:  &protocol.LedgerPaginationOptions{Limit: uint(limit)},
@@ -49,13 +48,13 @@ func SeedTxHashData(
 				Success: tx.TransactionDetails.Status == TxSuccess,
 			}
 			if err := writer.WriteItem(item); err != nil {
-				return errors.Wrap(err, "failed to write tx item")
+				return errors.Wrap(err, "failed to write tx hash item")
 			}
 		}
 	}
 
 	if err := writer.EndArray(); err != nil {
-		return errors.Wrap(err, "failed to end txs array")
+		return errors.Wrap(err, "failed to end tx_hashes array")
 	}
 	return nil
 }
