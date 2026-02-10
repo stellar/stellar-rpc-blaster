@@ -74,8 +74,12 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 		return errors.Wrap(err, "failed to seed transaction hash data")
 	}
 	// Bootstrap active contract IDs within the ledger range
-	if err := seed.SeedContractIdData(ctx, g.client, writer, g.parameters); err != nil {
-		return errors.Wrap(err, "failed to seed contract id data")
+	if err := seed.SeedEventsData(ctx, g.client, writer, g.parameters); err != nil {
+		return errors.Wrap(err, "failed to seed events data")
+	}
+	// Flush unique event topics seen and populated during contract ID seeding
+	if err := seed.FlushUniqueEventTopics(writer); err != nil {
+		return errors.Wrap(err, "failed to flush unique event topics")
 	}
 
 	// TODO: add more seed functions here, e.g.:

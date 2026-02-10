@@ -10,7 +10,9 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
-func SeedContractIdData(
+var uniqueEventTopics = make(map[string]struct{})
+
+func SeedEventsData(
 	ctx context.Context,
 	rpcClient *rpcclient.Client,
 	writer *SeedWriter,
@@ -33,7 +35,6 @@ func SeedContractIdData(
 					},
 				},
 			},
-			Format: "json",
 		}
 		eventsResponse, err := rpcClient.GetEvents(ctx, req)
 		if err != nil {
@@ -42,11 +43,30 @@ func SeedContractIdData(
 		}
 		for _, event := range eventsResponse.Events {
 			writer.WriteItem(event.ContractID)
+			// Populate unique event topics map along the way since it's not much data to cache
+			for _, topic := range event.TopicXDR {
+				uniqueEventTopics[topic] = struct{}{}
+			}
 		}
 	}
 
 	if err := writer.EndArray(); err != nil {
 		return errors.Wrap(err, "failed to end contract_ids array")
+	}
+	return nil
+}
+
+func FlushUniqueEventTopics(writer *SeedWriter) error {
+	if err := writer.StartArray("event_topics"); err != nil {
+		return errors.Wrap(err, "failed to start event_topics array")
+	}
+	for topic := range uniqueEventTopics {
+		if err := writer.WriteItem(topic); err != nil {
+			return errors.Wrap(err, "failed to write event topic item")
+		}
+	}
+	if err := writer.EndArray(); err != nil {
+		return errors.Wrap(err, "failed to end event_topics array")
 	}
 	return nil
 }
