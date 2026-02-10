@@ -2,7 +2,6 @@ package generate
 
 import (
 	"context"
-	"os"
 	"time"
 
 	"github.com/pkg/errors"
@@ -34,8 +33,10 @@ func NewGenerator(ctx context.Context, config config.Config) *Generator {
 
 	parameters := seed.PreseedParameters{
 		ExportPath: config.OutputPath,
-		MinLedger:  first,
-		MaxLedger:  last,
+		Range: seed.Range{
+			First: first,
+			Last:  last,
+		},
 	}
 	return &Generator{
 		rpcUrl:     config.RpcUrl,
@@ -46,7 +47,7 @@ func NewGenerator(ctx context.Context, config config.Config) *Generator {
 }
 
 func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.Config) error {
-	logger.Infof("Starting data generation for ledger range [%d, %d]", g.parameters.MinLedger, g.parameters.MaxLedger)
+	logger.Infof("Starting data generation for ledger range [%d, %d]", g.parameters.Range.First, g.parameters.Range.Last)
 	start := time.Now()
 	defer func() {
 		logger.Infof("Data generation completed in %s", time.Since(start))
@@ -58,10 +59,22 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 	passphrase := getNetworkResponse.Passphrase
 	logger.Infof("Fetched network passphrase: %s", passphrase)
 
-	if err := seed.SeedTxHashData(ctx, g.client, g.parameters); err != nil {
+	writer, err := seed.NewSeedWriter(cfg.OutputPath)
+	if err != nil {
+		return errors.Wrap(err, "failed to create seed writer")
+	}
+	defer writer.Close()
+
+	if err := seed.WriteLedgerRangeEntry(g.parameters, writer); err != nil {
+		return errors.Wrap(err, "failed to write ledger range entry")
+	}
+	if err := seed.SeedTxHashData(ctx, g.client, writer, g.parameters); err != nil {
 		return errors.Wrap(err, "failed to seed transaction hash data")
 	}
-	fileBytes, _ := os.ReadFile(cfg.OutputPath)
-	logger.Infof("Generated data written to %s: %d bytes", cfg.OutputPath, len(fileBytes))
-	return errors.Wrap(nil, "data generation not finished yet")
+
+	// TODO: add more seed functions here, e.g.:
+	// if err := seed.SeedLedgerData(ctx, g.client, writer, g.parameters); err != nil { ... }
+
+	logger.Infof("Generated data written to %s", cfg.OutputPath)
+	return nil
 }
