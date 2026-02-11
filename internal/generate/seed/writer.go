@@ -12,7 +12,6 @@ import (
 // Open once in Generate(), pass to each seed function, close at the end.
 type SeedWriter struct {
 	file      *os.File
-	encoder   *json.Encoder
 	hasField  bool // whether we've written at least one top-level field
 	inArray   bool // whether we're currently inside an array
 	arraySize int  // items written in current array

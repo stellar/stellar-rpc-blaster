@@ -30,19 +30,36 @@ func SeedTxHashData(
 		return errors.Wrap(err, "failed to start tx_hashes array")
 	}
 
-	limit := min(util.TxPageLimit, parameters.Range.Last-parameters.Range.First+1)
-
-	for ; parameters.Range.First < parameters.Range.Last; parameters.Range.First += limit {
+	var cursor string
+	for {
 		req := protocol.GetTransactionsRequest{
 			StartLedger: parameters.Range.First,
-			Pagination:  &protocol.LedgerPaginationOptions{Limit: uint(limit)},
+			Pagination: &protocol.LedgerPaginationOptions{
+				Limit: uint(util.TxPageLimit),
+			},
 		}
+		if cursor != "" {
+			req.StartLedger = 0
+			req.Pagination.Cursor = cursor
+		}
+
 		txsResponse, err := rpcClient.GetTransactions(ctx, req)
 		if err != nil {
-			return errors.Wrapf(err, "failed to fetch transaction data for ledgers %d->%d",
-				parameters.Range.First, parameters.Range.First+limit-1)
+			return errors.Wrapf(err, "failed to fetch transaction data for ledger %d, cursor %s",
+				parameters.Range.First, cursor)
 		}
+		if len(txsResponse.Transactions) == 0 {
+			break
+		}
+		cursor = txsResponse.Cursor
+
 		for _, tx := range txsResponse.Transactions {
+			if tx.Ledger > parameters.Range.Last {
+				if err := writer.EndArray(); err != nil {
+					return errors.Wrap(err, "failed to end tx_hashes array")
+				}
+				return nil
+			}
 			item := TxData{
 				TxHash:  tx.TransactionDetails.TransactionHash,
 				Success: tx.TransactionDetails.Status == TxSuccess,
@@ -52,7 +69,6 @@ func SeedTxHashData(
 			}
 		}
 	}
-
 	if err := writer.EndArray(); err != nil {
 		return errors.Wrap(err, "failed to end tx_hashes array")
 	}
