@@ -11,22 +11,17 @@ import (
 
 	"github.com/stellar/stellar-rpc-blaster/internal/config"
 	"github.com/stellar/stellar-rpc-blaster/internal/generate/seed"
+	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
 type Generator struct {
 	rpcUrl     string
 	client     *rpcclient.Client
 	parameters seed.PreseedParameters
-
-	start time.Time
-	end   time.Time
-
-	exportPath string
-	methods    []string
 }
 
 func NewGenerator(ctx context.Context, config config.Config) *Generator {
-	first, last, err := GetLedgerRange(ctx, config.RpcClient, config.LedgerWindow)
+	first, last, err := util.GetLedgerRange(ctx, config.RpcClient, config.LedgerWindow)
 	if err != nil {
 		panic(errors.Wrap(err, "failed to get ledger range for generation"))
 	}
@@ -42,7 +37,6 @@ func NewGenerator(ctx context.Context, config config.Config) *Generator {
 		rpcUrl:     config.RpcUrl,
 		client:     config.RpcClient,
 		parameters: parameters,
-		methods:    []string{"getLedger", "getTransaction", "getAccount", "getEffects"}, // TODO: set elsewhere
 	}
 }
 
@@ -81,9 +75,10 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 	if err := seed.FlushUniqueEventTopics(writer); err != nil {
 		return errors.Wrap(err, "failed to flush unique event topics")
 	}
-
-	// TODO: add more seed functions here, e.g.:
-	// if err := seed.SeedLedgerData(ctx, g.client, writer, g.parameters); err != nil { ... }
+	// Seed ledger keys
+	if err := seed.SeedLedgerKeys(ctx, logger, g.client, writer, g.parameters); err != nil {
+		return errors.Wrap(err, "failed to seed ledger keys")
+	}
 
 	logger.Infof("Generated data written to %s", cfg.OutputPath)
 	return nil

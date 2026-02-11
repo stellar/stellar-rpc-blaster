@@ -10,7 +10,7 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
-var uniqueEventTopics = make(map[string]struct{})
+var uniqueEventTopics map[string]struct{}
 
 func SeedEventsData(
 	ctx context.Context,
@@ -18,6 +18,8 @@ func SeedEventsData(
 	writer *SeedWriter,
 	parameters PreseedParameters,
 ) error {
+	uniqueEventTopics = make(map[string]struct{})
+
 	if err := writer.StartArray("contract_ids"); err != nil {
 		return errors.Wrap(err, "failed to start contract_ids array")
 	}
@@ -25,28 +27,36 @@ func SeedEventsData(
 	limit := min(util.TxPageLimit, parameters.Range.Last-parameters.Range.First+1)
 
 	for ; parameters.Range.First < parameters.Range.Last; parameters.Range.First += limit {
-		req := protocol.GetEventsRequest{
-			StartLedger: parameters.Range.First,
-			EndLedger:   parameters.Range.First + limit - 1,
-			Filters: []protocol.EventFilter{
-				{
-					EventType: protocol.EventTypeSet{
-						protocol.EventTypeContract: true, // only matches on key, value is ignored
-					},
-				},
-			},
-		}
-		eventsResponse, err := rpcClient.GetEvents(ctx, req)
-		if err != nil {
-			return errors.Wrapf(err, "failed to fetch transaction data for ledgers %d->%d",
-				parameters.Range.First, parameters.Range.First+limit-1)
-		}
-		for _, event := range eventsResponse.Events {
-			writer.WriteItem(event.ContractID)
-			// Populate unique event topics map along the way since it's not much data to cache
-			for _, topic := range event.TopicXDR {
-				uniqueEventTopics[topic] = struct{}{}
+		endLedger := min(parameters.Range.First+limit-1, parameters.Range.Last)
+		var cursor *protocol.Cursor
+
+		for {
+			// Fetch contract IDs using GetEvents
+			req := util.MakeGetEventsRequest(parameters.Range.First, endLedger, cursor)
+			eventsResponse, err := rpcClient.GetEvents(ctx, req)
+			if err != nil {
+				return errors.Wrapf(err, "failed to fetch event data for ledgers %d->%d",
+					parameters.Range.First, endLedger)
 			}
+
+			for _, event := range eventsResponse.Events {
+				if err := writer.WriteItem(event.ContractID); err != nil {
+					return errors.Wrap(err, "failed to write contract ID item")
+				}
+				for _, topic := range event.TopicXDR {
+					uniqueEventTopics[topic] = struct{}{}
+				}
+			}
+
+			// No more pages when the server returns an empty cursor or no events.
+			if eventsResponse.Cursor == "" || len(eventsResponse.Events) == 0 {
+				break
+			}
+			c, err := protocol.ParseCursor(eventsResponse.Cursor)
+			if err != nil {
+				return errors.Wrapf(err, "failed to parse events cursor %q", eventsResponse.Cursor)
+			}
+			cursor = &c
 		}
 	}
 
