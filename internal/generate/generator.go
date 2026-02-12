@@ -18,15 +18,6 @@ type Generator struct {
 	rpcUrl     string
 	client     *rpcclient.Client
 	parameters seed.PreseedParameters
-
-	meta GeneratorMeta
-}
-
-type GeneratorMeta struct {
-	txHashCount           uint32
-	contractIdCount       uint32
-	uniqueEventTopicCount uint32
-	ledgerKeyCount        uint32
 }
 
 func NewGenerator(ctx context.Context, config config.Config) *Generator {
@@ -52,7 +43,6 @@ func NewGenerator(ctx context.Context, config config.Config) *Generator {
 		rpcUrl:     config.RpcUrl,
 		client:     config.RpcClient,
 		parameters: parameters,
-		meta:       GeneratorMeta{},
 	}
 }
 
@@ -75,32 +65,37 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 	logger.Infof("Fetched network passphrase: %s", passphrase)
 
 	writer, err := seed.NewSeedWriter(cfg.OutputPath)
-
-	// Write the relevant ledger range as the first entry
-	if err := seed.WriteLedgerRangeEntry(g.parameters, writer); err != nil {
-		return errors.Wrap(err, "failed to write ledger range entry")
+	if err != nil {
+		return errors.Wrap(err, "failed to create seed writer")
 	}
+
+	// Set the ledger range
+	writer.Output.LedgerRange = g.parameters.Range
 	logger.Infof("Successfully wrote ledger range [%d, %d] to output",
 		g.parameters.Range.First, g.parameters.Range.Last)
 
 	// Bootstrap transaction hashes and success status within the ledger range
-	if g.meta.txHashCount, err = seed.SeedTxHashData(ctx, g.client, writer, g.parameters); err != nil {
+	txHashes, err := seed.SeedTxHashData(ctx, g.client, g.parameters)
+	if err != nil {
 		return errors.Wrap(err, "failed to seed transaction hash data")
 	}
-	logger.Infof("Successfully wrote %d {transaction hash : success status} entries to output", g.meta.txHashCount)
+	writer.Output.TxHashes = txHashes
+	logger.Infof("Successfully wrote %d {transaction hash : success status} entries to output", len(txHashes))
 
-	// Bootstrap active contract IDs within the ledger range
-	if g.meta.contractIdCount, g.meta.uniqueEventTopicCount, err = seed.SeedEventsData(ctx, g.client, writer, g.parameters); err != nil {
+	// Bootstrap active contract IDs and event topics within the ledger range
+	writer.Output.ContractIDs, writer.Output.EventTopics, err = seed.SeedEventsData(ctx, g.client, g.parameters)
+	if err != nil {
 		return errors.Wrap(err, "failed to seed events data")
 	}
-	logger.Infof("Successfully wrote %d active contract IDs entries to output", g.meta.contractIdCount)
-	logger.Infof("Successfully wrote %d unique event topics entries to output", g.meta.uniqueEventTopicCount)
+	logger.Infof("Successfully wrote %d active contract IDs entries to output", len(writer.Output.ContractIDs))
+	logger.Infof("Successfully wrote %d unique event topics entries to output", len(writer.Output.EventTopics))
 
 	// Seed ledger keys
-	if g.meta.ledgerKeyCount, err = seed.SeedLedgerKeys(ctx, logger, g.client, writer, g.parameters); err != nil {
+	writer.Output.LedgerKeys, err = seed.SeedLedgerKeys(ctx, logger, g.client, g.parameters)
+	if err != nil {
 		return errors.Wrap(err, "failed to seed ledger keys")
 	}
-	logger.Infof("Successfully wrote %d ledger keys entries to output", g.meta.ledgerKeyCount)
+	logger.Infof("Successfully wrote %d ledger keys entries to output", len(writer.Output.LedgerKeys))
 
 	if err := writer.Flush(); err != nil {
 		return errors.Wrap(err, "failed to flush seed data to output")

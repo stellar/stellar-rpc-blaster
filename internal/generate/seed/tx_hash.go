@@ -23,20 +23,16 @@ type TxData struct {
 func SeedTxHashData(
 	ctx context.Context,
 	rpcClient *rpcclient.Client,
-	writer *SeedWriter,
 	parameters PreseedParameters,
-) (uint32, error) {
-	var txHashCount uint32
+) ([]TxData, error) {
 	entry := NewEntry[TxData]("tx_hashes", 64)
 
 	for _, r := range parameters.GetProcessingRanges() {
-		if txHashCountForRange, err := seedTxHashesForRange(ctx, rpcClient, &entry, r); err != nil {
-			return 0, err
-		} else {
-			txHashCount += txHashCountForRange
+		if _, err := seedTxHashesForRange(ctx, rpcClient, &entry, r); err != nil {
+			return nil, err
 		}
 	}
-	return txHashCount, writer.FlushMap(entry.Map)
+	return entry.Slice(), nil
 }
 
 func seedTxHashesForRange(

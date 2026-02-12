@@ -12,48 +12,24 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
-type EventTopics struct {
-	Topics []string `json:"event_topics"`
-}
-type ContractIDs struct {
-	IDs []string `json:"contract_ids"`
-}
-
 var uniqueEventTopics set.Set[string]
 
 // Bootstraps contract ID and unique event topic data in the given range(s)
 func SeedEventsData(
 	ctx context.Context,
 	rpcClient *rpcclient.Client,
-	writer *SeedWriter,
 	parameters PreseedParameters,
-) (uint32, uint32, error) {
+) ([]string, []string, error) {
 	uniqueEventTopics = set.NewSet[string](util.DefaultSeedSliceSize)
 	contractIdEntry := NewEntry[string]("contract_ids", util.DefaultSeedSliceSize)
-	eventTopicEntry := NewEntry[string]("event_topics", util.DefaultSeedSliceSize)
-
-	var contractIdCount uint32
-	// if err := writer.StartArray("contract_ids"); err != nil {
-	// 	return 0, errors.Wrap(err, "failed to start contract_ids array")
-	// }
 
 	for _, r := range parameters.GetProcessingRanges() {
-		if contractIdCountForRange, err := seedEventDataForRange(ctx, rpcClient, &contractIdEntry, r); err != nil {
-			return 0, 0, err
-		} else {
-			contractIdCount += contractIdCountForRange
+		if _, err := seedEventDataForRange(ctx, rpcClient, &contractIdEntry, r); err != nil {
+			return nil, nil, err
 		}
 	}
 
-	eventTopicEntry.Map["event_topics"] = uniqueEventTopics.Slice()
-	if err := writer.FlushMap(eventTopicEntry.Map); err != nil {
-		return 0, 0, errors.Wrap(err, "failed to flush event topics")
-	}
-	if err := writer.FlushMap(contractIdEntry.Map); err != nil {
-		return 0, 0, errors.Wrap(err, "failed to flush contract IDs")
-	}
-
-	return contractIdCount, uint32(len(uniqueEventTopics)), nil
+	return contractIdEntry.Slice(), uniqueEventTopics.Slice(), nil
 }
 
 func seedEventDataForRange(

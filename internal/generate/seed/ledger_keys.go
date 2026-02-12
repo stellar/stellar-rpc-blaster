@@ -17,21 +17,17 @@ func SeedLedgerKeys(
 	ctx context.Context,
 	logger *log.Entry,
 	rpcClient *rpcclient.Client,
-	writer *SeedWriter,
 	parameters PreseedParameters,
-) (uint32, error) {
+) ([]string, error) {
 	entry := NewEntry[string]("ledger_keys", util.DefaultSeedSliceSize)
 
-	var ledgerKeyCount uint32
 	for _, r := range parameters.GetProcessingRanges() {
-		if ledgerKeyCountForRange, err := seedLedgerKeysForRange(ctx, logger, rpcClient, &entry, r); err != nil {
-			return 0, err
-		} else {
-			ledgerKeyCount += ledgerKeyCountForRange
+		if err := seedLedgerKeysForRange(ctx, logger, rpcClient, &entry, r); err != nil {
+			return nil, err
 		}
 	}
 
-	return ledgerKeyCount, writer.FlushMap(entry.Map)
+	return entry.Slice(), nil
 }
 
 func seedLedgerKeysForRange(
@@ -40,16 +36,15 @@ func seedLedgerKeysForRange(
 	rpcClient *rpcclient.Client,
 	entry *Entry[string],
 	r Range,
-) (uint32, error) {
+) error {
 	var cursor string
 
-	var ledgerKeyCountForRange uint32
 	for {
 		req := util.MakeGetTransactionsRequest(r.First, cursor)
 
 		txsResponse, err := rpcClient.GetTransactions(ctx, req)
 		if err != nil {
-			return 0, errors.Wrapf(err, "failed to fetch transaction data from ledger %d, cursor %s",
+			return errors.Wrapf(err, "failed to fetch transaction data from ledger %d, cursor %s",
 				r.First, cursor)
 		}
 
@@ -60,7 +55,7 @@ func seedLedgerKeysForRange(
 
 		for _, tx := range txsResponse.Transactions {
 			if tx.Ledger > r.Last {
-				return ledgerKeyCountForRange, nil
+				return nil
 			}
 			txResultMeta := tx.TransactionDetails.ResultMetaXDR
 			if txResultMeta == "" {
@@ -73,7 +68,6 @@ func seedLedgerKeysForRange(
 					tx.TransactionDetails.TransactionHash, err)
 				continue
 			}
-			ledgerKeyCountForRange += uint32(len(keys))
 			for _, key := range keys {
 				switch key.Type {
 				// desired ledger entry types for which we want the keys
@@ -95,7 +89,7 @@ func seedLedgerKeysForRange(
 			}
 		}
 	}
-	return ledgerKeyCountForRange, nil
+	return nil
 }
 
 func getKeysFromTxResultMeta(logger *log.Entry, resultMetaXDR string) ([]xdr.LedgerKey, error) {

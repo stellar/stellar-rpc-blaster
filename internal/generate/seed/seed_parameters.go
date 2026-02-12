@@ -42,9 +42,3 @@ func GroupSampledLedgersIntoRanges(ledgers []uint32) []Range {
 	}
 	return ranges
 }
-
-func WriteLedgerRangeEntry(params PreseedParameters, writer *SeedWriter) error {
-	return writer.FlushMap(map[string]any{
-		"ledger_range": params.Range,
-	})
-}
