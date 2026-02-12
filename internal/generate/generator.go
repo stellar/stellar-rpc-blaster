@@ -75,10 +75,6 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 	logger.Infof("Fetched network passphrase: %s", passphrase)
 
 	writer, err := seed.NewSeedWriter(cfg.OutputPath)
-	if err != nil {
-		return errors.Wrap(err, "failed to create seed writer")
-	}
-	defer writer.Close()
 
 	// Write the relevant ledger range as the first entry
 	if err := seed.WriteLedgerRangeEntry(g.parameters, writer); err != nil {
@@ -94,15 +90,10 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 	logger.Infof("Successfully wrote %d {transaction hash : success status} entries to output", g.meta.txHashCount)
 
 	// Bootstrap active contract IDs within the ledger range
-	if g.meta.contractIdCount, err = seed.SeedEventsData(ctx, g.client, writer, g.parameters); err != nil {
+	if g.meta.contractIdCount, g.meta.uniqueEventTopicCount, err = seed.SeedEventsData(ctx, g.client, writer, g.parameters); err != nil {
 		return errors.Wrap(err, "failed to seed events data")
 	}
 	logger.Infof("Successfully wrote %d active contract IDs entries to output", g.meta.contractIdCount)
-
-	// Flush unique event topics seen and populated during contract ID seeding
-	if g.meta.uniqueEventTopicCount, err = seed.FlushUniqueEventTopics(writer); err != nil {
-		return errors.Wrap(err, "failed to flush unique event topics")
-	}
 	logger.Infof("Successfully wrote %d unique event topics entries to output", g.meta.uniqueEventTopicCount)
 
 	// Seed ledger keys
@@ -110,6 +101,10 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 		return errors.Wrap(err, "failed to seed ledger keys")
 	}
 	logger.Infof("Successfully wrote %d ledger keys entries to output", g.meta.ledgerKeyCount)
+
+	if err := writer.Flush(); err != nil {
+		return errors.Wrap(err, "failed to flush seed data to output")
+	}
 
 	logger.Infof("Generated data written to %s", cfg.OutputPath)
 	return nil

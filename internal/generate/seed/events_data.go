@@ -7,42 +7,59 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+	"github.com/stellar/go-stellar-sdk/support/collections/set"
+
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
-var uniqueEventTopics map[string]struct{}
+type EventTopics struct {
+	Topics []string `json:"event_topics"`
+}
+type ContractIDs struct {
+	IDs []string `json:"contract_ids"`
+}
 
+var uniqueEventTopics set.Set[string]
+
+// Bootstraps contract ID and unique event topic data in the given range(s)
 func SeedEventsData(
 	ctx context.Context,
 	rpcClient *rpcclient.Client,
 	writer *SeedWriter,
 	parameters PreseedParameters,
-) (uint32, error) {
-	uniqueEventTopics = make(map[string]struct{})
+) (uint32, uint32, error) {
+	uniqueEventTopics = set.NewSet[string](util.DefaultSeedSliceSize)
+	contractIdEntry := NewEntry[string]("contract_ids", util.DefaultSeedSliceSize)
+	eventTopicEntry := NewEntry[string]("event_topics", util.DefaultSeedSliceSize)
 
 	var contractIdCount uint32
-	if err := writer.StartArray("contract_ids"); err != nil {
-		return 0, errors.Wrap(err, "failed to start contract_ids array")
-	}
+	// if err := writer.StartArray("contract_ids"); err != nil {
+	// 	return 0, errors.Wrap(err, "failed to start contract_ids array")
+	// }
 
 	for _, r := range parameters.GetProcessingRanges() {
-		if contractIdCountForRange, err := seedEventsForRange(ctx, rpcClient, writer, r); err != nil {
-			return 0, err
+		if contractIdCountForRange, err := seedEventDataForRange(ctx, rpcClient, &contractIdEntry, r); err != nil {
+			return 0, 0, err
 		} else {
 			contractIdCount += contractIdCountForRange
 		}
 	}
 
-	if err := writer.EndArray(); err != nil {
-		return 0, errors.Wrap(err, "failed to end contract_ids array")
+	eventTopicEntry.Map["event_topics"] = uniqueEventTopics.Slice()
+	if err := writer.FlushMap(eventTopicEntry.Map); err != nil {
+		return 0, 0, errors.Wrap(err, "failed to flush event topics")
 	}
-	return contractIdCount, nil
+	if err := writer.FlushMap(contractIdEntry.Map); err != nil {
+		return 0, 0, errors.Wrap(err, "failed to flush contract IDs")
+	}
+
+	return contractIdCount, uint32(len(uniqueEventTopics)), nil
 }
 
-func seedEventsForRange(
+func seedEventDataForRange(
 	ctx context.Context,
 	rpcClient *rpcclient.Client,
-	writer *SeedWriter,
+	contractIdEntry *Entry[string],
 	r Range,
 ) (uint32, error) {
 	limit := min(util.TxPageLimit, r.Last-r.First+1)
@@ -62,13 +79,11 @@ func seedEventsForRange(
 
 			contractIdCountForRange += uint32(len(eventsResponse.Events))
 			for _, event := range eventsResponse.Events {
-				if err := writer.WriteItem(event.ContractID); err != nil {
-					return 0, errors.Wrap(err, "failed to write contract ID item")
-				}
+				contractIdEntry.Append(event.ContractID)
 
 				// Cache unique event topics for flushing after all ranges are processed
 				for _, topic := range event.TopicXDR {
-					uniqueEventTopics[topic] = struct{}{}
+					uniqueEventTopics.Add(topic)
 				}
 			}
 
@@ -83,19 +98,4 @@ func seedEventsForRange(
 		}
 	}
 	return contractIdCountForRange, nil
-}
-
-func FlushUniqueEventTopics(writer *SeedWriter) (uint32, error) {
-	if err := writer.StartArray("event_topics"); err != nil {
-		return 0, errors.Wrap(err, "failed to start event_topics array")
-	}
-	for topic := range uniqueEventTopics {
-		if err := writer.WriteItem(topic); err != nil {
-			return 0, errors.Wrap(err, "failed to write event topic item")
-		}
-	}
-	if err := writer.EndArray(); err != nil {
-		return 0, errors.Wrap(err, "failed to end event_topics array")
-	}
-	return uint32(len(uniqueEventTopics)), nil
 }

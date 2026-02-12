@@ -20,34 +20,25 @@ func SeedLedgerKeys(
 	writer *SeedWriter,
 	parameters PreseedParameters,
 ) (uint32, error) {
-	if err := writer.StartArray("ledger_keys"); err != nil {
-		return 0, errors.Wrap(err, "failed to start ledger_keys array")
-	}
-
-	var endArrayErr error
-	defer func() {
-		if e := writer.EndArray(); e != nil && endArrayErr == nil {
-			endArrayErr = e
-		}
-	}()
+	entry := NewEntry[string]("ledger_keys", util.DefaultSeedSliceSize)
 
 	var ledgerKeyCount uint32
 	for _, r := range parameters.GetProcessingRanges() {
-		if ledgerKeyCountForRange, err := seedLedgerKeysForRange(ctx, logger, rpcClient, writer, r); err != nil {
+		if ledgerKeyCountForRange, err := seedLedgerKeysForRange(ctx, logger, rpcClient, &entry, r); err != nil {
 			return 0, err
 		} else {
 			ledgerKeyCount += ledgerKeyCountForRange
 		}
 	}
 
-	return ledgerKeyCount, endArrayErr
+	return ledgerKeyCount, writer.FlushMap(entry.Map)
 }
 
 func seedLedgerKeysForRange(
 	ctx context.Context,
 	logger *log.Entry,
 	rpcClient *rpcclient.Client,
-	writer *SeedWriter,
+	entry *Entry[string],
 	r Range,
 ) (uint32, error) {
 	var cursor string
@@ -100,9 +91,7 @@ func seedLedgerKeysForRange(
 						tx.TransactionDetails.TransactionHash, err)
 					continue
 				}
-				if err := writer.WriteItem(keyXDR); err != nil {
-					return 0, errors.Wrap(err, "failed to write ledger key item")
-				}
+				entry.Append(keyXDR)
 			}
 		}
 	}
@@ -120,7 +109,7 @@ func getKeysFromTxResultMeta(logger *log.Entry, resultMetaXDR string) ([]xdr.Led
 		return nil, errors.New("couldn't get ledger entry changes")
 	}
 
-	out := make([]xdr.LedgerKey, 0, 64)
+	out := make([]xdr.LedgerKey, 0, len(changes))
 	for _, change := range changes {
 		key, err := change.LedgerKey()
 		if err != nil {

@@ -16,4 +16,6 @@ const (
 	RequestTimeout = 15 * time.Second
 
 	TxPageLimit uint32 = 200
+
+	DefaultSeedSliceSize = 64
 )

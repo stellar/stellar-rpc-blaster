@@ -27,28 +27,22 @@ func SeedTxHashData(
 	parameters PreseedParameters,
 ) (uint32, error) {
 	var txHashCount uint32
-	if err := writer.StartArray("tx_hashes"); err != nil {
-		return 0, errors.Wrap(err, "failed to start tx_hashes array")
-	}
+	entry := NewEntry[TxData]("tx_hashes", 64)
 
 	for _, r := range parameters.GetProcessingRanges() {
-		if txHashCountForRange, err := seedTxHashesForRange(ctx, rpcClient, writer, r); err != nil {
+		if txHashCountForRange, err := seedTxHashesForRange(ctx, rpcClient, &entry, r); err != nil {
 			return 0, err
 		} else {
 			txHashCount += txHashCountForRange
 		}
 	}
-
-	if err := writer.EndArray(); err != nil {
-		return 0, errors.Wrap(err, "failed to end tx_hashes array")
-	}
-	return txHashCount, nil
+	return txHashCount, writer.FlushMap(entry.Map)
 }
 
 func seedTxHashesForRange(
 	ctx context.Context,
 	rpcClient *rpcclient.Client,
-	writer *SeedWriter,
+	entry *Entry[TxData],
 	r Range,
 ) (uint32, error) {
 	var cursor string
@@ -84,9 +78,7 @@ func seedTxHashesForRange(
 				TxHash:  tx.TransactionDetails.TransactionHash,
 				Success: tx.TransactionDetails.Status == TxSuccess,
 			}
-			if err := writer.WriteItem(item); err != nil {
-				return 0, errors.Wrap(err, "failed to write tx hash item")
-			}
+			entry.Append(item)
 		}
 	}
 	return txHashCountForRange, nil

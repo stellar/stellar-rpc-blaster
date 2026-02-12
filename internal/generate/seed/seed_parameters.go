@@ -2,8 +2,6 @@ package seed
 
 import (
 	"slices"
-
-	"github.com/pkg/errors"
 )
 
 type PreseedParameters struct {
@@ -46,14 +44,7 @@ func GroupSampledLedgersIntoRanges(ledgers []uint32) []Range {
 }
 
 func WriteLedgerRangeEntry(params PreseedParameters, writer *SeedWriter) error {
-	if err := writer.StartArray("ledger_range"); err != nil {
-		return errors.Wrap(err, "failed to write ledger range start")
-	}
-	if err := writer.WriteItem(params.Range); err != nil {
-		return errors.Wrap(err, "failed to write ledger range item")
-	}
-	if err := writer.EndArray(); err != nil {
-		return errors.Wrap(err, "failed to write ledger range end")
-	}
-	return nil
+	return writer.FlushMap(map[string]any{
+		"ledger_range": params.Range,
+	})
 }
