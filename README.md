@@ -14,7 +14,14 @@ To generate data for the `generate` command, example usage is as follows:
 ```
 ./stellar-rpc-loadtest generate \
   --rpc-url <RPC_URL> \
-  --network-passphrase <NETWORK_PASSPHRASE> \
-  --output <PATH_TO_REQUEST_DATA_DAT> \
-  [--ledger-window <NUM_LEDGERS>]
+  [--output <PATH_TO_REQUEST_DATA_DAT>] \
+  [--ledger-window START[,END]]
+  [--count NUM_LEDGERS]
   ```
+Several defaults are present with the following behaviors:
+-- `output` defaults to `/stellar-rpc-blaster/output/seed.json`
+-- `count` defaults to 5000. This is the number of ledgers to be sampled, whereas `ledger-window` is the range 
+over which we're sampling.
+-- if `ledger-window` is not present, it will default to [LatestCheckpoint - `count`, LatestCheckpoint]
+-- if `END` is not present in `ledger-window`, then `ledger-window` defaults to [`START`, LatestCheckpoint]
+-- if `len(ledger-window) > count`, then at least `count` ledgers uniformly spaced in `ledger-window` will be sampled
