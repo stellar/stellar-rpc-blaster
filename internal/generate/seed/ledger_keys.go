@@ -11,16 +11,19 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
+// Fetches and stores ledger keys for all transactions in the given ledger window
+// Parses GetTransactions
 func SeedLedgerKeys(
 	ctx context.Context,
 	logger *log.Entry,
 	rpcClient *rpcclient.Client,
 	writer *SeedWriter,
 	parameters PreseedParameters,
-) error {
+) (uint32, error) {
 	if err := writer.StartArray("ledger_keys"); err != nil {
-		return errors.Wrap(err, "failed to start ledger_keys array")
+		return 0, errors.Wrap(err, "failed to start ledger_keys array")
 	}
+
 	var endArrayErr error
 	defer func() {
 		if e := writer.EndArray(); e != nil && endArrayErr == nil {
@@ -28,14 +31,35 @@ func SeedLedgerKeys(
 		}
 	}()
 
+	var ledgerKeyCount uint32
+	for _, r := range parameters.GetProcessingRanges() {
+		if ledgerKeyCountForRange, err := seedLedgerKeysForRange(ctx, logger, rpcClient, writer, r); err != nil {
+			return 0, err
+		} else {
+			ledgerKeyCount += ledgerKeyCountForRange
+		}
+	}
+
+	return ledgerKeyCount, endArrayErr
+}
+
+func seedLedgerKeysForRange(
+	ctx context.Context,
+	logger *log.Entry,
+	rpcClient *rpcclient.Client,
+	writer *SeedWriter,
+	r Range,
+) (uint32, error) {
 	var cursor string
+
+	var ledgerKeyCountForRange uint32
 	for {
-		req := util.MakeGetTransactionsRequest(parameters.Range.First, cursor)
+		req := util.MakeGetTransactionsRequest(r.First, cursor)
 
 		txsResponse, err := rpcClient.GetTransactions(ctx, req)
 		if err != nil {
-			return errors.Wrapf(err, "failed to fetch transaction data from ledger %d, cursor %s",
-				parameters.Range.First, cursor)
+			return 0, errors.Wrapf(err, "failed to fetch transaction data from ledger %d, cursor %s",
+				r.First, cursor)
 		}
 
 		if len(txsResponse.Transactions) == 0 {
@@ -44,8 +68,8 @@ func SeedLedgerKeys(
 		cursor = txsResponse.Cursor
 
 		for _, tx := range txsResponse.Transactions {
-			if tx.Ledger > parameters.Range.Last {
-				return nil
+			if tx.Ledger > r.Last {
+				return ledgerKeyCountForRange, nil
 			}
 			txResultMeta := tx.TransactionDetails.ResultMetaXDR
 			if txResultMeta == "" {
@@ -54,13 +78,14 @@ func SeedLedgerKeys(
 
 			keys, err := getKeysFromTxResultMeta(logger, txResultMeta)
 			if err != nil {
-				// skip if one bad tx
 				logger.Errorf("failed to extract ledger keys from transaction result meta XDR for tx %s: %v",
 					tx.TransactionDetails.TransactionHash, err)
 				continue
 			}
+			ledgerKeyCountForRange += uint32(len(keys))
 			for _, key := range keys {
 				switch key.Type {
+				// desired ledger entry types for which we want the keys
 				case xdr.LedgerEntryTypeAccount,
 					xdr.LedgerEntryTypeTrustline,
 					xdr.LedgerEntryTypeContractCode,
@@ -76,12 +101,12 @@ func SeedLedgerKeys(
 					continue
 				}
 				if err := writer.WriteItem(keyXDR); err != nil {
-					return errors.Wrap(err, "failed to write ledger key item")
+					return 0, errors.Wrap(err, "failed to write ledger key item")
 				}
 			}
 		}
 	}
-	return endArrayErr
+	return ledgerKeyCountForRange, nil
 }
 
 func getKeysFromTxResultMeta(logger *log.Entry, resultMetaXDR string) ([]xdr.LedgerKey, error) {

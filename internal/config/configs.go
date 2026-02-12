@@ -31,7 +31,8 @@ type Config struct {
 
 	// TODO: data-dependent endpoints & generate mode settings
 	OutputPath   string
-	LedgerWindow uint32
+	LedgerWindow []uint32
+	Count        uint32
 }
 
 type Mode int
@@ -65,7 +66,8 @@ type RuntimeSettings struct {
 
 	// Generate mode settings
 	OutputPath   string
-	LedgerWindow uint32
+	LedgerWindow []uint32
+	Count        uint32
 
 	Mode Mode
 	Ctx  context.Context
@@ -108,6 +110,7 @@ func NewConfig(
 	case Generate:
 		cfg.OutputPath = settings.OutputPath
 		cfg.LedgerWindow = settings.LedgerWindow
+		cfg.Count = settings.Count
 	default:
 		return Config{}, errors.Errorf("unknown mode: %v", cfg.Mode)
 	}

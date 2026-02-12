@@ -17,66 +17,85 @@ func SeedEventsData(
 	rpcClient *rpcclient.Client,
 	writer *SeedWriter,
 	parameters PreseedParameters,
-) error {
+) (uint32, error) {
 	uniqueEventTopics = make(map[string]struct{})
 
+	var contractIdCount uint32
 	if err := writer.StartArray("contract_ids"); err != nil {
-		return errors.Wrap(err, "failed to start contract_ids array")
+		return 0, errors.Wrap(err, "failed to start contract_ids array")
 	}
 
-	limit := min(util.TxPageLimit, parameters.Range.Last-parameters.Range.First+1)
+	for _, r := range parameters.GetProcessingRanges() {
+		if contractIdCountForRange, err := seedEventsForRange(ctx, rpcClient, writer, r); err != nil {
+			return 0, err
+		} else {
+			contractIdCount += contractIdCountForRange
+		}
+	}
 
-	for ; parameters.Range.First < parameters.Range.Last; parameters.Range.First += limit {
-		endLedger := min(parameters.Range.First+limit-1, parameters.Range.Last)
+	if err := writer.EndArray(); err != nil {
+		return 0, errors.Wrap(err, "failed to end contract_ids array")
+	}
+	return contractIdCount, nil
+}
+
+func seedEventsForRange(
+	ctx context.Context,
+	rpcClient *rpcclient.Client,
+	writer *SeedWriter,
+	r Range,
+) (uint32, error) {
+	limit := min(util.TxPageLimit, r.Last-r.First+1)
+
+	var contractIdCountForRange uint32
+	for start := r.First; start <= r.Last; start += limit {
+		endLedger := min(start+limit-1, r.Last)
 		var cursor *protocol.Cursor
 
 		for {
-			// Fetch contract IDs using GetEvents
-			req := util.MakeGetEventsRequest(parameters.Range.First, endLedger, cursor)
+			req := util.MakeGetEventsRequest(start, endLedger, cursor)
 			eventsResponse, err := rpcClient.GetEvents(ctx, req)
 			if err != nil {
-				return errors.Wrapf(err, "failed to fetch event data for ledgers %d->%d",
-					parameters.Range.First, endLedger)
+				return 0, errors.Wrapf(err, "failed to fetch event data for ledgers %d->%d",
+					start, endLedger)
 			}
 
+			contractIdCountForRange += uint32(len(eventsResponse.Events))
 			for _, event := range eventsResponse.Events {
 				if err := writer.WriteItem(event.ContractID); err != nil {
-					return errors.Wrap(err, "failed to write contract ID item")
+					return 0, errors.Wrap(err, "failed to write contract ID item")
 				}
+
+				// Cache unique event topics for flushing after all ranges are processed
 				for _, topic := range event.TopicXDR {
 					uniqueEventTopics[topic] = struct{}{}
 				}
 			}
 
-			// No more pages when the server returns an empty cursor or no events.
 			if eventsResponse.Cursor == "" || len(eventsResponse.Events) == 0 {
 				break
 			}
 			c, err := protocol.ParseCursor(eventsResponse.Cursor)
 			if err != nil {
-				return errors.Wrapf(err, "failed to parse events cursor %q", eventsResponse.Cursor)
+				return 0, errors.Wrapf(err, "failed to parse events cursor %q", eventsResponse.Cursor)
 			}
 			cursor = &c
 		}
 	}
-
-	if err := writer.EndArray(); err != nil {
-		return errors.Wrap(err, "failed to end contract_ids array")
-	}
-	return nil
+	return contractIdCountForRange, nil
 }
 
-func FlushUniqueEventTopics(writer *SeedWriter) error {
+func FlushUniqueEventTopics(writer *SeedWriter) (uint32, error) {
 	if err := writer.StartArray("event_topics"); err != nil {
-		return errors.Wrap(err, "failed to start event_topics array")
+		return 0, errors.Wrap(err, "failed to start event_topics array")
 	}
 	for topic := range uniqueEventTopics {
 		if err := writer.WriteItem(topic); err != nil {
-			return errors.Wrap(err, "failed to write event topic item")
+			return 0, errors.Wrap(err, "failed to write event topic item")
 		}
 	}
 	if err := writer.EndArray(); err != nil {
-		return errors.Wrap(err, "failed to end event_topics array")
+		return 0, errors.Wrap(err, "failed to end event_topics array")
 	}
-	return nil
+	return uint32(len(uniqueEventTopics)), nil
 }

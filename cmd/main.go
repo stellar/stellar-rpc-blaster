@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -55,7 +57,7 @@ func makeCommands() *cobra.Command {
 		},
 	}
 
-	// Generate command (unimplemented :p)
+	// Generate command
 	generateCmd := &cobra.Command{
 		Use:   "generate",
 		Short: "Generate load test data",
@@ -63,6 +65,7 @@ func makeCommands() *cobra.Command {
 			settings := bindGenerateCliParameters(cmd.Flags().Lookup("rpc-url"),
 				cmd.Flags().Lookup("output"),
 				cmd.Flags().Lookup("ledger-window"),
+				cmd.Flags().Lookup("count"),
 			)
 			settings.Mode = config.Generate
 			settings.Ctx = cmd.Context()
@@ -85,7 +88,8 @@ func makeCommands() *cobra.Command {
 	runCmd.Flags().Duration("ramp-up", time.Duration(0), "Ramp-up time before reaching target RPS (e.g., 30s)")
 
 	generateCmd.Flags().String("output", "./output/seed.json", "Path to seed data file output by generate")
-	generateCmd.Flags().Uint32("ledger-window", 1000, "Ledger window size for data generation")
+	generateCmd.Flags().String("ledger-window", "", "Ledger range as START[,END] for data generation")
+	generateCmd.Flags().Uint32("count", 5000, "Number of ledgers to sample from the ledger window")
 
 	runCmd.Flags().AddFlagSet(commonFlags)
 	generateCmd.Flags().AddFlagSet(commonFlags)
@@ -130,6 +134,7 @@ func bindGenerateCliParameters(
 	rpcUrl *pflag.Flag,
 	outputPath *pflag.Flag,
 	ledgerWindow *pflag.Flag,
+	count *pflag.Flag,
 ) config.RuntimeSettings {
 	bindFlag := func(flag *pflag.Flag) {
 		viper.BindPFlag(flag.Name, flag)
@@ -138,10 +143,34 @@ func bindGenerateCliParameters(
 	bindFlag(rpcUrl)
 	bindFlag(outputPath)
 	bindFlag(ledgerWindow)
+	bindFlag(count)
 	settings := config.RuntimeSettings{}
 	settings.RpcUrl = viper.GetString(rpcUrl.Name)
 	settings.OutputPath = viper.GetString(outputPath.Name)
-	settings.LedgerWindow = viper.GetViper().GetUint32(ledgerWindow.Name)
+	settings.LedgerWindow = parseLedgerWindow(viper.GetString(ledgerWindow.Name))
+	settings.Count = viper.GetUint32(count.Name)
 
 	return settings
+}
+
+// parseLedgerWindow parses a comma-separated string of up to 2 ledger sequence numbers.
+// Returns nil for an empty string (no window specified).
+func parseLedgerWindow(s string) []uint32 {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	result := make([]uint32, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		v, err := strconv.ParseUint(p, 10, 32)
+		if err != nil {
+			continue
+		}
+		result = append(result, uint32(v))
+	}
+	return result
 }

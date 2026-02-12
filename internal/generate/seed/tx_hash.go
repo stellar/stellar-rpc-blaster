@@ -25,15 +25,37 @@ func SeedTxHashData(
 	rpcClient *rpcclient.Client,
 	writer *SeedWriter,
 	parameters PreseedParameters,
-) error {
+) (uint32, error) {
+	var txHashCount uint32
 	if err := writer.StartArray("tx_hashes"); err != nil {
-		return errors.Wrap(err, "failed to start tx_hashes array")
+		return 0, errors.Wrap(err, "failed to start tx_hashes array")
 	}
 
+	for _, r := range parameters.GetProcessingRanges() {
+		if txHashCountForRange, err := seedTxHashesForRange(ctx, rpcClient, writer, r); err != nil {
+			return 0, err
+		} else {
+			txHashCount += txHashCountForRange
+		}
+	}
+
+	if err := writer.EndArray(); err != nil {
+		return 0, errors.Wrap(err, "failed to end tx_hashes array")
+	}
+	return txHashCount, nil
+}
+
+func seedTxHashesForRange(
+	ctx context.Context,
+	rpcClient *rpcclient.Client,
+	writer *SeedWriter,
+	r Range,
+) (uint32, error) {
 	var cursor string
+	var txHashCountForRange uint32
 	for {
 		req := protocol.GetTransactionsRequest{
-			StartLedger: parameters.Range.First,
+			StartLedger: r.First,
 			Pagination: &protocol.LedgerPaginationOptions{
 				Limit: uint(util.TxPageLimit),
 			},
@@ -45,32 +67,27 @@ func SeedTxHashData(
 
 		txsResponse, err := rpcClient.GetTransactions(ctx, req)
 		if err != nil {
-			return errors.Wrapf(err, "failed to fetch transaction data for ledger %d, cursor %s",
-				parameters.Range.First, cursor)
+			return 0, errors.Wrapf(err, "failed to fetch transaction data for ledger %d, cursor %s",
+				r.First, cursor)
 		}
 		if len(txsResponse.Transactions) == 0 {
 			break
 		}
 		cursor = txsResponse.Cursor
 
+		txHashCountForRange += uint32(len(txsResponse.Transactions))
 		for _, tx := range txsResponse.Transactions {
-			if tx.Ledger > parameters.Range.Last {
-				if err := writer.EndArray(); err != nil {
-					return errors.Wrap(err, "failed to end tx_hashes array")
-				}
-				return nil
+			if tx.Ledger > r.Last {
+				return txHashCountForRange, nil
 			}
 			item := TxData{
 				TxHash:  tx.TransactionDetails.TransactionHash,
 				Success: tx.TransactionDetails.Status == TxSuccess,
 			}
 			if err := writer.WriteItem(item); err != nil {
-				return errors.Wrap(err, "failed to write tx hash item")
+				return 0, errors.Wrap(err, "failed to write tx hash item")
 			}
 		}
 	}
-	if err := writer.EndArray(); err != nil {
-		return errors.Wrap(err, "failed to end tx_hashes array")
-	}
-	return nil
+	return txHashCountForRange, nil
 }

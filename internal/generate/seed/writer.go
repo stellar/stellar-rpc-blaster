@@ -55,11 +55,11 @@ func (w *SeedWriter) WriteItem(v any) error {
 		return errors.New("cannot write item: no array started")
 	}
 	if w.arraySize > 0 {
-		if _, err := w.file.WriteString(","); err != nil {
+		if _, err := w.file.WriteString(",\n"); err != nil {
 			return errors.Wrap(err, "failed to write comma")
 		}
 	}
-	if vBytes, err := json.Marshal(v); err != nil {
+	if vBytes, err := json.MarshalIndent(v, "", "  "); err != nil {
 		return errors.Wrap(err, "failed to marshal item")
 	} else {
 		if _, err := w.file.Write(vBytes); err != nil {

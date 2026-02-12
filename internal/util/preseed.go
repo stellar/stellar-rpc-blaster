@@ -20,20 +20,54 @@ func GetLatestCheckpointLedger(ctx context.Context, rpcClient *rpcclient.Client)
 	return checkpointManager.PrevCheckpoint(latestLedger.Sequence), nil
 }
 
-func GetLedgerRange(ctx context.Context, rpcClient *rpcclient.Client, ledgerWindow uint32) (uint32, uint32, error) {
+func GetLedgerRange(ctx context.Context, rpcClient *rpcclient.Client, ledgerWindow []uint32, count uint32) (uint32, uint32, error) {
 	latestCheckpointLedger, err := GetLatestCheckpointLedger(ctx, rpcClient)
 	if err != nil {
 		return 0, 0, errors.Wrap(err, "failed to get latest checkpoint ledger")
 	}
 
-	if ledgerWindow > latestCheckpointLedger {
-		return 0, 0, errors.Errorf(
-			"ledger window (%d) exceeds latest checkpoint ledger (%d)",
-			ledgerWindow, latestCheckpointLedger,
-		)
+	var first, last uint32
+	switch len(ledgerWindow) {
+	case 0:
+		// No window specified: [LatestCheckpoint - count, LatestCheckpoint]
+		if count > latestCheckpointLedger {
+			return 0, 0, errors.Errorf("count (%d) exceeds latest checkpoint ledger (%d)", count, latestCheckpointLedger)
+		}
+		first = latestCheckpointLedger - count + 1
+		last = latestCheckpointLedger
+	case 1:
+		// Only START: [START, LatestCheckpoint]
+		first = ledgerWindow[0]
+		last = latestCheckpointLedger
+	case 2:
+		// Both START and END: [START, END]
+		first = ledgerWindow[0]
+		last = ledgerWindow[1]
+	default:
+		return 0, 0, errors.Errorf("ledger-window must have at most 2 values, got %d", len(ledgerWindow))
 	}
 
-	return latestCheckpointLedger - ledgerWindow, latestCheckpointLedger, nil
+	if first > last {
+		return 0, 0, errors.Errorf("invalid ledger range: start (%d) > end (%d)", first, last)
+	}
+
+	return first, last, nil
+}
+
+// Returns count uniformly-spaced ledger sequence numbers
+// in [first, last]
+func ComputeSampledLedgers(first, last, count uint32) []uint32 {
+	windowSize := last - first + 1
+	if count >= windowSize {
+		return nil // range already has <= count ledgers, no need to sample
+	}
+
+	sampled := make([]uint32, count)
+	step := float64(last-first) / float64(count-1)
+	for i := range count {
+		sampled[i] = first + uint32(float64(i)*step+0.5)
+	}
+	return sampled
 }
 
 func MakeGetTransactionsRequest(start uint32, cursor string) protocol.GetTransactionsRequest {
