@@ -12,7 +12,7 @@ type Entry[T any] struct {
 }
 
 // NewEntry creates a new write buffer with the given JSON key and element type
-func NewEntry[T any](key string, cap int) Entry[T] {
+func NewEntry[T any](key string, cap uint32) Entry[T] {
 	m := make(map[string]any)
 	m[key] = make([]T, 0, cap)
 	return Entry[T]{Map: m, key: key}

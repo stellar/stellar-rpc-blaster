@@ -20,7 +20,7 @@ func SeedEventsData(
 	rpcClient *rpcclient.Client,
 	parameters util.PreseedParameters,
 ) ([]string, []string, error) {
-	uniqueEventTopics = set.NewSet[string](util.DefaultSeedSliceSize)
+	uniqueEventTopics = set.NewSet[string](int(util.DefaultSeedSliceSize))
 	contractIdEntry := NewEntry[string]("contract_ids", util.DefaultSeedSliceSize)
 
 	for _, r := range parameters.GetProcessingRanges() {
