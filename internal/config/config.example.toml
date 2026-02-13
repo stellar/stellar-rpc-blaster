@@ -5,32 +5,36 @@
 
 # No-parameter/run-only endpoints
 [endpoints.getHealth]
-rps = 10
+rps = 20
 
 [endpoints.getNetwork]
-rps = 2000
+rps = 20
 
 [endpoints.getVersionInfo]
-rps = 5
+rps = 20
 
 [endpoints.getLatestLedger]
 rps = 20
 
 [endpoints.getFeeStats]
-rps = 10
+rps = 20
 
 # Parameter-based/generate-required endpoints
-[endpoints.getLedgers]
-rps = 0
+[endpoints.getEvents] # this only takes optional arguments
+rps = 20
 
 [endpoints.getLedgerEntries]
-rps = 0
+rps = 20
+data_path = "output/seed.json"
+
+[endpoints.getLedgers]
+rps = 20
+data_path = "output/seed.json"
 
 [endpoints.getTransaction]
-rps = 0
+rps = 20
+data_path = "output/seed.json"
 
 [endpoints.getTransactions]
-rps = 0
-
-[endpoints.getEvents]
-rps = 0
+rps = 20
+data_path = "output/seed.json"

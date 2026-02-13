@@ -13,6 +13,7 @@ import (
 
 	"github.com/stellar/stellar-rpc-blaster/internal/config"
 	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/run/metrics"
+	"github.com/stellar/stellar-rpc-blaster/internal/run/parameters"
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
@@ -38,24 +39,65 @@ func RunVegeta(
 		return NewBlasterWithClient(httpClient, util.MaxWorkers)
 	}
 
+	// Pre-load seed parameters for data-dependent endpoints, deduplicating by path
+	paramCache := map[string]*parameters.Parameters{}
+	for _, endpointKey := range cfg.GetEndpoints() {
+		ep := cfg.Endpoints[endpointKey]
+		if ep.DataPath == "" || !parameters.EndpointNeedsData(endpointKey) {
+			continue
+		}
+		if _, ok := paramCache[ep.DataPath]; !ok {
+			p, err := parameters.GetParameters(ep.DataPath)
+			if err != nil {
+				return errors.Wrapf(err, "loading seed data for endpoint %s", endpointKey)
+			}
+			paramCache[ep.DataPath] = p
+		}
+	}
+
 	// Construct endpoint blast configs
 	// 3... 2... 1...
 	var endpointBlasts []endpointBlast
 	for _, endpointKey := range cfg.GetEndpoints() {
 		rps := cfg.GetEndpointRPS(endpointKey)
+		ep := cfg.Endpoints[endpointKey]
 
-		// Form request and Vegeta targeter from that
-		request := map[string]any{
-			"jsonrpc": "2.0",
-			"id":      1,
-			"method":  endpointKey,
-			"params":  map[string]any{}, // optional -- to be used when we do PR 573/data-dependent endpoints
+		var targeter vegeta.Targeter
+		if params, ok := paramCache[ep.DataPath]; ok && parameters.EndpointNeedsData(endpointKey) {
+			// Data-dependent endpoint: build variant request bodies and rotate through them
+			paramMaps, err := parameters.BuildEndpointParams(endpointKey, params)
+			if err != nil {
+				return errors.Wrapf(err, "couldn't build params for endpoint %s", endpointKey)
+			}
+			bodies := make([][]byte, len(paramMaps))
+			for i, p := range paramMaps {
+				req := map[string]any{
+					"jsonrpc": "2.0",
+					"id":      1,
+					"method":  endpointKey,
+					"params":  p,
+				}
+				bodies[i], err = json.Marshal(req)
+				if err != nil {
+					return errors.Wrapf(err, "couldn't marshal request for endpoint %s", endpointKey)
+				}
+			}
+			targeter = NewRotatingJSONRPCTargeter(cfg.RpcUrl, bodies)
+			logger.Infof("Endpoint %s: rotating through %d parameterized request bodies", endpointKey, len(bodies))
+		} else {
+			// Static endpoint: single body with empty params
+			request := map[string]any{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"method":  endpointKey,
+				"params":  map[string]any{},
+			}
+			body, err := json.Marshal(request)
+			if err != nil {
+				return errors.Wrapf(err, "couldn't marshal JSON request for static endpoint %s", endpointKey)
+			}
+			targeter = NewJSONRPCTargeter(cfg.RpcUrl, body)
 		}
-		body, err := json.Marshal(request)
-		if err != nil {
-			return errors.Wrap(err, "error marshalling JSON request")
-		}
-		targeter := NewJSONRPCTargeter(cfg.RpcUrl, body)
 
 		endpointBlasts = append(endpointBlasts, endpointBlast{
 			EndpointBlastConfig: EndpointBlastConfig{
