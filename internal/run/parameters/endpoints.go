@@ -8,6 +8,7 @@ import (
 
 // Builds a list of params maps for a data-dependent endpoint,
 // one per seed item, so the targeter can rotate through distinct request payloads.
+// TODO: make match the spec with more sophistocated parameter combinations
 func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]any, error) {
 	switch endpointKey {
 	case "getTransaction":

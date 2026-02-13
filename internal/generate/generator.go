@@ -55,9 +55,6 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 			g.parameters.Range.Last-g.parameters.Range.First+1)
 	}
 	start := time.Now()
-	defer func() {
-		logger.Infof("Data generation completed in %s", time.Since(start))
-	}()
 	getNetworkResponse, err := cfg.RpcClient.GetNetwork(ctx)
 	if err != nil {
 		return errors.Wrap(err, "failed to fetch network passphrase during generation")
@@ -72,8 +69,8 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 
 	// Set the ledger range
 	writer.Output.LedgerRange = g.parameters.Range
-	logger.Infof("Successfully wrote ledger range [%d, %d] to output",
-		g.parameters.Range.First, g.parameters.Range.Last)
+	logger.Debugf("Successfully wrote ledger sequence numbers start: %d, end: %d to output %s",
+		g.parameters.Range.First, g.parameters.Range.Last, util.LogElapsed(start))
 
 	// Bootstrap transaction hashes and success status within the ledger range
 	txHashes, err := seed.SeedTxHashData(ctx, g.client, g.parameters)
@@ -81,27 +78,31 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 		return errors.Wrap(err, "failed to seed transaction hash data")
 	}
 	writer.Output.TxHashes = txHashes
-	logger.Infof("Successfully wrote %d {transaction hash : success status} entries to output", len(txHashes))
+	logger.Infof("Successfully wrote %d {transaction hash : success status} entries to output %s",
+		len(txHashes), util.LogElapsed(start))
 
 	// Bootstrap active contract IDs and event topics within the ledger range
 	writer.Output.ContractIDs, writer.Output.EventTopics, err = seed.SeedEventsData(ctx, g.client, g.parameters)
 	if err != nil {
 		return errors.Wrap(err, "failed to seed events data")
 	}
-	logger.Infof("Successfully wrote %d active contract IDs entries to output", len(writer.Output.ContractIDs))
-	logger.Infof("Successfully wrote %d unique event topics entries to output", len(writer.Output.EventTopics))
+	logger.Infof("Successfully wrote %d active contract IDs entries to output %s",
+		len(writer.Output.ContractIDs), util.LogElapsed(start))
+	logger.Infof("Successfully wrote %d unique event topics entries to output %s",
+		len(writer.Output.EventTopics), util.LogElapsed(start))
 
 	// Seed ledger keys
 	writer.Output.LedgerKeys, err = seed.SeedLedgerKeys(ctx, logger, g.client, g.parameters)
 	if err != nil {
 		return errors.Wrap(err, "failed to seed ledger keys")
 	}
-	logger.Infof("Successfully wrote %d ledger keys entries to output", len(writer.Output.LedgerKeys))
+	logger.Infof("Successfully wrote %d ledger keys entries to output %s",
+		len(writer.Output.LedgerKeys), util.LogElapsed(start))
 
 	if err := writer.Flush(); err != nil {
 		return errors.Wrap(err, "failed to flush seed data to output")
 	}
 
-	logger.Infof("Generated data written to %s", cfg.OutputPath)
+	logger.Infof("Generated data written to %s %s", cfg.OutputPath, util.LogElapsed(start))
 	return nil
 }
