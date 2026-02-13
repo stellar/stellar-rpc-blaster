@@ -2,12 +2,12 @@ package util
 
 import (
 	"context"
+	"slices"
 
 	"github.com/pkg/errors"
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	checkpoint "github.com/stellar/go-stellar-sdk/historyarchive"
-	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 )
 
 func GetLatestCheckpointLedger(ctx context.Context, rpcClient *rpcclient.Client) (uint32, error) {
@@ -54,6 +54,45 @@ func GetLedgerRange(ctx context.Context, rpcClient *rpcclient.Client, ledgerWind
 	return first, last, nil
 }
 
+type PreseedParameters struct {
+	ExportPath string
+	Range      Range `json:"ledger_range"`
+	// When nil, the full Range is used.
+	ProcessingRanges []Range // holds the sub-ranges to actually seed data from when window > count
+}
+
+type Range struct {
+	First uint32 `json:"first"`
+	Last  uint32 `json:"last"`
+}
+
+// This returns the range(s) to iterate over during seeding
+func (p PreseedParameters) GetProcessingRanges() []Range {
+	if len(p.ProcessingRanges) > 0 {
+		return p.ProcessingRanges
+	}
+	return []Range{p.Range}
+}
+
+// Group list of sampled ledgers into contiguous ranges to minimize number of RPC calls during seeding
+func GroupSampledLedgersIntoRanges(ledgers []uint32) []Range {
+	if len(ledgers) == 0 {
+		return nil
+	}
+	slices.SortFunc(ledgers, func(a, b uint32) int { return int(a) - int(b) })
+
+	ranges := []Range{{First: ledgers[0], Last: ledgers[0]}}
+	for _, l := range ledgers[1:] {
+		curr := &ranges[len(ranges)-1]
+		if l == curr.Last+1 {
+			curr.Last = l
+		} else {
+			ranges = append(ranges, Range{First: l, Last: l})
+		}
+	}
+	return ranges
+}
+
 // Returns count uniformly-spaced ledger sequence numbers
 // in [first, last]
 func ComputeSampledLedgers(first, last, count uint32) []uint32 {
@@ -68,41 +107,4 @@ func ComputeSampledLedgers(first, last, count uint32) []uint32 {
 		sampled[i] = first + uint32(float64(i)*step+0.5)
 	}
 	return sampled
-}
-
-func MakeGetTransactionsRequest(start uint32, cursor string) protocol.GetTransactionsRequest {
-	req := protocol.GetTransactionsRequest{
-		StartLedger: start,
-		Pagination: &protocol.LedgerPaginationOptions{
-			Limit: uint(TxPageLimit),
-		},
-	}
-	if cursor != "" {
-		req.StartLedger = 0
-		req.Pagination.Cursor = cursor
-	}
-	return req
-}
-
-func MakeGetEventsRequest(start uint32, end uint32, cursor *protocol.Cursor) protocol.GetEventsRequest {
-	req := protocol.GetEventsRequest{
-		StartLedger: start,
-		EndLedger:   end,
-		Filters: []protocol.EventFilter{
-			{
-				EventType: protocol.EventTypeSet{
-					protocol.EventTypeContract: nil, // only key presence matters
-				},
-			},
-		},
-		Pagination: &protocol.PaginationOptions{
-			Cursor: cursor,
-		},
-	}
-	// When paginating with a cursor, ledger fields must be unset.
-	if cursor != nil {
-		req.StartLedger = 0
-		req.EndLedger = 0
-	}
-	return req
 }

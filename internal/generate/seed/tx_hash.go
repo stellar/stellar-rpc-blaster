@@ -16,14 +16,14 @@ var (
 )
 
 type TxData struct {
-	TxHash  string `json:"txHash"`
-	Success bool   `json:"success"`
+	TxHash  string
+	Success bool
 }
 
 func SeedTxHashData(
 	ctx context.Context,
 	rpcClient *rpcclient.Client,
-	parameters PreseedParameters,
+	parameters util.PreseedParameters,
 ) ([]TxData, error) {
 	entry := NewEntry[TxData]("tx_hashes", 64)
 
@@ -39,7 +39,7 @@ func seedTxHashesForRange(
 	ctx context.Context,
 	rpcClient *rpcclient.Client,
 	entry *Entry[TxData],
-	r Range,
+	r util.Range,
 ) (uint32, error) {
 	var cursor string
 	var txHashCountForRange uint32

@@ -11,13 +11,14 @@ import (
 
 	"github.com/stellar/stellar-rpc-blaster/internal/config"
 	"github.com/stellar/stellar-rpc-blaster/internal/generate/seed"
+	"github.com/stellar/stellar-rpc-blaster/internal/generate/writer"
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
 type Generator struct {
 	rpcUrl     string
 	client     *rpcclient.Client
-	parameters seed.PreseedParameters
+	parameters util.PreseedParameters
 }
 
 func NewGenerator(ctx context.Context, config config.Config) *Generator {
@@ -26,9 +27,9 @@ func NewGenerator(ctx context.Context, config config.Config) *Generator {
 		panic(errors.Wrap(err, "failed to get ledger range for generation"))
 	}
 
-	parameters := seed.PreseedParameters{
+	parameters := util.PreseedParameters{
 		ExportPath: config.OutputPath,
-		Range: seed.Range{
+		Range: util.Range{
 			First: first,
 			Last:  last,
 		},
@@ -36,7 +37,7 @@ func NewGenerator(ctx context.Context, config config.Config) *Generator {
 
 	// If the window contains more ledgers than count, sample uniformly
 	if sampledLedgers := util.ComputeSampledLedgers(first, last, config.Count); sampledLedgers != nil {
-		parameters.ProcessingRanges = seed.GroupSampledLedgersIntoRanges(sampledLedgers)
+		parameters.ProcessingRanges = util.GroupSampledLedgersIntoRanges(sampledLedgers)
 	}
 
 	return &Generator{
@@ -64,7 +65,7 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 	passphrase := getNetworkResponse.Passphrase
 	logger.Infof("Fetched network passphrase: %s", passphrase)
 
-	writer, err := seed.NewSeedWriter(cfg.OutputPath)
+	writer, err := writer.NewSeedWriter(cfg.OutputPath)
 	if err != nil {
 		return errors.Wrap(err, "failed to create seed writer")
 	}

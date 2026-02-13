@@ -17,7 +17,7 @@ func SeedLedgerKeys(
 	ctx context.Context,
 	logger *log.Entry,
 	rpcClient *rpcclient.Client,
-	parameters PreseedParameters,
+	parameters util.PreseedParameters,
 ) ([]string, error) {
 	entry := NewEntry[string]("ledger_keys", util.DefaultSeedSliceSize)
 
@@ -35,7 +35,7 @@ func seedLedgerKeysForRange(
 	logger *log.Entry,
 	rpcClient *rpcclient.Client,
 	entry *Entry[string],
-	r Range,
+	r util.Range,
 ) error {
 	var cursor string
 

@@ -18,7 +18,7 @@ var uniqueEventTopics set.Set[string]
 func SeedEventsData(
 	ctx context.Context,
 	rpcClient *rpcclient.Client,
-	parameters PreseedParameters,
+	parameters util.PreseedParameters,
 ) ([]string, []string, error) {
 	uniqueEventTopics = set.NewSet[string](util.DefaultSeedSliceSize)
 	contractIdEntry := NewEntry[string]("contract_ids", util.DefaultSeedSliceSize)
@@ -36,7 +36,7 @@ func seedEventDataForRange(
 	ctx context.Context,
 	rpcClient *rpcclient.Client,
 	contractIdEntry *Entry[string],
-	r Range,
+	r util.Range,
 ) (uint32, error) {
 	limit := min(util.TxPageLimit, r.Last-r.First+1)
 
