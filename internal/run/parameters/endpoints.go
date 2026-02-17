@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-errors/errors"
 
+	"github.com/stellar/go-stellar-sdk/support/collections/set"
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
@@ -39,9 +40,22 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 		return result, nil
 
 	case "getLedgerEntries":
-		result := make([]map[string]any, len(params.Output.LedgerKeys))
-		for i, key := range params.Output.LedgerKeys {
-			result[i] = map[string]any{"keys": []string{key}}
+		keys := params.Output.LedgerKeys
+		count := min(len(keys), 100)
+		result := make([]map[string]any, count)
+		for i := range count {
+			n := util.VaryKeyCount()
+			n = min(n, uint(len(keys)))
+
+			// Pick n distinct random keys
+			chosen := set.NewSet[string](int(n))
+			for len(chosen) < int(n) {
+				chosen.Add(keys[rand.IntN(len(keys))])
+			}
+			result[i] = map[string]any{
+				"keys":   chosen.Slice(),
+				"format": util.VaryFormat(),
+			}
 		}
 		return result, nil
 
@@ -81,7 +95,19 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 		result := make([]map[string]any, count)
 		for i := range count {
 			start := lr.First + uint32(rand.IntN(span))
-			result[i] = map[string]any{"startLedger": start}
+			limit := util.VaryLimit(uint(util.TxPageLimit))
+			pagination := util.VaryCursorBasedPagination(limit, "")
+			entry := map[string]any{
+				"startLedger": start,
+				"format":      util.VaryFormat(),
+			}
+			paginationMap := map[string]any{"limit": pagination.Limit}
+			if pagination.Cursor != "" {
+				paginationMap["cursor"] = pagination.Cursor
+				delete(entry, "startLedger")
+			}
+			entry["pagination"] = paginationMap
+			result[i] = entry
 		}
 		return result, nil
 
