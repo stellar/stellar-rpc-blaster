@@ -1,7 +1,7 @@
 # stellar-rpc-blaster
 
 > **Note:** This repository is currently in development and is not yet ready for use. 
-> Please see branch `pseudomain` for the current developmental status of `stellar-rpc-blaster`, our upcoming CLI load testing tool for Stellar RPC.  
+> Please see branch `dev` for the current developmental status of `stellar-rpc-blaster`, our upcoming CLI load testing tool for Stellar RPC.  
   
 **Planned** future usage of Blaster is as follows for the following commands `run` and `generate`, which run a load test and generate seed data  
 for endpoints requiring data-backed parameters respectively.  
