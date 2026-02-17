@@ -7,13 +7,13 @@ import (
 )
 
 // returns a random limit between 1 and the provided max limit
-func varyLimit(limitMax uint) uint {
+func VaryLimit(limitMax uint) uint {
 	return uint(rand.Float64()*float64(limitMax-1) + 1)
 }
 
 // determines whether to use "json" or "xdr" format for transaction requests
 // used by all data-dependent endpoints
-func varyFormat() string {
+func VaryFormat() string {
 	if rand.Float64() < PrJson {
 		return "json"
 	}
@@ -22,7 +22,7 @@ func varyFormat() string {
 
 // randomly decides whether to include a pagination cursor in the request, to vary request patterns for data-dependent endpoints that paginate
 // used by getEvents, getTransactions, getLedgers
-func varyCursorBasedPagination(limit uint, cursor string) *protocol.LedgerPaginationOptions {
+func VaryCursorBasedPagination(limit uint, cursor string) *protocol.LedgerPaginationOptions {
 	pagination := &protocol.LedgerPaginationOptions{
 		Limit: limit,
 	}
@@ -33,7 +33,7 @@ func varyCursorBasedPagination(limit uint, cursor string) *protocol.LedgerPagina
 }
 
 // used only by getEvents, which has a different pagination struct
-func varyCursorBasedPaginationForEvents(limit uint, cursor string) *protocol.PaginationOptions {
+func VaryCursorBasedPaginationForEvents(limit uint, cursor string) *protocol.PaginationOptions {
 	pagination := &protocol.PaginationOptions{
 		Limit: limit,
 	}
@@ -51,18 +51,18 @@ func varyCursorBasedPaginationForEvents(limit uint, cursor string) *protocol.Pag
 // Chooses key count according to the distribution defined in PrKeyCount
 // 80% of requests have 1 key, 15% have between 2 and 10, and 5% will have between 50 and LedgerKeyLimit=200 keys
 // Used by getLedgerEntries to vary the number of keys requested.
-func varyKeyCount() uint {
+func VaryKeyCount() uint {
 	r := rand.Float64()
 	if r < PrKeyCount[0] {
 		return 1
 	} else if r < PrKeyCount[0]+PrKeyCount[1] {
-		return varyLimit(10 - 1)
+		return VaryLimit(10 - 1)
 	} else {
-		return varyLimit(LedgerKeyLimit-50) + 50 // between 50 and LedgerKeyLimit
+		return VaryLimit(LedgerKeyLimit-50) + 50 // between 50 and LedgerKeyLimit
 	}
 }
 
-func varyTxStatus(txSuccess float64) string {
+func VaryTxStatus(txSuccess float64) string {
 	r := rand.Float64()
 	if txFound() {
 		if r < txSuccess {

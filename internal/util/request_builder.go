@@ -46,7 +46,7 @@ func MakeGetEventsRequest(start uint32, end uint32, cursor *protocol.Cursor) pro
 func BuildTxHashReqBody(txHash string) map[string]any {
 	return map[string]any{
 		"tx_hash": txHash,
-		"format":  varyFormat(),
+		"format":  VaryFormat(),
 	}
 }
 

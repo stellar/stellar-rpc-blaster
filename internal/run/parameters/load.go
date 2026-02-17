@@ -8,6 +8,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/stellar/stellar-rpc-blaster/internal/generate/writer"
+	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
 type Parameters struct {
@@ -62,5 +63,7 @@ func (w *Parameters) Validate() error {
 	if len(missingFields) > 0 {
 		return errors.New("sample counts for the following fields are zero: " + strings.Join(missingFields, ", "))
 	}
+	// Set global ratio for successful vs failed transaction hashes for use in request generation
+	util.SetTxHashSuccessRatio(len(w.Output.TxHashes.Successes), len(w.Output.TxHashes.Failures))
 	return nil
 }
