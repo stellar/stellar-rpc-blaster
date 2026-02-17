@@ -1,11 +1,7 @@
 # stellar-rpc-blaster
+
+> **Note:** This repository is currently in development and is not yet ready for use. 
+> Please see branch `pseudomain` for the current developmental status of `stellar-rpc-blaster`, our 
+> upcoming CLI load testing tool for Stellar RPC
+
 CLI load testing tool for Stellar RPC
-
-This repo is home to our RPC load testing tool. It has the ability to test various endpoints on one's RPC server. ## Run Tests
-
-Example usage on localhost RPC testnet instance (note that instance must be running separately):
-./stellar-rpc-blaster run \
-  --rpc-url "http://127.0.0.1:8000" \
-  --config-path "./internal/config/config.example.toml" \
-  --duration 30s \
-  --ramp-up 10s
