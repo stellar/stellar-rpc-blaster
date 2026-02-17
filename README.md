@@ -3,10 +3,10 @@
 > **Note:** This repository is currently in development and is not yet ready for use. 
 > Please see branch `pseudomain` for the current developmental status of `stellar-rpc-blaster`, our upcoming CLI load testing tool for Stellar RPC.  
   
-Planned future usage of Blaster is as follows for the following commands `run` and `generate`, which run a load test and generate seed data  
+**Planned** future usage of Blaster is as follows for the following commands `run` and `generate`, which run a load test and generate seed data  
 for endpoints requiring data-backed parameters respectively.  
   
-Example `run` usage on localhost RPC testnet instance:  
+To run a load test, example usage is **planned to be** as follows:  
 ```  
 ./stellar-rpc-blaster run \
   --rpc-url <RPC_URL> \
@@ -16,9 +16,9 @@ Example `run` usage on localhost RPC testnet instance:
 ```  
 Note that the default config file is found at "./internal/config/config.example.toml"  
   
-To generate data for the `generate` command, example usage is as follows:  
+To generate data for the `generate` command, example usage is **planned to be** as follows:  
 ```  
-./stellar-rpc-loadtest generate \
+./stellar-rpc-blaster generate \
   --rpc-url <RPC_URL> \
   [--output <PATH_TO_REQUEST_DATA_DAT>] \
   [--ledger-window START[,END]]
