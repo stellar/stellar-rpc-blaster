@@ -78,8 +78,8 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 		return errors.Wrap(err, "failed to seed transaction hash data")
 	}
 	writer.Output.TxHashes = txHashes
-	logger.Infof("Successfully wrote %d {transaction hash : success status} entries to output %s",
-		len(txHashes), util.LogElapsed(start))
+	logger.Infof("Successfully wrote %d successful and %d failed transaction hashes to output %s",
+		len(txHashes.Successes), len(txHashes.Failures), util.LogElapsed(start))
 
 	// Bootstrap active contract IDs and event topics within the ledger range
 	writer.Output.ContractIDs, writer.Output.EventTopics, err = seed.SeedEventsData(ctx, g.client, g.parameters)

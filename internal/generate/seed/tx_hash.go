@@ -15,30 +15,31 @@ var (
 	TxFailed  string = "FAILED"
 )
 
-type TxData struct {
-	TxHash  string
-	Success bool
+// TxHashData holds transaction hashes split by outcome.
+type TxHashData struct {
+	Successes []string `json:"successes"`
+	Failures  []string `json:"failures"`
 }
 
 func SeedTxHashData(
 	ctx context.Context,
 	rpcClient *rpcclient.Client,
 	parameters util.PreseedParameters,
-) ([]TxData, error) {
-	entry := NewEntry[TxData]("tx_hashes", 64)
+) (TxHashData, error) {
+	var result TxHashData
 
 	for _, r := range parameters.GetProcessingRanges() {
-		if _, err := seedTxHashesForRange(ctx, rpcClient, &entry, r); err != nil {
-			return nil, err
+		if _, err := seedTxHashesForRange(ctx, rpcClient, &result, r); err != nil {
+			return TxHashData{}, err
 		}
 	}
-	return entry.Slice(), nil
+	return result, nil
 }
 
 func seedTxHashesForRange(
 	ctx context.Context,
 	rpcClient *rpcclient.Client,
-	entry *Entry[TxData],
+	result *TxHashData,
 	r util.Range,
 ) (uint32, error) {
 	var cursor string
@@ -70,11 +71,12 @@ func seedTxHashesForRange(
 			if tx.Ledger > r.Last {
 				return txHashCountForRange, nil
 			}
-			item := TxData{
-				TxHash:  tx.TransactionDetails.TransactionHash,
-				Success: tx.TransactionDetails.Status == TxSuccess,
+			hash := tx.TransactionDetails.TransactionHash
+			if tx.TransactionDetails.Status == TxSuccess {
+				result.Successes = append(result.Successes, hash)
+			} else {
+				result.Failures = append(result.Failures, hash)
 			}
-			entry.Append(item)
 		}
 	}
 	return txHashCountForRange, nil

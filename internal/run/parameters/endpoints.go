@@ -12,9 +12,13 @@ import (
 func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]any, error) {
 	switch endpointKey {
 	case "getTransaction":
-		result := make([]map[string]any, len(params.Output.TxHashes))
-		for i, tx := range params.Output.TxHashes {
-			result[i] = map[string]any{"hash": tx.TxHash}
+		tx := params.Output.TxHashes
+		all := make([]string, 0, len(tx.Successes)+len(tx.Failures))
+		all = append(all, tx.Successes...)
+		all = append(all, tx.Failures...)
+		result := make([]map[string]any, len(all))
+		for i, hash := range all {
+			result[i] = map[string]any{"hash": hash}
 		}
 		return result, nil
 
