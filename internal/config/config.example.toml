@@ -22,6 +22,7 @@ rps = 20
 # Parameter-based/generate-required endpoints
 [endpoints.getEvents] # this only takes optional arguments
 rps = 20
+data_path = "output/seed.json"
 
 [endpoints.getLedgerEntries]
 rps = 20

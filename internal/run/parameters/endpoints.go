@@ -111,6 +111,41 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 		}
 		return result, nil
 
+	case "getEvents":
+		lr := params.Output.LedgerRange
+		span := int(lr.Last - lr.First)
+		if span <= 0 {
+			return nil, errors.Errorf("empty ledger range for %s", endpointKey)
+		}
+		contractIDs := params.Output.ContractIDs
+		topics := params.Output.EventTopics
+		count := min(span, 100)
+		result := make([]map[string]any, count)
+		for i := range count {
+			// Random recent window of 100-10000 ledgers, placed randomly within the seeded range
+			maxWindow := min(span, 10000)
+			window := 100 + rand.IntN(maxWindow-100+1)
+			// Random start position that fits the window
+			earliest := int(lr.First)
+			latest := int(lr.Last) - window
+			if latest < earliest {
+				latest = earliest
+			}
+			start := uint32(earliest + rand.IntN(latest-earliest+1))
+			endLedger := start + uint32(window)
+
+			filter := util.VaryEventFilter(contractIDs, topics)
+
+			entry := map[string]any{
+				"startLedger": start,
+				"endLedger":   endLedger,
+				"filters":     []map[string]any{filter},
+				"pagination":  map[string]any{"limit": util.VaryLimit(uint(util.EventsPageLimit))},
+			}
+			result[i] = entry
+		}
+		return result, nil
+
 	default:
 		return nil, errors.Errorf("endpoint %q does not support data-dependent parameters", endpointKey)
 	}
@@ -119,7 +154,7 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 // EndpointNeedsData reports whether the endpoint requires seed data to build requests.
 func EndpointNeedsData(endpointKey string) bool {
 	switch endpointKey {
-	case "getTransaction", "getLedgerEntries", "getTransactions", "getLedgers":
+	case "getTransaction", "getLedgerEntries", "getTransactions", "getLedgers", "getEvents":
 		return true
 	}
 	return false

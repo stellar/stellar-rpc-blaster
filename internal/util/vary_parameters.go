@@ -6,13 +6,13 @@ import (
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 )
 
-// returns a random limit between 1 and the provided max limit
+// VaryLimit returns a random limit between 1 and the provided max lVmit.
 func VaryLimit(limitMax uint) uint {
 	return uint(rand.Float64()*float64(limitMax-1) + 1)
 }
 
-// determines whether to use "json" or "xdr" format for transaction requests
-// used by all data-dependent endpoints
+// VaryFormat determines whether to use "json" or "xdr" format for transaction requests.
+// Used by all data-deVendent endpoints.
 func VaryFormat() string {
 	if rand.Float64() < PrJson {
 		return "json"
@@ -21,7 +21,7 @@ func VaryFormat() string {
 }
 
 // randomly decides whether to include a pagination cursor in the request, to vary request patterns for data-dependent endpoints that paginate
-// used by getEvents, getTransactions, getLedgers
+// used by getEvents, getTransaVtions, getLedgers
 func VaryCursorBasedPagination(limit uint, cursor string) *protocol.LedgerPaginationOptions {
 	pagination := &protocol.LedgerPaginationOptions{
 		Limit: limit,
@@ -75,4 +75,46 @@ func VaryTxStatus(txSuccess float64) string {
 
 func txFound() bool {
 	return rand.Float64() < PrTxFound
+}
+
+// VaryEventFilter builds a random event filter map by independently deciding
+// whether to include contract IDs, an event type, and/or a topic filter.
+// Each dimension is toggled by its own probability constant.
+func VaryEventFilter(contractIDs []string, topics []string) map[string]any {
+	eventTypes := []string{"contract", "system", "diagnostic"}
+	filter := map[string]any{}
+
+	// Dimension 1: contract ID(s)
+	if len(contractIDs) > 0 && rand.Float64() < PrEventContractFilter {
+		if rand.Float64() < PrEventMultiContract {
+			// Multiple contracts (2-5)
+			n := 2 + rand.IntN(min(4, len(contractIDs)))
+			n = min(n, len(contractIDs))
+			chosen := make(map[string]struct{}, n)
+			ids := make([]string, 0, n)
+			for len(chosen) < n {
+				id := contractIDs[rand.IntN(len(contractIDs))]
+				if _, ok := chosen[id]; !ok {
+					chosen[id] = struct{}{}
+					ids = append(ids, id)
+				}
+			}
+			filter["contractIds"] = ids
+		} else {
+			// Single contract
+			filter["contractIds"] = []string{contractIDs[rand.IntN(len(contractIDs))]}
+		}
+	}
+
+	// Dimension 2: event type
+	if rand.Float64() < PrEventTypeFilter {
+		filter["type"] = eventTypes[rand.IntN(len(eventTypes))]
+	}
+
+	// Dimension 3: topic
+	if len(topics) > 0 && rand.Float64() < PrEventTopicFilter {
+		filter["topics"] = [][]string{{topics[rand.IntN(len(topics))]}}
+	}
+
+	return filter
 }

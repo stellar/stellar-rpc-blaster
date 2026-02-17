@@ -12,6 +12,7 @@ const (
 // Configurable limits for generate
 const (
 	TxPageLimit          uint32 = 200
+	EventsPageLimit      uint32 = 100
 	DefaultSeedSliceSize uint32 = 64 // starting size for slices of bootstrapped seed data
 )
 
@@ -31,6 +32,14 @@ const (
 	PrJson         float64 = 0.5  // probability of using "json" vs "xdr" format for transaction requests
 	PrCursor       float64 = 0.5  // probability of paginating with a cursor
 	PrTxFound      float64 = 0.70 // probability of a transaction hash found vs a random hash (won't be found)
+)
+
+// getEvents filter dimension probabilities
+const (
+	PrEventContractFilter float64 = 0.5 // probability of including contract ID(s) in an event filter
+	PrEventMultiContract  float64 = 0.5 // when contract filter is present, probability of multiple (2-5) vs single
+	PrEventTypeFilter     float64 = 0.5 // probability of including an event type filter
+	PrEventTopicFilter    float64 = 0.5 // probability of including a topic filter
 )
 
 // TxData status values
