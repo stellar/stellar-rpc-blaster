@@ -1,3 +1,4 @@
 .DS_Store
 output/*
 stellar-rpc-blaster
+internal/run/engine/*debug.go

@@ -1,9 +1,12 @@
 package parameters
 
 import (
+	"fmt"
 	"math/rand/v2"
 
 	"github.com/go-errors/errors"
+
+	"github.com/stellar/go-stellar-sdk/toid"
 
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
@@ -143,7 +146,12 @@ func EndpointNeedsData(endpointKey string) bool {
 }
 
 func setPaginationMap(limit uint, entry map[string]any) map[string]any {
-	pagination := util.VaryCursorBasedPagination(limit, "")
+	cursor := ""
+	if sl, ok := entry["startLedger"].(uint32); ok {
+		tidVal := toid.New(int32(sl), 1, 1).ToInt64() // build valid TOID cursor from the startLedger already in the entry
+		cursor = fmt.Sprintf("%019d-%010d", tidVal, 1)
+	}
+	pagination := util.VaryCursorBasedPagination(limit, cursor)
 	paginationMap := map[string]any{"limit": pagination.Limit}
 	if pagination.Cursor != "" {
 		paginationMap["cursor"] = pagination.Cursor
