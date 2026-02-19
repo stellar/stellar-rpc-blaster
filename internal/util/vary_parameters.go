@@ -4,6 +4,7 @@ import (
 	"math/rand/v2"
 
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+	"github.com/stellar/go-stellar-sdk/support/collections/set"
 )
 
 // VaryLimit returns a random limit between 1 and the provided max lVmit.
@@ -84,21 +85,12 @@ func VaryEventFilter(contractIDs []string, topics []string) map[string]any {
 	eventTypes := []string{"contract", "system", "diagnostic"}
 	filter := map[string]any{}
 
-	// Dimension 1: contract ID(s)
+	// vary contract ID(s)
 	if len(contractIDs) > 0 && rand.Float64() < PrEventContractFilter {
 		if rand.Float64() < PrEventMultiContract {
 			// Multiple contracts (2-5)
 			n := 2 + rand.IntN(min(4, len(contractIDs)))
-			n = min(n, len(contractIDs))
-			chosen := make(map[string]struct{}, n)
-			ids := make([]string, 0, n)
-			for len(chosen) < n {
-				id := contractIDs[rand.IntN(len(contractIDs))]
-				if _, ok := chosen[id]; !ok {
-					chosen[id] = struct{}{}
-					ids = append(ids, id)
-				}
-			}
+			ids := ChooseNAtRandom(contractIDs, n)
 			filter["contractIds"] = ids
 		} else {
 			// Single contract
@@ -106,15 +98,37 @@ func VaryEventFilter(contractIDs []string, topics []string) map[string]any {
 		}
 	}
 
-	// Dimension 2: event type
+	// vary event type
 	if rand.Float64() < PrEventTypeFilter {
 		filter["type"] = eventTypes[rand.IntN(len(eventTypes))]
 	}
 
-	// Dimension 3: topic
+	// vary topic
 	if len(topics) > 0 && rand.Float64() < PrEventTopicFilter {
 		filter["topics"] = [][]string{{topics[rand.IntN(len(topics))]}}
 	}
 
 	return filter
+}
+
+func ChooseNAtRandom[T any](items []T, n int) []T {
+	if n >= len(items) {
+		return items
+	}
+	chosen := set.NewSet[any](n)
+	result := make([]T, 0, n)
+	continuedCounter := 0
+	for len(chosen) < n {
+		item := items[rand.IntN(len(items))]
+		if chosen.Contains(item) {
+			continuedCounter++
+			if continuedCounter > n*10 { // safeguard against tiny sample size
+				break
+			}
+			continue
+		}
+		chosen.Add(item)
+		result = append(result, item)
+	}
+	return result
 }

@@ -5,7 +5,6 @@ import (
 
 	"github.com/go-errors/errors"
 
-	"github.com/stellar/go-stellar-sdk/support/collections/set"
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
@@ -16,13 +15,13 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 	switch endpointKey {
 	case "getTransaction":
 		tx := params.Output.TxHashes
-		util.SetTxHashSuccessRatio(len(tx.Successes), len(tx.Failures))
+		txHashSuccessRatio := float64(len(tx.Successes)) / float64(len(tx.Successes)+len(tx.Failures))
 		all := make([]string, 0, len(tx.Successes)+len(tx.Failures))
 		all = append(all, tx.Successes...)
 		all = append(all, tx.Failures...)
 		var result []map[string]any
 		for _, hash := range all {
-			status := util.VaryTxStatus(util.TxHashSuccessRatio)
+			status := util.VaryTxStatus(txHashSuccessRatio)
 			switch status {
 			case util.TxNotFound:
 				// Use a made-up hash that won't be found
@@ -44,16 +43,11 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 		count := min(len(keys), 100)
 		result := make([]map[string]any, count)
 		for i := range count {
-			n := util.VaryKeyCount()
-			n = min(n, uint(len(keys)))
-
+			n := min(util.VaryKeyCount(), uint(len(keys)))
 			// Pick n distinct random keys
-			chosen := set.NewSet[string](int(n))
-			for len(chosen) < int(n) {
-				chosen.Add(keys[rand.IntN(len(keys))])
-			}
+			keys := util.ChooseNAtRandom(keys, int(n))
 			result[i] = map[string]any{
-				"keys":   chosen.Slice(),
+				"keys":   keys,
 				"format": util.VaryFormat(),
 			}
 		}
@@ -70,17 +64,11 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 		for i := range count {
 			start := lr.First + uint32(rand.IntN(span))
 			limit := util.VaryLimit(uint(util.TxPageLimit))
-			pagination := util.VaryCursorBasedPagination(limit, "")
 			entry := map[string]any{
 				"startLedger": start,
 				"format":      util.VaryFormat(),
 			}
-			paginationMap := map[string]any{"limit": pagination.Limit}
-			if pagination.Cursor != "" {
-				paginationMap["cursor"] = pagination.Cursor
-				delete(entry, "startLedger") // cursor-based pagination omits startLedger
-			}
-			entry["pagination"] = paginationMap
+			entry["pagination"] = setPaginationMap(limit, entry)
 			result[i] = entry
 		}
 		return result, nil
@@ -96,17 +84,11 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 		for i := range count {
 			start := lr.First + uint32(rand.IntN(span))
 			limit := util.VaryLimit(uint(util.TxPageLimit))
-			pagination := util.VaryCursorBasedPagination(limit, "")
 			entry := map[string]any{
 				"startLedger": start,
 				"format":      util.VaryFormat(),
 			}
-			paginationMap := map[string]any{"limit": pagination.Limit}
-			if pagination.Cursor != "" {
-				paginationMap["cursor"] = pagination.Cursor
-				delete(entry, "startLedger")
-			}
-			entry["pagination"] = paginationMap
+			entry["pagination"] = setPaginationMap(limit, entry)
 			result[i] = entry
 		}
 		return result, nil
@@ -158,4 +140,14 @@ func EndpointNeedsData(endpointKey string) bool {
 		return true
 	}
 	return false
+}
+
+func setPaginationMap(limit uint, entry map[string]any) map[string]any {
+	pagination := util.VaryCursorBasedPagination(limit, "")
+	paginationMap := map[string]any{"limit": pagination.Limit}
+	if pagination.Cursor != "" {
+		paginationMap["cursor"] = pagination.Cursor
+		delete(entry, "startLedger") // cursor-based pagination omits startLedger
+	}
+	return paginationMap
 }
