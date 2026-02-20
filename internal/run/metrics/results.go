@@ -2,6 +2,7 @@ package blasterMetrics
 
 import (
 	"fmt"
+	"maps"
 	"time"
 )
 
@@ -46,11 +47,13 @@ func (a *Aggregator) Results() *Results {
 		stats := a.stats[name]
 		stats.refreshPercentiles() // compute final percentiles from histogram
 		totalRequests := stats.success + stats.errors
+		errorTypesCopy := make(map[string]ErrorResult, len(stats.errorTypes))
+		maps.Copy(errorTypesCopy, stats.errorTypes)
 		results.Endpoints[name] = &EndpointResult{
 			TotalRequests: totalRequests,
 			Success:       stats.success,
 			Errors:        stats.errors,
-			ErrorTypes:    stats.errorTypes,
+			ErrorTypes:    errorTypesCopy,
 			TargetRPS:     stats.targetRPS,
 			AchievedRPS:   stats.achievedRPS,
 			Percentiles:   make(map[string]float64),
