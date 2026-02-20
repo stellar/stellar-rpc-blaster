@@ -12,8 +12,10 @@ func SharedHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout: RequestTimeout,
 		Transport: &http.Transport{
-			MaxConnsPerHost: maxConns,
-			IdleConnTimeout: RequestTimeout * 3, // keep connections warm for a few request cycles
+			MaxConnsPerHost:     maxConns,
+			MaxIdleConnsPerHost: maxConns,
+			MaxIdleConns:        0,                  // unlimited, MaxIdleConnsPerHost limits per-host idle connections
+			IdleConnTimeout:     RequestTimeout * 3, // keep connections warm for a few request cycles
 		},
 	}
 }
