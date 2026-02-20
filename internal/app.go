@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -48,15 +49,22 @@ func (a *App) RunApp(runtimeSettings config.RuntimeSettings) error {
 
 	defer a.close()
 
-	var missingFields []string
+	var missingFieldsBuilder strings.Builder
 
 	switch runtimeSettings.Mode {
 	case config.Run:
 		if runtimeSettings.ConfigPath == "" {
-			missingFields = append(missingFields, "config-path")
+			missingFieldsBuilder.WriteString("config-path, ")
 		}
+		if runtimeSettings.RpcUrl == "" {
+			missingFieldsBuilder.WriteString("rpc-url, ")
+		}
+		if runtimeSettings.Duration <= 0 {
+			missingFieldsBuilder.WriteString("duration, ")
+		}
+		missingFields := strings.TrimSuffix(missingFieldsBuilder.String(), ", ")
 
-		if len(missingFields) > 0 {
+		if missingFields != "" {
 			return errors.Errorf("missing required fields in Run mode: %v", missingFields)
 		}
 		if err := a.runLoadTest(ctx); err != nil {
@@ -64,10 +72,11 @@ func (a *App) RunApp(runtimeSettings config.RuntimeSettings) error {
 		}
 	case config.Generate:
 		if runtimeSettings.OutputPath == "" {
-			missingFields = append(missingFields, "output")
+			missingFieldsBuilder.WriteString("output, ")
 		}
+		missingFields := strings.TrimSuffix(missingFieldsBuilder.String(), ", ")
 
-		if len(missingFields) > 0 {
+		if missingFields != "" {
 			return errors.Errorf("missing required fields in Generate mode: %v", missingFields)
 		}
 		if err := a.runGenerate(ctx); err != nil {
