@@ -147,8 +147,8 @@ func (a *Aggregator) String() string {
 
 	fmt.Fprintf(&line, "\n[%s / %s]", elapsed, a.duration)
 
-	a.mu.RLock()
-	defer a.mu.RUnlock()
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
 	for _, endpointName := range a.orderedEndpoints {
 		endpointStats := a.stats[endpointName]

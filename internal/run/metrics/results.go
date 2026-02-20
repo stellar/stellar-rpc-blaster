@@ -32,9 +32,6 @@ type ErrorResult struct {
 
 // Returns the final aggregated results
 func (a *Aggregator) Results() *Results {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
 	durationSeconds := time.Since(a.start).Round(time.Second).Seconds()
 	results := &Results{
 		Start:           a.start.UTC(),
@@ -43,6 +40,8 @@ func (a *Aggregator) Results() *Results {
 		Endpoints:       make(map[string]*EndpointResult, len(a.stats)),
 	}
 
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	for _, name := range a.orderedEndpoints {
 		stats := a.stats[name]
 		stats.refreshPercentiles() // compute final percentiles from histogram
