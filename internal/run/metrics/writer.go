@@ -3,6 +3,7 @@ package blasterMetrics
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 
 	"github.com/pkg/errors"
 )
@@ -21,6 +22,10 @@ func WriteOutput(a *Aggregator) error {
 
 // WriteResultsJSON writes the results to a JSON file
 func writeResultsJSON(results *Results, path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return errors.Wrapf(err, "failed to create output directories for path %s", path)
+	}
+
 	data, err := json.Marshal(results)
 	if err != nil {
 		return errors.Wrap(err, "failed to marshal results")
