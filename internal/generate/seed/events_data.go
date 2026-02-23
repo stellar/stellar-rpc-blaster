@@ -8,39 +8,44 @@ import (
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/support/collections/set"
+	"github.com/stellar/go-stellar-sdk/support/log"
 
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
-var uniqueEventTopics set.Set[string]
-
-// Bootstraps contract ID and unique event topic data in the given range(s)
-func SeedEventsData(
-	ctx context.Context,
-	rpcClient *rpcclient.Client,
-	parameters util.PreseedParameters,
-) ([]string, []string, error) {
-	uniqueEventTopics = set.NewSet[string](int(util.DefaultSeedSliceSize))
-	contractIdEntry := NewEntry[string]("contract_ids", util.DefaultSeedSliceSize)
-
-	for _, r := range parameters.GetProcessingRanges() {
-		if _, err := seedEventDataForRange(ctx, rpcClient, &contractIdEntry, r); err != nil {
-			return nil, nil, err
-		}
-	}
-
-	return contractIdEntry.Slice(), uniqueEventTopics.Slice(), nil
+// EventDataSeeder collects contract IDs and unique event topics.
+type EventDataSeeder struct {
+	contractIdEntry Entry[string]
+	uniqueTopics    set.Set[string]
 }
 
-func seedEventDataForRange(
+func NewEventDataSeeder() *EventDataSeeder {
+	return &EventDataSeeder{
+		contractIdEntry: NewEntry[string]("contract_ids", util.DefaultSeedSliceSize),
+		uniqueTopics:    set.NewSet[string](int(util.DefaultSeedSliceSize)),
+	}
+}
+
+// ContractIDs returns the accumulated contract IDs.
+func (s *EventDataSeeder) ContractIDs() []string {
+	return s.contractIdEntry.Slice()
+}
+
+// EventTopics returns the accumulated unique event topics.
+func (s *EventDataSeeder) EventTopics() []string {
+	return s.uniqueTopics.Slice()
+}
+
+// SeedDataForRange implements Seeder for EventDataSeeder.
+// It fetches events for the given ledger range and accumulates contract IDs and unique topics.
+func (s *EventDataSeeder) SeedDataForRange(
 	ctx context.Context,
+	_ *log.Entry,
 	rpcClient *rpcclient.Client,
-	contractIdEntry *Entry[string],
 	r util.Range,
-) (uint32, error) {
+) error {
 	limit := min(util.TxPageLimit, r.Last-r.First+1)
 
-	var contractIdCountForRange uint32
 	for start := r.First; start <= r.Last; start += limit {
 		endLedger := min(start+limit-1, r.Last)
 		var cursor *protocol.Cursor
@@ -49,17 +54,15 @@ func seedEventDataForRange(
 			req := util.MakeGetEventsRequest(start, endLedger, cursor)
 			eventsResponse, err := rpcClient.GetEvents(ctx, req)
 			if err != nil {
-				return 0, errors.Wrapf(err, "failed to fetch event data for ledgers %d->%d",
+				return errors.Wrapf(err, "failed to fetch event data for ledgers %d->%d",
 					start, endLedger)
 			}
 
-			contractIdCountForRange += uint32(len(eventsResponse.Events))
 			for _, event := range eventsResponse.Events {
-				contractIdEntry.Append(event.ContractID)
+				s.contractIdEntry.Append(event.ContractID)
 
-				// Cache unique event topics for flushing after all ranges are processed
 				for _, topic := range event.TopicXDR {
-					uniqueEventTopics.Add(topic)
+					s.uniqueTopics.Add(topic)
 				}
 			}
 
@@ -68,10 +71,10 @@ func seedEventDataForRange(
 			}
 			c, err := protocol.ParseCursor(eventsResponse.Cursor)
 			if err != nil {
-				return 0, errors.Wrapf(err, "failed to parse events cursor %q", eventsResponse.Cursor)
+				return errors.Wrapf(err, "failed to parse events cursor %q", eventsResponse.Cursor)
 			}
 			cursor = &c
 		}
 	}
-	return contractIdCountForRange, nil
+	return nil
 }

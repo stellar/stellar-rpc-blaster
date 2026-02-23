@@ -6,7 +6,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
-	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
@@ -21,63 +21,51 @@ type TxHashData struct {
 	Failures  []string `json:"failures"`
 }
 
-func SeedTxHashData(
-	ctx context.Context,
-	rpcClient *rpcclient.Client,
-	parameters util.PreseedParameters,
-) (TxHashData, error) {
-	var result TxHashData
-
-	for _, r := range parameters.GetProcessingRanges() {
-		if _, err := seedTxHashesForRange(ctx, rpcClient, &result, r); err != nil {
-			return TxHashData{}, err
-		}
-	}
-	return result, nil
+// TxHashSeeder collects transaction hashes split by success/failure status.
+type TxHashSeeder struct {
+	data TxHashData
 }
 
-func seedTxHashesForRange(
+func NewTxHashSeeder() *TxHashSeeder {
+	return &TxHashSeeder{}
+}
+
+// Results returns the accumulated transaction hash data.
+func (s *TxHashSeeder) Results() TxHashData {
+	return s.data
+}
+
+// SeedDataForRange implements Seeder for TxHashSeeder by getting hashes and categorizing them by success or failure.
+func (s *TxHashSeeder) SeedDataForRange(
 	ctx context.Context,
+	_ *log.Entry,
 	rpcClient *rpcclient.Client,
-	result *TxHashData,
 	r util.Range,
-) (uint32, error) {
+) error {
 	var cursor string
-	var txHashCountForRange uint32
 	for {
-		req := protocol.GetTransactionsRequest{
-			StartLedger: r.First,
-			Pagination: &protocol.LedgerPaginationOptions{
-				Limit: uint(util.TxPageLimit),
-			},
-		}
-		if cursor != "" {
-			req.StartLedger = 0
-			req.Pagination.Cursor = cursor
-		}
+		req := util.MakeGetTransactionsRequest(r.First, cursor)
 
 		txsResponse, err := rpcClient.GetTransactions(ctx, req)
 		if err != nil {
-			return 0, errors.Wrapf(err, "failed to fetch transaction data for ledger %d, cursor %s",
-				r.First, cursor)
+			return errors.Wrapf(err, "failed to fetch transaction data for ledger %d, cursor %s", r.First, cursor)
 		}
 		if len(txsResponse.Transactions) == 0 {
 			break
 		}
 		cursor = txsResponse.Cursor
 
-		txHashCountForRange += uint32(len(txsResponse.Transactions))
 		for _, tx := range txsResponse.Transactions {
 			if tx.Ledger > r.Last {
-				return txHashCountForRange, nil
+				return nil
 			}
 			hash := tx.TransactionDetails.TransactionHash
 			if tx.TransactionDetails.Status == TxSuccess {
-				result.Successes = append(result.Successes, hash)
+				s.data.Successes = append(s.data.Successes, hash)
 			} else {
-				result.Failures = append(result.Failures, hash)
+				s.data.Failures = append(s.data.Failures, hash)
 			}
 		}
 	}
-	return txHashCountForRange, nil
+	return nil
 }

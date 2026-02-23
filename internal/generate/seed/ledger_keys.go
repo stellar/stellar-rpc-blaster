@@ -11,30 +11,28 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
-// Fetches and stores ledger keys for all transactions in the given ledger window
-// Parses GetTransactions
-func SeedLedgerKeys(
-	ctx context.Context,
-	logger *log.Entry,
-	rpcClient *rpcclient.Client,
-	parameters util.PreseedParameters,
-) ([]string, error) {
-	entry := NewEntry[string]("ledger_keys", util.DefaultSeedSliceSize)
-
-	for _, r := range parameters.GetProcessingRanges() {
-		if err := seedLedgerKeysForRange(ctx, logger, rpcClient, &entry, r); err != nil {
-			return nil, err
-		}
-	}
-
-	return entry.Slice(), nil
+// LedgerKeySeeder collects XDR-encoded ledger keys from transaction metadata.
+type LedgerKeySeeder struct {
+	entry Entry[string]
 }
 
-func seedLedgerKeysForRange(
+func NewLedgerKeySeeder() *LedgerKeySeeder {
+	return &LedgerKeySeeder{
+		entry: NewEntry[string]("ledger_keys", util.DefaultSeedSliceSize),
+	}
+}
+
+// Results returns the accumulated ledger keys.
+func (s *LedgerKeySeeder) Results() []string {
+	return s.entry.Slice()
+}
+
+// SeedDataForRange implements Seeder for LedgerKeySeeder.
+// Given a ledger range, it fetches transactions and gets ledger keys from their result metadata.
+func (s *LedgerKeySeeder) SeedDataForRange(
 	ctx context.Context,
 	logger *log.Entry,
 	rpcClient *rpcclient.Client,
-	entry *Entry[string],
 	r util.Range,
 ) error {
 	var cursor string
@@ -85,7 +83,7 @@ func seedLedgerKeysForRange(
 						tx.TransactionDetails.TransactionHash, err)
 					continue
 				}
-				entry.Append(keyXDR)
+				s.entry.Append(keyXDR)
 			}
 		}
 	}

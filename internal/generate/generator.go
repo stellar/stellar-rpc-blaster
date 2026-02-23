@@ -73,29 +73,32 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 		g.parameters.Range.First, g.parameters.Range.Last, util.LogElapsed(start))
 
 	// Bootstrap transaction hashes and success status within the ledger range
-	txHashes, err := seed.SeedTxHashData(ctx, g.client, g.parameters)
-	if err != nil {
+	txHashSeeder := seed.NewTxHashSeeder()
+	if err := seed.RunSeeder(ctx, logger, g.client, g.parameters, txHashSeeder); err != nil {
 		return errors.Wrap(err, "failed to seed transaction hash data")
 	}
-	writer.Output.TxHashes = txHashes
+	writer.Output.TxHashes = txHashSeeder.Results()
 	logger.Infof("Successfully wrote %d successful and %d failed transaction hashes to output %s",
-		len(txHashes.Successes), len(txHashes.Failures), util.LogElapsed(start))
+		len(writer.Output.TxHashes.Successes), len(writer.Output.TxHashes.Failures), util.LogElapsed(start))
 
 	// Bootstrap active contract IDs and event topics within the ledger range
-	writer.Output.ContractIDs, writer.Output.EventTopics, err = seed.SeedEventsData(ctx, g.client, g.parameters)
-	if err != nil {
+	eventSeeder := seed.NewEventDataSeeder()
+	if err := seed.RunSeeder(ctx, logger, g.client, g.parameters, eventSeeder); err != nil {
 		return errors.Wrap(err, "failed to seed events data")
 	}
+	writer.Output.ContractIDs = eventSeeder.ContractIDs()
+	writer.Output.EventTopics = eventSeeder.EventTopics()
 	logger.Infof("Successfully wrote %d active contract IDs entries to output %s",
 		len(writer.Output.ContractIDs), util.LogElapsed(start))
 	logger.Infof("Successfully wrote %d unique event topics entries to output %s",
 		len(writer.Output.EventTopics), util.LogElapsed(start))
 
 	// Seed ledger keys
-	writer.Output.LedgerKeys, err = seed.SeedLedgerKeys(ctx, logger, g.client, g.parameters)
-	if err != nil {
+	ledgerKeySeeder := seed.NewLedgerKeySeeder()
+	if err := seed.RunSeeder(ctx, logger, g.client, g.parameters, ledgerKeySeeder); err != nil {
 		return errors.Wrap(err, "failed to seed ledger keys")
 	}
+	writer.Output.LedgerKeys = ledgerKeySeeder.Results()
 	logger.Infof("Successfully wrote %d ledger keys entries to output %s",
 		len(writer.Output.LedgerKeys), util.LogElapsed(start))
 

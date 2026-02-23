@@ -5,7 +5,7 @@
 
 # No-parameter/run-only endpoints
 [endpoints.getHealth]
-rps = 20
+rps = 1000
 
 [endpoints.getNetwork]
 rps = 20
