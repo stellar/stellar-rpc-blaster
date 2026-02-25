@@ -35,7 +35,7 @@ type Config struct {
 	LedgerWindow []uint32
 	Count        uint32
 
-	InputDataPath string // path to read seed data for data-dependent endpoints, output by generate mode
+	InputDataPath string `toml:"input_data_path"` // path to read seed data for data-dependent endpoints, output by generate mode
 }
 
 type Mode int
