@@ -63,21 +63,6 @@ func VaryKeyCount() uint {
 	}
 }
 
-func VaryTxStatus(txSuccess float64) string {
-	r := rand.Float64()
-	if txFound() {
-		if r < txSuccess {
-			return TxSuccess
-		}
-		return TxFailed
-	}
-	return TxNotFound
-}
-
-func txFound() bool {
-	return rand.Float64() < PrTxFound
-}
-
 // VaryEventFilter builds a random event filter map by independently deciding
 // whether to include contract IDs, an event type, and/or a topic filter.
 // Each dimension is toggled by its own probability constant.

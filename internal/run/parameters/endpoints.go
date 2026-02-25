@@ -13,31 +13,20 @@ import (
 
 // Builds a list of params maps for a data-dependent endpoint,
 // one per seed item, so the targeter can rotate through distinct request payloads.
-// TODO: make match the spec with more sophistocated parameter combinations
 func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]any, error) {
 	switch endpointKey {
 	case "getTransaction":
 		tx := params.Output.TxHashes
-		txHashSuccessRatio := float64(len(tx.Successes)) / float64(len(tx.Successes)+len(tx.Failures))
 		all := make([]string, 0, len(tx.Successes)+len(tx.Failures))
+		// SQL performance should be identical for successes vs failures, so we combine them for increased variance
 		all = append(all, tx.Successes...)
 		all = append(all, tx.Failures...)
 		var result []map[string]any
 		for _, hash := range all {
-			status := util.VaryTxStatus(txHashSuccessRatio)
-			switch status {
-			case util.TxNotFound:
-				// Use a made-up hash that won't be found
-				result = append(result, map[string]any{
-					"hash":   "0000000000000000000000000000000000000000000000000000000000000000",
-					"format": util.VaryFormat(),
-				})
-			default:
-				result = append(result, map[string]any{
-					"hash":   hash,
-					"format": util.VaryFormat(),
-				})
-			}
+			result = append(result, map[string]any{
+				"hash":   hash,
+				"format": util.VaryFormat(),
+			})
 		}
 		return result, nil
 
