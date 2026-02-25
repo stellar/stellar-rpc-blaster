@@ -82,7 +82,7 @@ func txFound() bool {
 // whether to include contract IDs, an event type, and/or a topic filter.
 // Each dimension is toggled by its own probability constant.
 func VaryEventFilter(contractIDs []string, topics []string) map[string]any {
-	eventTypes := []string{"contract", "system", "diagnostic"}
+	eventTypes := []string{"contract", "system"}
 	filter := map[string]any{}
 
 	// vary contract ID(s)

@@ -113,9 +113,7 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 			// Random start position that fits the window
 			earliest := int(lr.First)
 			latest := int(lr.Last) - window
-			if latest < earliest {
-				latest = earliest
-			}
+			latest = max(latest, earliest) // ensure latest is not less than earliest
 			start := uint32(earliest + rand.IntN(latest-earliest+1))
 			endLedger := start + uint32(window)
 
