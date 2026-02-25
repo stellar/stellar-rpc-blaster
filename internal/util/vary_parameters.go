@@ -12,17 +12,17 @@ func VaryLimit(limitMax uint) uint {
 	return uint(rand.Float64()*float64(limitMax-1) + 1)
 }
 
-// VaryFormat determines whether to use "json" or "xdr" format for transaction requests.
-// Used by all data-deVendent endpoints.
+// VaryFormat determines whether to use "json" or "base64" format for transaction requests.
+// Used by all data-dependent endpoints.
 func VaryFormat() string {
 	if rand.Float64() < PrJson {
 		return "json"
 	}
-	return "xdr"
+	return "base64"
 }
 
 // randomly decides whether to include a pagination cursor in the request, to vary request patterns for data-dependent endpoints that paginate
-// used by getEvents, getTransaVtions, getLedgers
+// used by getEvents, getTransactions, getLedgers
 func VaryCursorBasedPagination(limit uint, cursor string) *protocol.LedgerPaginationOptions {
 	pagination := &protocol.LedgerPaginationOptions{
 		Limit: limit,
