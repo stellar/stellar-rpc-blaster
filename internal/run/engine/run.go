@@ -39,20 +39,14 @@ func RunVegeta(
 		return NewBlasterWithClient(httpClient, util.MaxWorkers)
 	}
 
-	// Pre-load seed parameters for data-dependent endpoints, deduplicating by path
-	paramCache := map[string]*parameters.Parameters{}
-	for _, endpointKey := range cfg.GetEndpoints() {
-		ep := cfg.Endpoints[endpointKey]
-		if ep.DataPath == "" || !parameters.EndpointNeedsData(endpointKey) {
-			continue
+	// Pre-load seed parameters once for all data-dependent endpoints
+	var sharedParams *parameters.Parameters
+	if cfg.InputDataPath != "" {
+		p, err := parameters.GetParameters(cfg.InputDataPath)
+		if err != nil {
+			return errors.Wrap(err, "loading seed data")
 		}
-		if _, ok := paramCache[ep.DataPath]; !ok {
-			p, err := parameters.GetParameters(ep.DataPath)
-			if err != nil {
-				return errors.Wrapf(err, "loading seed data for endpoint %s", endpointKey)
-			}
-			paramCache[ep.DataPath] = p
-		}
+		sharedParams = p
 	}
 
 	// Construct endpoint blast configs
@@ -60,12 +54,11 @@ func RunVegeta(
 	var endpointBlasts []endpointBlast
 	for _, endpointKey := range cfg.GetEndpoints() {
 		rps := cfg.GetEndpointRPS(endpointKey)
-		ep := cfg.Endpoints[endpointKey]
 
 		var targeter vegeta.Targeter
-		if params, ok := paramCache[ep.DataPath]; ok && parameters.EndpointNeedsData(endpointKey) {
+		if sharedParams != nil && parameters.EndpointNeedsData(endpointKey) {
 			// Data-dependent endpoint: build variant request bodies and rotate through them
-			paramMaps, err := parameters.BuildEndpointParams(endpointKey, params)
+			paramMaps, err := parameters.BuildEndpointParams(endpointKey, sharedParams)
 			if err != nil {
 				return errors.Wrapf(err, "couldn't build params for endpoint %s", endpointKey)
 			}

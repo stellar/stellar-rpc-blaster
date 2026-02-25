@@ -84,6 +84,7 @@ func makeCommands() *cobra.Command {
 
 	runCmd.Flags().String("config-path", "", "Path to config TOML file")
 	runCmd.Flags().String("test-output-path", "./output/load-test-results.json", "Path to export metrics output file")
+	runCmd.Flags().String("input-data-path", "./output/seed.json", "Path to seed data file output by generate, required for data-dependent endpoints")
 	runCmd.Flags().Duration("duration", time.Duration(0), "Duration to run the test (e.g., 5m)")
 	runCmd.Flags().Duration("ramp-up", time.Duration(0), "Ramp-up time before reaching target RPS (e.g., 30s)")
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/support/log"
+	"github.com/stellar/stellar-rpc-blaster/internal/run/parameters"
 )
 
 type Config struct {
@@ -29,10 +30,12 @@ type Config struct {
 	RampUp         time.Duration
 	TestOutputPath string // path to write JSON results
 
-	// TODO: data-dependent endpoints & generate mode settings
+	// Generate mode settings
 	OutputPath   string
 	LedgerWindow []uint32
 	Count        uint32
+
+	InputDataPath string // path to read seed data for data-dependent endpoints, output by generate mode
 }
 
 type Mode int
@@ -75,8 +78,7 @@ type RuntimeSettings struct {
 
 // Per-endpoint configuration
 type EndpointConfig struct {
-	RPS      int    `toml:"rps"`                 // requests per second
-	DataPath string `toml:"data_path,omitempty"` // path to data file for data-dependent endpoints
+	RPS int `toml:"rps"` // requests per second
 }
 
 func NewConfig(
@@ -88,8 +90,7 @@ func NewConfig(
 	cfg := Config{}
 	cfg.RpcClient = rpcclient.NewClient(settings.RpcUrl, client)
 
-	getNetworkResponse, err := cfg.RpcClient.GetNetwork(ctx)
-	if err != nil {
+	if getNetworkResponse, err := cfg.RpcClient.GetNetwork(ctx); err != nil {
 		return Config{}, errors.Wrap(err, "failed to fetch network passphrase")
 	} else {
 		cfg.NetworkPassphrase = getNetworkResponse.Passphrase
@@ -132,7 +133,6 @@ func (c *Config) processToml(tomlPath string) error {
 		return errors.Wrap(err, "Error unmarshalling TOML config.")
 	}
 
-	// Ensure at least one endpoint is configured if launching a load test
 	if c.Mode == Run {
 		if err = c.validateEndpointConfig(); err != nil {
 			return err
@@ -142,15 +142,19 @@ func (c *Config) processToml(tomlPath string) error {
 	return nil
 }
 
+// Ensure at least one endpoint is configured if launching a load test and data-dependent endpoints have input data
 func (c *Config) validateEndpointConfig() error {
 	hasValidEndpoint := false
-	for _, endpointData := range c.Endpoints {
+	for endpoint, endpointData := range c.Endpoints {
 		if endpointData.RPS > 0 {
 			hasValidEndpoint = true
 		}
+		if parameters.EndpointNeedsData(endpoint) && c.InputDataPath == "" {
+			return errors.Errorf("endpoint %s requires input data, but no input-data-path was provided", endpoint)
+		}
 	}
 	if !hasValidEndpoint {
-		return errors.New("at least one endpoint must be configured with RPS > 0")
+		return errors.Errorf("at least one endpoint must be configured with RPS > 0")
 	}
 	return nil
 }
