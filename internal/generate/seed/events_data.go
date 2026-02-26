@@ -15,20 +15,20 @@ import (
 
 // EventDataSeeder collects contract IDs and unique event topics.
 type EventDataSeeder struct {
-	contractIdEntry Entry[string]
-	uniqueTopics    set.Set[string]
+	contractIds  []string
+	uniqueTopics set.Set[string]
 }
 
 func NewEventDataSeeder() *EventDataSeeder {
 	return &EventDataSeeder{
-		contractIdEntry: NewEntry[string]("contract_ids", util.DefaultSeedSliceSize),
-		uniqueTopics:    set.NewSet[string](int(util.DefaultSeedSliceSize)),
+		contractIds:  make([]string, 0, util.DefaultSeedSliceSize),
+		uniqueTopics: set.NewSet[string](int(util.DefaultSeedSliceSize)),
 	}
 }
 
 // ContractIDs returns the accumulated contract IDs.
 func (s *EventDataSeeder) ContractIDs() []string {
-	return s.contractIdEntry.Slice()
+	return s.contractIds
 }
 
 // EventTopics returns the accumulated unique event topics.
@@ -59,7 +59,7 @@ func (s *EventDataSeeder) SeedDataForRange(
 			}
 
 			for _, event := range eventsResponse.Events {
-				s.contractIdEntry.Append(event.ContractID)
+				s.contractIds = append(s.contractIds, event.ContractID)
 
 				for _, topic := range event.TopicXDR {
 					s.uniqueTopics.Add(topic)

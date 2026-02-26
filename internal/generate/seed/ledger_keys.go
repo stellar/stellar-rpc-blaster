@@ -13,18 +13,18 @@ import (
 
 // LedgerKeySeeder collects XDR-encoded ledger keys from transaction metadata.
 type LedgerKeySeeder struct {
-	entry Entry[string]
+	entry []string
 }
 
 func NewLedgerKeySeeder() *LedgerKeySeeder {
 	return &LedgerKeySeeder{
-		entry: NewEntry[string]("ledger_keys", util.DefaultSeedSliceSize),
+		entry: make([]string, 0, util.DefaultSeedSliceSize),
 	}
 }
 
 // Results returns the accumulated ledger keys.
 func (s *LedgerKeySeeder) Results() []string {
-	return s.entry.Slice()
+	return s.entry
 }
 
 // SeedDataForRange implements Seeder for LedgerKeySeeder.
@@ -83,7 +83,7 @@ func (s *LedgerKeySeeder) SeedDataForRange(
 						tx.TransactionDetails.TransactionHash, err)
 					continue
 				}
-				s.entry.Append(keyXDR)
+				s.entry = append(s.entry, keyXDR)
 			}
 		}
 	}
