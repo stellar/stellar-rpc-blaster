@@ -116,6 +116,10 @@ func getKeysFromTxResultMeta(logger *log.Entry, resultMetaXDR string) ([]xdr.Led
 func getLedgerEntryChangesFromMeta(meta xdr.TransactionMeta) ([]xdr.LedgerEntryChange, bool) {
 	var changes []xdr.LedgerEntryChange
 	switch meta.V {
+	case 0:
+		for _, opMeta := range meta.MustOperations() {
+			changes = append(changes, opMeta.Changes...)
+		}
 	case 1:
 		changes = append(changes, meta.MustV1().TxChanges...)
 		for _, opMeta := range meta.MustV1().Operations {
