@@ -5,16 +5,15 @@ import (
 	"os"
 
 	"github.com/pkg/errors"
-	"github.com/stellar/stellar-rpc-blaster/internal/generate/seed"
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
 type OutputSchema struct {
-	LedgerRange util.Range      `json:"ledger_range"`
-	TxHashes    seed.TxHashData `json:"tx_hashes"`
-	ContractIDs []string        `json:"contract_ids"`
-	EventTopics []string        `json:"event_topics"`
-	LedgerKeys  []string        `json:"ledger_keys"`
+	LedgerRange util.Range `json:"ledger_range"`
+	TxHashes    []string   `json:"tx_hashes"`
+	ContractIDs []string   `json:"contract_ids"`
+	EventTopics []string   `json:"event_topics"`
+	LedgerKeys  []string   `json:"ledger_keys"`
 }
 
 // SeedWriter accumulates seed data into an OutputSchema struct,

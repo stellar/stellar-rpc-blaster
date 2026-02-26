@@ -10,20 +10,9 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
-var (
-	TxSuccess string = "SUCCESS"
-	TxFailed  string = "FAILED"
-)
-
-// TxHashData holds transaction hashes split by outcome.
-type TxHashData struct {
-	Successes []string `json:"successes"`
-	Failures  []string `json:"failures"`
-}
-
 // TxHashSeeder collects transaction hashes split by success/failure status.
 type TxHashSeeder struct {
-	data TxHashData
+	data []string
 }
 
 func NewTxHashSeeder() *TxHashSeeder {
@@ -31,7 +20,7 @@ func NewTxHashSeeder() *TxHashSeeder {
 }
 
 // Results returns the accumulated transaction hash data.
-func (s *TxHashSeeder) Results() TxHashData {
+func (s *TxHashSeeder) Results() []string {
 	return s.data
 }
 
@@ -60,11 +49,7 @@ func (s *TxHashSeeder) SeedDataForRange(
 				return nil
 			}
 			hash := tx.TransactionDetails.TransactionHash
-			if tx.TransactionDetails.Status == TxSuccess {
-				s.data.Successes = append(s.data.Successes, hash)
-			} else {
-				s.data.Failures = append(s.data.Failures, hash)
-			}
+			s.data = append(s.data, hash)
 		}
 	}
 	return nil

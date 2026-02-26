@@ -16,13 +16,9 @@ import (
 func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]any, error) {
 	switch endpointKey {
 	case "getTransaction":
-		tx := params.Output.TxHashes
-		all := make([]string, 0, len(tx.Successes)+len(tx.Failures))
-		// SQL performance should be identical for successes vs failures, so we combine them for increased variance
-		all = append(all, tx.Successes...)
-		all = append(all, tx.Failures...)
+		txs := params.Output.TxHashes
 		var result []map[string]any
-		for _, hash := range all {
+		for _, hash := range txs {
 			result = append(result, map[string]any{
 				"hash":   hash,
 				"format": util.VaryFormat(),

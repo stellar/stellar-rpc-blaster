@@ -45,7 +45,7 @@ func loadParameters(dataPath string) (writer.OutputSchema, error) {
 
 func (w *Parameters) fillCounts() {
 	w.SampleCounts = map[string]int{
-		"tx_hashes":    len(w.Output.TxHashes.Successes) + len(w.Output.TxHashes.Failures),
+		"tx_hashes":    len(w.Output.TxHashes),
 		"contract_ids": len(w.Output.ContractIDs),
 		"event_topics": len(w.Output.EventTopics),
 		"ledger_keys":  len(w.Output.LedgerKeys),
