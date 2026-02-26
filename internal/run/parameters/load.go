@@ -7,11 +7,11 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/stellar/stellar-rpc-blaster/internal/generate/writer"
+	"github.com/stellar/stellar-rpc-blaster/internal/generate/seed"
 )
 
 type Parameters struct {
-	Output       writer.OutputSchema
+	Output       seed.SeedData
 	SampleCounts map[string]int
 }
 
@@ -29,16 +29,16 @@ func GetParameters(dataPath string) (*Parameters, error) {
 	return params, params.Validate()
 }
 
-func loadParameters(dataPath string) (writer.OutputSchema, error) {
+func loadParameters(dataPath string) (seed.SeedData, error) {
 	f, err := os.Open(dataPath)
 	if err != nil {
-		return writer.OutputSchema{}, errors.Wrapf(err, "couldn't open seed data file %s", dataPath)
+		return seed.SeedData{}, errors.Wrapf(err, "couldn't open seed data file %s", dataPath)
 	}
 	defer f.Close()
 
-	var output writer.OutputSchema
+	var output seed.SeedData
 	if err := json.NewDecoder(f).Decode(&output); err != nil {
-		return writer.OutputSchema{}, errors.Wrap(err, "failed to decode seed data")
+		return seed.SeedData{}, errors.Wrap(err, "failed to decode seed data")
 	}
 	return output, nil
 }

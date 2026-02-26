@@ -5,22 +5,14 @@ import (
 	"os"
 
 	"github.com/pkg/errors"
-	"github.com/stellar/stellar-rpc-blaster/internal/util"
+	"github.com/stellar/stellar-rpc-blaster/internal/generate/seed"
 )
-
-type OutputSchema struct {
-	LedgerRange util.Range `json:"ledger_range"`
-	TxHashes    []string   `json:"tx_hashes"`
-	ContractIDs []string   `json:"contract_ids"`
-	EventTopics []string   `json:"event_topics"`
-	LedgerKeys  []string   `json:"ledger_keys"`
-}
 
 // SeedWriter accumulates seed data into an OutputSchema struct,
 // then encodes it as a single ordered JSON object on Flush().
 type SeedWriter struct {
-	encoder *json.Encoder
-	Output  OutputSchema
+	file *os.File
+	seed.SeedData
 }
 
 func NewSeedWriter(path string) (*SeedWriter, error) {
@@ -28,18 +20,28 @@ func NewSeedWriter(path string) (*SeedWriter, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to create seed file %s", path)
 	}
-	e := json.NewEncoder(f)
-	e.SetIndent("", "  ")
 	return &SeedWriter{
-		encoder: e,
-		Output:  OutputSchema{},
+		file: f,
 	}, nil
 }
 
-// Flush encodes the accumulated output as one JSON object and writes it.
-func (w *SeedWriter) Flush() error {
-	if err := w.encoder.Encode(w.Output); err != nil {
-		return errors.Wrap(err, "failed to encode output")
+func (w *SeedWriter) MarshalJSON() ([]byte, error) {
+	return json.MarshalIndent(w.SeedData, "", "  ")
+}
+
+func (w *SeedWriter) Write(bytes []byte) (int, error) {
+	return w.file.Write(bytes)
+}
+
+func (w *SeedWriter) Close() error {
+	data, err := w.MarshalJSON()
+	if err != nil {
+		return errors.Wrap(err, "failed to marshal seed data to JSON")
 	}
-	return nil
+
+	if _, err := w.Write(data); err != nil {
+		return errors.Wrap(err, "failed to write seed data to file")
+	}
+
+	return w.file.Close()
 }

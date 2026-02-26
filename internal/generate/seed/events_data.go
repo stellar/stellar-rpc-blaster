@@ -37,7 +37,7 @@ func (s *EventDataSeeder) EventTopics() []string {
 }
 
 // SeedDataForRange implements Seeder for EventDataSeeder.
-// It fetches events for the given ledger range and accumulates contract IDs and unique topics.
+// It fetches events for the given ledger range and accumulates contract IDs AND unique topics.
 func (s *EventDataSeeder) SeedDataForRange(
 	ctx context.Context,
 	_ *log.Entry,

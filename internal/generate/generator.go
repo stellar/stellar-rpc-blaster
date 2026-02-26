@@ -68,7 +68,7 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 	}
 
 	// Set the ledger range
-	writer.Output.LedgerRange = g.parameters.Range
+	writer.LedgerRange = g.parameters.Range
 	logger.Debugf("Successfully wrote ledger sequence numbers start: %d, end: %d to output %s",
 		g.parameters.Range.First, g.parameters.Range.Last, util.LogElapsed(start))
 
@@ -77,33 +77,33 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 	if err := seed.RunSeeder(ctx, logger, g.client, g.parameters, txHashSeeder); err != nil {
 		return errors.Wrap(err, "failed to seed transaction hash data")
 	}
-	writer.Output.TxHashes = txHashSeeder.Results()
+	writer.TxHashes = txHashSeeder.Results()
 	logger.Infof("Successfully wrote %d transaction hashes to output %s",
-		len(writer.Output.TxHashes), util.LogElapsed(start))
+		len(writer.TxHashes), util.LogElapsed(start))
 
 	// Bootstrap active contract IDs and event topics within the ledger range
 	eventSeeder := seed.NewEventDataSeeder()
 	if err := seed.RunSeeder(ctx, logger, g.client, g.parameters, eventSeeder); err != nil {
 		return errors.Wrap(err, "failed to seed events data")
 	}
-	writer.Output.ContractIDs = eventSeeder.ContractIDs()
-	writer.Output.EventTopics = eventSeeder.EventTopics()
+	writer.ContractIDs = eventSeeder.ContractIDs()
+	writer.EventTopics = eventSeeder.EventTopics()
 	logger.Infof("Successfully wrote %d active contract IDs entries to output %s",
-		len(writer.Output.ContractIDs), util.LogElapsed(start))
+		len(writer.ContractIDs), util.LogElapsed(start))
 	logger.Infof("Successfully wrote %d unique event topics entries to output %s",
-		len(writer.Output.EventTopics), util.LogElapsed(start))
+		len(writer.EventTopics), util.LogElapsed(start))
 
 	// Seed ledger keys
 	ledgerKeySeeder := seed.NewLedgerKeySeeder()
 	if err := seed.RunSeeder(ctx, logger, g.client, g.parameters, ledgerKeySeeder); err != nil {
 		return errors.Wrap(err, "failed to seed ledger keys")
 	}
-	writer.Output.LedgerKeys = ledgerKeySeeder.Results()
+	writer.LedgerKeys = ledgerKeySeeder.Results()
 	logger.Infof("Successfully wrote %d ledger keys entries to output %s",
-		len(writer.Output.LedgerKeys), util.LogElapsed(start))
+		len(writer.LedgerKeys), util.LogElapsed(start))
 
-	if err := writer.Flush(); err != nil {
-		return errors.Wrap(err, "failed to flush seed data to output")
+	if err := writer.Close(); err != nil {
+		return errors.Wrap(err, "failed to close seed writer")
 	}
 
 	logger.Infof("Generated data written to %s %s", cfg.OutputPath, util.LogElapsed(start))
