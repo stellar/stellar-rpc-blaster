@@ -33,7 +33,7 @@ func (s *LedgerKeySeeder) SeedDataForRange(
 	ctx context.Context,
 	logger *log.Entry,
 	rpcClient *rpcclient.Client,
-	r util.Range,
+	r Range,
 ) error {
 	var cursor string
 

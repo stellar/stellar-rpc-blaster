@@ -1,4 +1,4 @@
-package util
+package seed
 
 import (
 	"context"
@@ -8,10 +8,11 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	checkpoint "github.com/stellar/go-stellar-sdk/historyarchive"
+	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
 func GetLatestCheckpointLedger(ctx context.Context, rpcClient *rpcclient.Client) (uint32, error) {
-	checkpointManager := checkpoint.NewCheckpointManager(CheckpointFrequency)
+	checkpointManager := checkpoint.NewCheckpointManager(util.CheckpointFrequency)
 	latestLedger, err := rpcClient.GetLatestLedger(ctx)
 	if err != nil {
 		return 0, errors.Wrap(err, "failed to fetch latest ledger")

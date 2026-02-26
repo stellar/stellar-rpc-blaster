@@ -18,26 +18,26 @@ import (
 type Generator struct {
 	rpcUrl     string
 	client     *rpcclient.Client
-	parameters util.PreseedParameters
+	parameters seed.PreseedParameters
 }
 
 func NewGenerator(ctx context.Context, config config.Config) *Generator {
-	first, last, err := util.GetLedgerRange(ctx, config.RpcClient, config.LedgerWindow, config.Count)
+	first, last, err := seed.GetLedgerRange(ctx, config.RpcClient, config.LedgerWindow, config.Count)
 	if err != nil {
 		panic(errors.Wrap(err, "failed to get ledger range for generation"))
 	}
 
-	parameters := util.PreseedParameters{
+	parameters := seed.PreseedParameters{
 		ExportPath: config.OutputPath,
-		Range: util.Range{
+		Range: seed.Range{
 			First: first,
 			Last:  last,
 		},
 	}
 
 	// If the window contains more ledgers than count, sample uniformly
-	if sampledLedgers := util.ComputeSampledLedgers(first, last, config.Count); sampledLedgers != nil {
-		parameters.ProcessingRanges = util.GroupSampledLedgersIntoRanges(sampledLedgers)
+	if sampledLedgers := seed.ComputeSampledLedgers(first, last, config.Count); sampledLedgers != nil {
+		parameters.ProcessingRanges = seed.GroupSampledLedgersIntoRanges(sampledLedgers)
 	}
 
 	return &Generator{

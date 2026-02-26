@@ -29,7 +29,7 @@ func (s *TxHashSeeder) SeedDataForRange(
 	ctx context.Context,
 	_ *log.Entry,
 	rpcClient *rpcclient.Client,
-	r util.Range,
+	r Range,
 ) error {
 	var cursor string
 	for {

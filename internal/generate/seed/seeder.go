@@ -5,7 +5,6 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/support/log"
-	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
 // Seeder processes seed data for a specific RPC data type across ledger ranges.
@@ -16,7 +15,7 @@ type Seeder interface {
 		ctx context.Context,
 		logger *log.Entry,
 		rpcClient *rpcclient.Client,
-		r util.Range,
+		r Range,
 	) error
 }
 
@@ -25,7 +24,7 @@ func RunSeeder(
 	ctx context.Context,
 	logger *log.Entry,
 	rpcClient *rpcclient.Client,
-	parameters util.PreseedParameters,
+	parameters PreseedParameters,
 	seeder Seeder,
 ) error {
 	for _, r := range parameters.GetProcessingRanges() {
