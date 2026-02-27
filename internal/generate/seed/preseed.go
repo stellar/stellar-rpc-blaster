@@ -87,7 +87,11 @@ func GroupSampledLedgersIntoRanges(ledgers []uint32) []Range {
 	if len(ledgers) == 0 {
 		return nil
 	}
-	slices.SortFunc(ledgers, func(a, b uint32) int { return int(a) - int(b) })
+	slices.SortFunc(ledgers,
+		func(a, b uint32) int {
+			return int(a) - int(b)
+		},
+	)
 
 	ranges := []Range{{First: ledgers[0], Last: ledgers[0]}}
 	for _, l := range ledgers[1:] {

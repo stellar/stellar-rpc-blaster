@@ -53,3 +53,14 @@ func TestComputeSampledLedgersInvalid(t *testing.T) {
 	_, err = ComputeSampledLedgers(window, tooSmall)
 	assert.Error(t, err, "should error if sample size provided is less than 2")
 }
+
+func TestGroupSampledLedgersIntoRanges(t *testing.T) {
+	ledgers := []uint32{10, 11, 12, 14, 15, 9, 17}
+	ranges := GroupSampledLedgersIntoRanges(ledgers)
+	expected := []Range{
+		{First: 9, Last: 12},
+		{First: 14, Last: 15},
+		{First: 17, Last: 17},
+	}
+	assert.Equal(t, expected, ranges, "grouping of sampled ledgers into ranges is incorrect")
+}
