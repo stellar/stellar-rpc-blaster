@@ -2,6 +2,7 @@ package blaster
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -127,6 +128,9 @@ func (a *App) runLoadTest(ctx context.Context) error {
 }
 
 func (a *App) runGenerate(ctx context.Context) error {
-	g := generate.NewGenerator(ctx, a.config)
+	g, err := generate.NewGenerator(ctx, a.config)
+	if err != nil {
+		return fmt.Errorf("could not make new generator: %v", err)
+	}
 	return g.Generate(ctx, a.logger, a.config)
 }

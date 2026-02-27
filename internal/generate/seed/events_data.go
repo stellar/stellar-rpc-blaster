@@ -42,7 +42,7 @@ func (s *EventDataSeeder) SeedDataForRange(
 	ctx context.Context,
 	_ *log.Entry,
 	rpcClient *rpcclient.Client,
-	r util.Range,
+	r Range,
 ) error {
 	limit := min(util.TxPageLimit, r.Last-r.First+1)
 

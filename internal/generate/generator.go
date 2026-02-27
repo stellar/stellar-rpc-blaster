@@ -2,6 +2,7 @@ package generate
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pkg/errors"
@@ -21,22 +22,21 @@ type Generator struct {
 	parameters seed.PreseedParameters
 }
 
-func NewGenerator(ctx context.Context, config config.Config) *Generator {
-	first, last, err := seed.GetLedgerRange(ctx, config.RpcClient, config.LedgerWindow, config.Count)
+func NewGenerator(ctx context.Context, config config.Config) (*Generator, error) {
+	window, err := seed.GetLedgerRange(ctx, config.RpcClient, config.LedgerWindow, config.Count)
 	if err != nil {
-		panic(errors.Wrap(err, "failed to get ledger range for generation"))
+		return nil, fmt.Errorf("failed to get ledger range for generation: %v", err)
 	}
 
 	parameters := seed.PreseedParameters{
 		ExportPath: config.OutputPath,
-		Range: seed.Range{
-			First: first,
-			Last:  last,
-		},
+		Range:      window,
 	}
 
 	// If the window contains more ledgers than count, sample uniformly
-	if sampledLedgers := seed.ComputeSampledLedgers(first, last, config.Count); sampledLedgers != nil {
+	if sampledLedgers, err := seed.ComputeSampledLedgers(window, config.Count); err != nil {
+		return nil, fmt.Errorf("could not get sample of ledgers: %v", err)
+	} else {
 		parameters.ProcessingRanges = seed.GroupSampledLedgersIntoRanges(sampledLedgers)
 	}
 
@@ -44,7 +44,7 @@ func NewGenerator(ctx context.Context, config config.Config) *Generator {
 		rpcUrl:     config.RpcUrl,
 		client:     config.RpcClient,
 		parameters: parameters,
-	}
+	}, nil
 }
 
 func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.Config) error {
