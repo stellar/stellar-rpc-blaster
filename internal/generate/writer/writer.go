@@ -33,7 +33,13 @@ func (w *SeedWriter) Write(bytes []byte) (int, error) {
 	return w.file.Write(bytes)
 }
 
-func (w *SeedWriter) Close() error {
+func (w *SeedWriter) Close() (err error) {
+	defer func() {
+		if closeErr := w.file.Close(); closeErr != nil {
+			err = closeErr
+		}
+	}()
+
 	data, err := w.MarshalJSON()
 	if err != nil {
 		return errors.Wrap(err, "failed to marshal seed data to JSON")
@@ -42,6 +48,5 @@ func (w *SeedWriter) Close() error {
 	if _, err := w.Write(data); err != nil {
 		return errors.Wrap(err, "failed to write seed data to file")
 	}
-
-	return w.file.Close()
+	return
 }
