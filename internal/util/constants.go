@@ -29,9 +29,8 @@ const (
 var PrKeyCount = []float64{0.8, 0.15, 0.05} // getLedgerEntries key distribution (80% 1 key, 15% [2,10], 5% [50,200])
 const (
 	LedgerKeyLimit         = 200
-	PrJson         float64 = 0.5  // probability of using "json" vs "xdr" format for transaction requests
-	PrCursor       float64 = 0.5  // probability of paginating with a cursor
-	PrTxFound      float64 = 0.70 // probability of a transaction hash found vs a random hash (won't be found)
+	PrJson         float64 = 0.5 // probability of using "json" vs "xdr" format for transaction requests
+	PrCursor       float64 = 0.5 // probability of paginating with a cursor
 )
 
 // getEvents filter dimension probabilities
@@ -40,11 +39,4 @@ const (
 	PrEventMultiContract  float64 = 0.5 // when contract filter is present, probability of multiple (2-5) vs single
 	PrEventTypeFilter     float64 = 0.5 // probability of including an event type filter
 	PrEventTopicFilter    float64 = 0.5 // probability of including a topic filter
-)
-
-// TxData status values
-const (
-	TxSuccess  string = "SUCCESS"
-	TxFailed   string = "FAILED"
-	TxNotFound string = "NOT_FOUND"
 )
