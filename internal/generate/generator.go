@@ -34,9 +34,11 @@ func NewGenerator(ctx context.Context, config config.Config) (*Generator, error)
 	}
 
 	// If the window contains more ledgers than count, sample uniformly
-	if sampledLedgers, err := seed.ComputeSampledLedgers(window, config.Count); err != nil {
-		return nil, fmt.Errorf("could not get sample of ledgers: %v", err)
-	} else {
+	if config.Count < window.Last-window.First+1 {
+		sampledLedgers, err := seed.ComputeSampledLedgers(window, config.Count)
+		if err != nil {
+			return nil, fmt.Errorf("could not get sample of ledgers: %v", err)
+		}
 		parameters.ProcessingRanges = seed.GroupSampledLedgersIntoRanges(sampledLedgers)
 	}
 
@@ -55,12 +57,6 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 			g.parameters.Range.Last-g.parameters.Range.First+1)
 	}
 	start := time.Now()
-	getNetworkResponse, err := cfg.RpcClient.GetNetwork(ctx)
-	if err != nil {
-		return errors.Wrap(err, "failed to fetch network passphrase during generation")
-	}
-	passphrase := getNetworkResponse.Passphrase
-	logger.Infof("Fetched network passphrase: %s", passphrase)
 
 	writer, err := writer.NewSeedWriter(cfg.OutputPath)
 	if err != nil {
