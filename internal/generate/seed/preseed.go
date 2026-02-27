@@ -112,7 +112,7 @@ func ComputeSampledLedgers(window Range, count uint32) ([]uint32, error) {
 		return nil, fmt.Errorf("count of ledgers to sample cannot be smaller than the length of the ledger window")
 	}
 	if count <= 1 {
-		return []uint32{window.First}, nil
+		return nil, fmt.Errorf("must request ledger sample size of at least 2")
 	}
 
 	sampled := make([]uint32, count)
