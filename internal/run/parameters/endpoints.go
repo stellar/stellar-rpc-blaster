@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"math/rand/v2"
 
-	"github.com/go-errors/errors"
-
 	"github.com/stellar/go-stellar-sdk/toid"
 
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
@@ -45,7 +43,7 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 		lr := params.Output.LedgerRange
 		span := int(lr.Last - lr.First)
 		if span <= 0 {
-			return nil, errors.Errorf("empty ledger range for %s", endpointKey)
+			return nil, fmt.Errorf("empty ledger range for %s", endpointKey)
 		}
 		count := min(span, 100)
 		result := make([]map[string]any, count)
@@ -65,7 +63,7 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 		lr := params.Output.LedgerRange
 		span := int(lr.Last - lr.First)
 		if span <= 0 {
-			return nil, errors.Errorf("empty ledger range for %s", endpointKey)
+			return nil, fmt.Errorf("empty ledger range for %s", endpointKey)
 		}
 		count := min(span, 100)
 		result := make([]map[string]any, count)
@@ -85,7 +83,7 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 		lr := params.Output.LedgerRange
 		span := int(lr.Last - lr.First)
 		if span <= 0 {
-			return nil, errors.Errorf("empty ledger range for %s", endpointKey)
+			return nil, fmt.Errorf("empty ledger range for %s", endpointKey)
 		}
 		contractIDs := params.Output.ContractIDs
 		topics := params.Output.EventTopics
@@ -115,7 +113,7 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 		return result, nil
 
 	default:
-		return nil, errors.Errorf("endpoint %q does not support data-dependent parameters", endpointKey)
+		return nil, fmt.Errorf("endpoint %q does not support data-dependent parameters", endpointKey)
 	}
 }
 

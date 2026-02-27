@@ -2,10 +2,9 @@ package parameters
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
-
-	"github.com/pkg/errors"
 
 	"github.com/stellar/stellar-rpc-blaster/internal/generate/seed"
 )
@@ -18,7 +17,7 @@ type Parameters struct {
 func GetParameters(dataPath string) (*Parameters, error) {
 	output, err := loadParameters(dataPath)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to load parameters")
+		return nil, fmt.Errorf("failed to load parameters: %v", err)
 	}
 
 	params := &Parameters{
@@ -32,13 +31,13 @@ func GetParameters(dataPath string) (*Parameters, error) {
 func loadParameters(dataPath string) (seed.SeedData, error) {
 	f, err := os.Open(dataPath)
 	if err != nil {
-		return seed.SeedData{}, errors.Wrapf(err, "couldn't open seed data file %s", dataPath)
+		return seed.SeedData{}, fmt.Errorf("couldn't open seed data file %s: %v", dataPath, err)
 	}
 	defer f.Close()
 
 	var output seed.SeedData
 	if err := json.NewDecoder(f).Decode(&output); err != nil {
-		return seed.SeedData{}, errors.Wrap(err, "failed to decode seed data")
+		return seed.SeedData{}, fmt.Errorf("failed to decode seed data: %v", err)
 	}
 	return output, nil
 }
@@ -60,7 +59,7 @@ func (w *Parameters) Validate() error {
 		}
 	}
 	if len(missingFields) > 0 {
-		return errors.New("sample counts for the following fields are zero: " + strings.Join(missingFields, ", "))
+		return fmt.Errorf("sample counts for the following fields are zero: %s", strings.Join(missingFields, ", "))
 	}
 	return nil
 }

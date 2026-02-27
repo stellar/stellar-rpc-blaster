@@ -3,10 +3,10 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync"
 
-	"github.com/pkg/errors"
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 
 	"github.com/stellar/go-stellar-sdk/support/log"
@@ -44,7 +44,7 @@ func RunVegeta(
 	if cfg.InputDataPath != "" {
 		p, err := parameters.GetParameters(cfg.InputDataPath)
 		if err != nil {
-			return errors.Wrap(err, "loading seed data")
+			return fmt.Errorf("failed to load seed data: %v", err)
 		}
 		sharedParams = p
 	}
@@ -60,7 +60,7 @@ func RunVegeta(
 			// Data-dependent endpoint: build variant request bodies and rotate through them
 			paramMaps, err := parameters.BuildEndpointParams(endpointKey, sharedParams)
 			if err != nil {
-				return errors.Wrapf(err, "couldn't build params for endpoint %s", endpointKey)
+				return fmt.Errorf("couldn't build params for endpoint %s: %v", endpointKey, err)
 			}
 			bodies := make([][]byte, len(paramMaps))
 			for i, p := range paramMaps {
@@ -72,7 +72,7 @@ func RunVegeta(
 				}
 				bodies[i], err = json.Marshal(req)
 				if err != nil {
-					return errors.Wrapf(err, "couldn't marshal request for endpoint %s", endpointKey)
+					return fmt.Errorf("couldn't marshal request for endpoint %s: %v", endpointKey, err)
 				}
 			}
 			targeter = NewRotatingJSONRPCTargeter(cfg.RpcUrl, bodies)
@@ -87,7 +87,7 @@ func RunVegeta(
 			}
 			body, err := json.Marshal(request)
 			if err != nil {
-				return errors.Wrapf(err, "couldn't marshal JSON request for static endpoint %s", endpointKey)
+				return fmt.Errorf("couldn't marshal JSON request for static endpoint %s: %v", endpointKey, err)
 			}
 			targeter = NewJSONRPCTargeter(cfg.RpcUrl, body)
 		}

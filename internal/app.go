@@ -10,8 +10,6 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/pkg/errors"
-
 	"github.com/stellar/go-stellar-sdk/support/log"
 
 	"github.com/stellar/stellar-rpc-blaster/internal/config"
@@ -66,7 +64,7 @@ func (a *App) RunApp(runtimeSettings config.RuntimeSettings) error {
 		missingFields := strings.TrimSuffix(missingFieldsBuilder.String(), ", ")
 
 		if missingFields != "" {
-			return errors.Errorf("missing required fields in Run mode: %v", missingFields)
+			return fmt.Errorf("missing required fields in Run mode: %v", missingFields)
 		}
 		if err := a.runLoadTest(ctx); err != nil {
 			return err
@@ -78,13 +76,13 @@ func (a *App) RunApp(runtimeSettings config.RuntimeSettings) error {
 		missingFields := strings.TrimSuffix(missingFieldsBuilder.String(), ", ")
 
 		if missingFields != "" {
-			return errors.Errorf("missing required fields in Generate mode: %v", missingFields)
+			return fmt.Errorf("missing required fields in Generate mode: %v", missingFields)
 		}
 		if err := a.runGenerate(ctx); err != nil {
 			return err
 		}
 	default:
-		return errors.Errorf("unknown mode: %v", runtimeSettings.Mode)
+		return fmt.Errorf("unknown mode: %v", runtimeSettings.Mode)
 	}
 
 	a.logger.Infof("Blaster finished successfully")
@@ -98,7 +96,7 @@ func (a *App) init(ctx context.Context, runtimeSettings config.RuntimeSettings) 
 
 	a.client = util.SharedHTTPClient()
 	if a.config, err = config.NewConfig(ctx, runtimeSettings, a.logger, a.client); err != nil {
-		return errors.Wrap(err, "Could not load configuration")
+		return fmt.Errorf("Could not load configuration: %v", err)
 	}
 	return nil
 }

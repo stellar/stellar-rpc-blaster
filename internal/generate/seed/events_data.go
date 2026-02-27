@@ -2,8 +2,7 @@ package seed
 
 import (
 	"context"
-
-	"github.com/pkg/errors"
+	"fmt"
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
@@ -54,8 +53,8 @@ func (s *EventDataSeeder) SeedDataForRange(
 			req := util.MakeGetEventsRequest(start, endLedger, cursor)
 			eventsResponse, err := rpcClient.GetEvents(ctx, req)
 			if err != nil {
-				return errors.Wrapf(err, "failed to fetch event data for ledgers %d->%d",
-					start, endLedger)
+				return fmt.Errorf("failed to fetch event data for ledgers %d->%d: %v",
+					start, endLedger, err)
 			}
 
 			for _, event := range eventsResponse.Events {
@@ -71,7 +70,7 @@ func (s *EventDataSeeder) SeedDataForRange(
 			}
 			c, err := protocol.ParseCursor(eventsResponse.Cursor)
 			if err != nil {
-				return errors.Wrapf(err, "failed to parse events cursor %q", eventsResponse.Cursor)
+				return fmt.Errorf("failed to parse events cursor %q: %v", eventsResponse.Cursor, err)
 			}
 			cursor = &c
 		}

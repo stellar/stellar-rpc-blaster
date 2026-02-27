@@ -2,9 +2,9 @@ package writer
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 
-	"github.com/pkg/errors"
 	"github.com/stellar/stellar-rpc-blaster/internal/generate/seed"
 )
 
@@ -18,7 +18,7 @@ type SeedWriter struct {
 func NewSeedWriter(path string) (*SeedWriter, error) {
 	f, err := os.Create(path)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to create seed file %s", path)
+		return nil, fmt.Errorf("failed to create seed file %s: %v", path, err)
 	}
 	return &SeedWriter{
 		file: f,
@@ -42,11 +42,11 @@ func (w *SeedWriter) Close() (err error) {
 
 	data, err := w.MarshalJSON()
 	if err != nil {
-		return errors.Wrap(err, "failed to marshal seed data to JSON")
+		return fmt.Errorf("failed to marshal seed data to JSON: %v", err)
 	}
 
 	if _, err := w.Write(data); err != nil {
-		return errors.Wrap(err, "failed to write seed data to file")
+		return fmt.Errorf("failed to write seed data to file: %v", err)
 	}
 	return
 }

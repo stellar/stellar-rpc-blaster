@@ -2,13 +2,13 @@ package config
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"net/http"
 	"slices"
 	"time"
 
 	"github.com/pelletier/go-toml"
-	"github.com/pkg/errors"
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/support/log"
@@ -91,7 +91,7 @@ func NewConfig(
 	cfg.RpcClient = rpcclient.NewClient(settings.RpcUrl, client)
 
 	if getNetworkResponse, err := cfg.RpcClient.GetNetwork(ctx); err != nil {
-		return Config{}, errors.Wrap(err, "failed to fetch network passphrase")
+		return Config{}, fmt.Errorf("failed to fetch network passphrase: %v", err)
 	} else {
 		cfg.NetworkPassphrase = getNetworkResponse.Passphrase
 	}
@@ -113,7 +113,7 @@ func NewConfig(
 		cfg.LedgerWindow = settings.LedgerWindow
 		cfg.Count = settings.Count
 	default:
-		return Config{}, errors.Errorf("unknown mode: %v", cfg.Mode)
+		return Config{}, fmt.Errorf("unknown mode: %v", cfg.Mode)
 	}
 
 	logger.Infof("Successfully loaded config from %s", settings.ConfigPath)
@@ -125,12 +125,12 @@ func (c *Config) processToml(tomlPath string) error {
 	// Load config TOML file
 	cfg, err := toml.LoadFile(tomlPath)
 	if err != nil {
-		return errors.Wrapf(err, "config file %v was not found", tomlPath)
+		return fmt.Errorf("config file \"%s\" was not found: %v", tomlPath, err)
 	}
 
 	// Unmarshal TOML data into the Config struct
 	if err = cfg.Unmarshal(c); err != nil {
-		return errors.Wrap(err, "Error unmarshalling TOML config.")
+		return fmt.Errorf("error unmarshalling TOML config: %v", err)
 	}
 
 	if c.Mode == Run {
@@ -150,11 +150,11 @@ func (c *Config) validateEndpointConfig() error {
 			hasValidEndpoint = true
 		}
 		if parameters.EndpointNeedsData(endpoint) && c.InputDataPath == "" {
-			return errors.Errorf("endpoint %s requires input data, but no input-data-path was provided", endpoint)
+			return fmt.Errorf("endpoint %s requires input data, but no input-data-path was provided", endpoint)
 		}
 	}
 	if !hasValidEndpoint {
-		return errors.Errorf("at least one endpoint must be configured with RPS > 0")
+		return fmt.Errorf("at least one endpoint must be configured with RPS > 0")
 	}
 	return nil
 }

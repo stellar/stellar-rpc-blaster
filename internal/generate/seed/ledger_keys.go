@@ -2,8 +2,8 @@ package seed
 
 import (
 	"context"
+	"fmt"
 
-	"github.com/pkg/errors"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -42,8 +42,8 @@ func (s *LedgerKeySeeder) SeedDataForRange(
 
 		txsResponse, err := rpcClient.GetTransactions(ctx, req)
 		if err != nil {
-			return errors.Wrapf(err, "failed to fetch transaction data from ledger %d, cursor %s",
-				r.First, cursor)
+			return fmt.Errorf("failed to fetch transaction data from ledger %d, cursor %s: %v",
+				r.First, cursor, err)
 		}
 
 		if len(txsResponse.Transactions) == 0 {
@@ -93,12 +93,12 @@ func (s *LedgerKeySeeder) SeedDataForRange(
 func getKeysFromTxResultMeta(logger *log.Entry, resultMetaXDR string) ([]xdr.LedgerKey, error) {
 	var meta xdr.TransactionMeta
 	if err := xdr.SafeUnmarshalBase64(resultMetaXDR, &meta); err != nil {
-		return nil, errors.Wrap(err, "failed to unmarshal transaction result meta XDR")
+		return nil, fmt.Errorf("failed to unmarshal transaction result meta XDR: %v", err)
 	}
 
 	changes, ok := getLedgerEntryChangesFromMeta(meta)
 	if !ok {
-		return nil, errors.New("couldn't get ledger entry changes")
+		return nil, fmt.Errorf("couldn't get ledger entry changes")
 	}
 
 	out := make([]xdr.LedgerKey, 0, len(changes))

@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/pkg/errors"
-
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/support/log"
 
@@ -60,46 +58,44 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 
 	writer, err := writer.NewSeedWriter(cfg.OutputPath)
 	if err != nil {
-		return errors.Wrap(err, "failed to create seed writer")
+		return fmt.Errorf("failed to create seed writer: %v", err)
 	}
 
 	// Set the ledger range
 	writer.LedgerRange = g.parameters.Range
-	logger.Debugf("Successfully wrote ledger sequence numbers start: %d, end: %d to output %s",
-		g.parameters.Range.First, g.parameters.Range.Last, util.LogElapsed(start))
 
 	// Bootstrap transaction hashes and success status within the ledger range
 	txHashSeeder := seed.NewTxHashSeeder()
 	if err := seed.RunSeeder(ctx, logger, g.client, g.parameters, txHashSeeder); err != nil {
-		return errors.Wrap(err, "failed to seed transaction hash data")
+		return fmt.Errorf("failed to seed transaction hash data: %v", err)
 	}
 	writer.TxHashes = txHashSeeder.Results()
-	logger.Infof("Successfully wrote %d transaction hashes to output %s",
+	logger.Infof("Successfully fetched %d transaction hashes %s",
 		len(writer.TxHashes), util.LogElapsed(start))
 
 	// Bootstrap active contract IDs and event topics within the ledger range
 	eventSeeder := seed.NewEventDataSeeder()
 	if err := seed.RunSeeder(ctx, logger, g.client, g.parameters, eventSeeder); err != nil {
-		return errors.Wrap(err, "failed to seed events data")
+		return fmt.Errorf("failed to seed events data: %v", err)
 	}
 	writer.ContractIDs = eventSeeder.ContractIDs()
 	writer.EventTopics = eventSeeder.EventTopics()
-	logger.Infof("Successfully wrote %d active contract IDs entries to output %s",
+	logger.Infof("Successfully fetched %d active contract IDs %s",
 		len(writer.ContractIDs), util.LogElapsed(start))
-	logger.Infof("Successfully wrote %d unique event topics entries to output %s",
+	logger.Infof("Successfully fetched %d unique event topics %s",
 		len(writer.EventTopics), util.LogElapsed(start))
 
 	// Seed ledger keys
 	ledgerKeySeeder := seed.NewLedgerKeySeeder()
 	if err := seed.RunSeeder(ctx, logger, g.client, g.parameters, ledgerKeySeeder); err != nil {
-		return errors.Wrap(err, "failed to seed ledger keys")
+		return fmt.Errorf("failed to seed ledger keys: %v", err)
 	}
 	writer.LedgerKeys = ledgerKeySeeder.Results()
-	logger.Infof("Successfully wrote %d ledger keys entries to output %s",
+	logger.Infof("Successfully fetched %d ledger keys %s",
 		len(writer.LedgerKeys), util.LogElapsed(start))
 
 	if err := writer.Close(); err != nil {
-		return errors.Wrap(err, "failed to close seed writer")
+		return fmt.Errorf("failed to close seed writer: %v", err)
 	}
 
 	logger.Infof("Generated data written to %s %s", cfg.OutputPath, util.LogElapsed(start))

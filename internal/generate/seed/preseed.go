@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/pkg/errors"
-
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	checkpoint "github.com/stellar/go-stellar-sdk/historyarchive"
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
@@ -28,7 +26,7 @@ func GetLatestCheckpointLedger(ctx context.Context, rpcClient *rpcclient.Client)
 	checkpointManager := checkpoint.NewCheckpointManager(util.CheckpointFrequency)
 	latestLedger, err := rpcClient.GetLatestLedger(ctx)
 	if err != nil {
-		return 0, errors.Wrap(err, "failed to fetch latest ledger")
+		return 0, fmt.Errorf("failed to fetch latest ledger: %v", err)
 	}
 
 	return checkpointManager.PrevCheckpoint(latestLedger.Sequence), nil
@@ -43,7 +41,7 @@ func GetLedgerRange(
 ) (Range, error) {
 	latestCheckpointLedger, err := GetLatestCheckpointLedger(ctx, rpcClient)
 	if err != nil {
-		return Range{}, errors.Wrap(err, "failed to get latest checkpoint ledger")
+		return Range{}, fmt.Errorf("failed to get latest checkpoint ledger: %v", err)
 	}
 
 	var first, last uint32
@@ -51,7 +49,8 @@ func GetLedgerRange(
 	case 0:
 		// No window specified: [LatestCheckpoint - count, LatestCheckpoint]
 		if count > latestCheckpointLedger {
-			return Range{}, errors.Errorf("count (%d) exceeds latest checkpoint ledger (%d)", count, latestCheckpointLedger)
+			return Range{}, fmt.Errorf("count (%d) exceeds latest checkpoint ledger (%d)",
+				count, latestCheckpointLedger)
 		}
 		first = latestCheckpointLedger - count + 1
 		last = latestCheckpointLedger
@@ -64,11 +63,11 @@ func GetLedgerRange(
 		first = ledgerWindow[0]
 		last = ledgerWindow[1]
 	default:
-		return Range{}, errors.Errorf("ledger-window must have at most 2 values, got %d", len(ledgerWindow))
+		return Range{}, fmt.Errorf("ledger-window must have at most 2 values, got %d", len(ledgerWindow))
 	}
 
 	if first > last {
-		return Range{}, errors.Errorf("invalid ledger range: start (%d) > end (%d)", first, last)
+		return Range{}, fmt.Errorf("invalid ledger range: start (%d) > end (%d)", first, last)
 	}
 
 	return Range{First: first, Last: last}, nil

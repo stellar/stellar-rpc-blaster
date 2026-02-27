@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/HdrHistogram/hdrhistogram-go"
-	"github.com/pkg/errors"
 
 	"github.com/stellar/stellar-rpc-blaster/internal/config"
 
@@ -68,7 +67,7 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 				a.logger.Errorf("aggregator.Run terminating due to context error: %v", err)
 			}
 			if err := WriteOutput(a); err != nil {
-				a.logger.Error(errors.Wrap(err, "Failed to write output results"))
+				a.logger.Error(fmt.Errorf("Failed to write output results: %v", err))
 			}
 			return
 		}
@@ -110,7 +109,7 @@ func (a *Aggregator) Record(sample Sample) error {
 	defer a.mu.Unlock()
 
 	if _, ok := a.stats[sample.Endpoint]; !ok {
-		return errors.New("unknown endpoint in sample: " + sample.Endpoint)
+		return fmt.Errorf("unknown endpoint in sample: %s", sample.Endpoint)
 	}
 
 	epStats := a.stats[sample.Endpoint]

@@ -2,8 +2,7 @@ package seed
 
 import (
 	"context"
-
-	"github.com/pkg/errors"
+	"fmt"
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/support/log"
@@ -37,7 +36,7 @@ func (s *TxHashSeeder) SeedDataForRange(
 
 		txsResponse, err := rpcClient.GetTransactions(ctx, req)
 		if err != nil {
-			return errors.Wrapf(err, "failed to fetch transaction data for ledger %d, cursor %s", r.First, cursor)
+			return fmt.Errorf("failed to fetch transaction data for ledger %d, cursor %s: %v", r.First, cursor, err)
 		}
 		if len(txsResponse.Transactions) == 0 {
 			break
