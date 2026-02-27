@@ -45,7 +45,7 @@ func loadParameters(dataPath string) (seed.SeedData, error) {
 func (w *Parameters) fillCounts() {
 	w.SampleCounts = map[string]int{
 		"tx_hashes":    len(w.Output.TxHashes),
-		"contract_ids": len(w.Output.ContractIDs),
+		"contract_ids": len(w.Output.ContractIds),
 		"event_topics": len(w.Output.EventTopics),
 		"ledger_keys":  len(w.Output.LedgerKeys),
 	}

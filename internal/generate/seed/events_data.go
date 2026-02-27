@@ -14,19 +14,23 @@ import (
 
 // EventDataSeeder collects contract IDs and unique event topics.
 type EventDataSeeder struct {
+	rpcClient    *rpcclient.Client
+	logger       *log.Entry
 	contractIds  []string
 	uniqueTopics set.Set[string]
 }
 
-func NewEventDataSeeder() *EventDataSeeder {
+func NewEventDataSeeder(rpcClient *rpcclient.Client, logger *log.Entry) *EventDataSeeder {
 	return &EventDataSeeder{
+		rpcClient:    rpcClient,
+		logger:       logger,
 		contractIds:  make([]string, 0, util.DefaultSeedSliceSize),
 		uniqueTopics: set.NewSet[string](int(util.DefaultSeedSliceSize)),
 	}
 }
 
-// ContractIDs returns the accumulated contract IDs.
-func (s *EventDataSeeder) ContractIDs() []string {
+// ContractIds returns the accumulated contract IDs.
+func (s *EventDataSeeder) ContractIds() []string {
 	return s.contractIds
 }
 
@@ -37,12 +41,7 @@ func (s *EventDataSeeder) EventTopics() []string {
 
 // SeedDataForRange implements Seeder for EventDataSeeder.
 // It fetches events for the given ledger range and accumulates contract IDs AND unique topics.
-func (s *EventDataSeeder) SeedDataForRange(
-	ctx context.Context,
-	_ *log.Entry,
-	rpcClient *rpcclient.Client,
-	r Range,
-) error {
+func (s *EventDataSeeder) SeedDataForRange(ctx context.Context, r Range) error {
 	limit := min(util.TxPageLimit, r.Last-r.First+1)
 
 	for start := r.First; start <= r.Last; start += limit {
@@ -51,7 +50,7 @@ func (s *EventDataSeeder) SeedDataForRange(
 
 		for {
 			req := util.MakeGetEventsRequest(start, endLedger, cursor)
-			eventsResponse, err := rpcClient.GetEvents(ctx, req)
+			eventsResponse, err := s.rpcClient.GetEvents(ctx, req)
 			if err != nil {
 				return fmt.Errorf("failed to fetch event data for ledgers %d->%d: %v",
 					start, endLedger, err)

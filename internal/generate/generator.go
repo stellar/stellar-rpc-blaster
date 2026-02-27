@@ -65,8 +65,8 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 	writer.LedgerRange = g.parameters.Range
 
 	// Bootstrap transaction hashes and success status within the ledger range
-	txHashSeeder := seed.NewTxHashSeeder()
-	if err := seed.RunSeeder(ctx, logger, g.client, g.parameters, txHashSeeder); err != nil {
+	txHashSeeder := seed.NewTxHashSeeder(g.client, logger)
+	if err := seed.RunSeeder(ctx, g.parameters, txHashSeeder); err != nil {
 		return fmt.Errorf("failed to seed transaction hash data: %v", err)
 	}
 	writer.TxHashes = txHashSeeder.Results()
@@ -74,25 +74,22 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 		len(writer.TxHashes), util.LogElapsed(start))
 
 	// Bootstrap active contract IDs and event topics within the ledger range
-	eventSeeder := seed.NewEventDataSeeder()
-	if err := seed.RunSeeder(ctx, logger, g.client, g.parameters, eventSeeder); err != nil {
+	eventSeeder := seed.NewEventDataSeeder(g.client, logger)
+	if err := seed.RunSeeder(ctx, g.parameters, eventSeeder); err != nil {
 		return fmt.Errorf("failed to seed events data: %v", err)
 	}
-	writer.ContractIDs = eventSeeder.ContractIDs()
+	writer.ContractIds = eventSeeder.ContractIds()
 	writer.EventTopics = eventSeeder.EventTopics()
-	logger.Infof("Successfully fetched %d active contract IDs %s",
-		len(writer.ContractIDs), util.LogElapsed(start))
-	logger.Infof("Successfully fetched %d unique event topics %s",
-		len(writer.EventTopics), util.LogElapsed(start))
+	logger.Infof("Successfully fetched %d active contract IDs %s", len(writer.ContractIds), util.LogElapsed(start))
+	logger.Infof("Successfully fetched %d unique event topics %s", len(writer.EventTopics), util.LogElapsed(start))
 
 	// Seed ledger keys
-	ledgerKeySeeder := seed.NewLedgerKeySeeder()
-	if err := seed.RunSeeder(ctx, logger, g.client, g.parameters, ledgerKeySeeder); err != nil {
+	ledgerKeySeeder := seed.NewLedgerKeySeeder(g.client, logger)
+	if err := seed.RunSeeder(ctx, g.parameters, ledgerKeySeeder); err != nil {
 		return fmt.Errorf("failed to seed ledger keys: %v", err)
 	}
 	writer.LedgerKeys = ledgerKeySeeder.Results()
-	logger.Infof("Successfully fetched %d ledger keys %s",
-		len(writer.LedgerKeys), util.LogElapsed(start))
+	logger.Infof("Successfully fetched %d ledger keys %s", len(writer.LedgerKeys), util.LogElapsed(start))
 
 	if err := writer.Close(); err != nil {
 		return fmt.Errorf("failed to close seed writer: %v", err)
