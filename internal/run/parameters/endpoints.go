@@ -12,6 +12,12 @@ import (
 // Builds a list of params maps for a data-dependent endpoint,
 // one per seed item, so the targeter can rotate through distinct request payloads.
 func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]any, error) {
+	if needs, err := EndpointNeedsData(endpointKey); err != nil {
+		return nil, err
+	} else if !needs {
+		return []map[string]any{{}}, nil
+	}
+
 	switch endpointKey {
 	case "getTransaction":
 		txs := params.Output.TxHashes
@@ -85,7 +91,7 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 		if span <= 0 {
 			return nil, fmt.Errorf("empty ledger range for %s", endpointKey)
 		}
-		contractIDs := params.Output.ContractIDs
+		contractIds := params.Output.ContractIds
 		topics := params.Output.EventTopics
 		count := min(span, 100)
 		result := make([]map[string]any, count)
@@ -100,7 +106,7 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 			start := uint32(earliest + rand.IntN(latest-earliest+1))
 			endLedger := start + uint32(window)
 
-			filter := util.VaryEventFilter(contractIDs, topics)
+			filter := util.VaryEventFilter(contractIds, topics)
 
 			entry := map[string]any{
 				"startLedger": start,
@@ -113,17 +119,20 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 		return result, nil
 
 	default:
-		return nil, fmt.Errorf("endpoint %q does not support data-dependent parameters", endpointKey)
+		return nil, fmt.Errorf("unsupported endpoint %s", endpointKey)
 	}
 }
 
 // EndpointNeedsData reports whether the endpoint requires seed data to build requests.
-func EndpointNeedsData(endpointKey string) bool {
+func EndpointNeedsData(endpointKey string) (bool, error) {
 	switch endpointKey {
-	case "getTransaction", "getLedgerEntries", "getTransactions", "getLedgers", "getEvents":
-		return true
+	case "getTransaction", "getLedgerEntries", "getTransactions", "getLedgers", "getEvents", "simulateTransaction":
+		return true, nil
+	case "getHealth", "getNetwork", "getVersionInfo", "getLatestLedger", "getFeeStats":
+		return false, nil
+	default:
+		return false, fmt.Errorf("unknown endpoint %q", endpointKey)
 	}
-	return false
 }
 
 func setPaginationMap(limit uint, entry map[string]any) map[string]any {

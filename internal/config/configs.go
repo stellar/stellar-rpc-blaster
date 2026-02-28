@@ -149,7 +149,9 @@ func (c *Config) validateEndpointConfig() error {
 		if endpointData.RPS > 0 {
 			hasValidEndpoint = true
 		}
-		if parameters.EndpointNeedsData(endpoint) && c.InputDataPath == "" {
+		if needs, err := parameters.EndpointNeedsData(endpoint); err != nil {
+			return fmt.Errorf("failed to check if endpoint %s needs data: %v", endpoint, err)
+		} else if needs && c.InputDataPath == "" {
 			return fmt.Errorf("endpoint %s requires input data, but no input-data-path was provided", endpoint)
 		}
 	}

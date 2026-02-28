@@ -54,42 +54,31 @@ func RunVegeta(
 	var endpointBlasts []endpointBlast
 	for _, endpointKey := range cfg.GetEndpoints() {
 		rps := cfg.GetEndpointRPS(endpointKey)
+		if rps <= 0 {
+			logger.Debugf("Skipping endpoint %s with non-positive RPS %d", endpointKey, rps)
+			continue
+		}
 
-		var targeter vegeta.Targeter
-		if sharedParams != nil && parameters.EndpointNeedsData(endpointKey) {
-			// Data-dependent endpoint: build variant request bodies and rotate through them
-			paramMaps, err := parameters.BuildEndpointParams(endpointKey, sharedParams)
-			if err != nil {
-				return fmt.Errorf("couldn't build params for endpoint %s: %v", endpointKey, err)
-			}
-			bodies := make([][]byte, len(paramMaps))
-			for i, p := range paramMaps {
-				req := map[string]any{
-					"jsonrpc": "2.0",
-					"id":      1,
-					"method":  endpointKey,
-					"params":  p,
-				}
-				bodies[i], err = json.Marshal(req)
-				if err != nil {
-					return fmt.Errorf("couldn't marshal request for endpoint %s: %v", endpointKey, err)
-				}
-			}
-			targeter = NewRotatingJSONRPCTargeter(cfg.RpcUrl, bodies)
-			logger.Infof("Endpoint %s: rotating through %d parameterized request bodies", endpointKey, len(bodies))
-		} else {
-			// Static endpoint: single body with empty params
-			request := map[string]any{
+		paramMaps, err := parameters.BuildEndpointParams(endpointKey, sharedParams)
+		if err != nil {
+			return fmt.Errorf("couldn't build params for endpoint %s: %v", endpointKey, err)
+		}
+		bodies := make([][]byte, len(paramMaps))
+		for i, p := range paramMaps {
+			req := map[string]any{
 				"jsonrpc": "2.0",
 				"id":      1,
 				"method":  endpointKey,
-				"params":  map[string]any{},
+				"params":  p,
 			}
-			body, err := json.Marshal(request)
+			bodies[i], err = json.Marshal(req)
 			if err != nil {
-				return fmt.Errorf("couldn't marshal JSON request for static endpoint %s: %v", endpointKey, err)
+				return fmt.Errorf("couldn't marshal request for endpoint %s: %v", endpointKey, err)
 			}
-			targeter = NewJSONRPCTargeter(cfg.RpcUrl, body)
+		}
+		targeter := NewJSONRPCTargeter(cfg.RpcUrl, bodies)
+		if len(bodies) > 1 {
+			logger.Infof("Endpoint %s: rotating through %d parameterized request bodies", endpointKey, len(bodies))
 		}
 
 		endpointBlasts = append(endpointBlasts, endpointBlast{
