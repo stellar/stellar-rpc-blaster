@@ -52,10 +52,11 @@ func RunVegeta(
 	// Construct endpoint blast configs
 	// 3... 2... 1...
 	var endpointBlasts []endpointBlast
+	var skippedEndpoints []string
 	for _, endpointKey := range cfg.GetEndpoints() {
 		rps := cfg.GetEndpointRPS(endpointKey)
 		if rps <= 0 {
-			logger.Debugf("Skipping endpoint %s with non-positive RPS %d", endpointKey, rps)
+			skippedEndpoints = append(skippedEndpoints, endpointKey)
 			continue
 		}
 
@@ -94,6 +95,9 @@ func RunVegeta(
 				MaxRPS:        rps,
 			},
 		})
+	}
+	if len(skippedEndpoints) > 0 {
+		logger.Infof("Skipping endpoints with RPS<=0: %v", skippedEndpoints)
 	}
 
 	// Fire!
