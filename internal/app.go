@@ -2,17 +2,18 @@ package blaster
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
-
-	"github.com/pkg/errors"
 
 	"github.com/stellar/go-stellar-sdk/support/log"
 
 	"github.com/stellar/stellar-rpc-blaster/internal/config"
+	"github.com/stellar/stellar-rpc-blaster/internal/generate"
 	"github.com/stellar/stellar-rpc-blaster/internal/run/engine"
 	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/run/metrics"
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
@@ -47,36 +48,41 @@ func (a *App) RunApp(runtimeSettings config.RuntimeSettings) error {
 
 	defer a.close()
 
-	var missingFields []string
+	var missingFieldsBuilder strings.Builder
 
 	switch runtimeSettings.Mode {
 	case config.Run:
 		if runtimeSettings.ConfigPath == "" {
-			missingFields = append(missingFields, "config-path")
+			missingFieldsBuilder.WriteString("config-path, ")
 		}
+		if runtimeSettings.RpcUrl == "" {
+			missingFieldsBuilder.WriteString("rpc-url, ")
+		}
+		if runtimeSettings.Duration <= 0 {
+			missingFieldsBuilder.WriteString("duration, ")
+		}
+		missingFields := strings.TrimSuffix(missingFieldsBuilder.String(), ", ")
 
-		if len(missingFields) > 0 {
-			return errors.Errorf("missing required fields in Run mode: %v", missingFields)
+		if missingFields != "" {
+			return fmt.Errorf("missing required fields in Run mode: %v", missingFields)
 		}
 		if err := a.runLoadTest(ctx); err != nil {
 			return err
 		}
 	case config.Generate:
-		if runtimeSettings.SeedPath == "" {
-			missingFields = append(missingFields, "seed-path")
+		if runtimeSettings.OutputPath == "" {
+			missingFieldsBuilder.WriteString("output, ")
 		}
-		if runtimeSettings.LedgerWindow == 0 {
-			missingFields = append(missingFields, "ledger-window")
-		}
+		missingFields := strings.TrimSuffix(missingFieldsBuilder.String(), ", ")
 
-		if len(missingFields) > 0 {
-			return errors.Errorf("missing required fields in Generate mode: %v", missingFields)
+		if missingFields != "" {
+			return fmt.Errorf("missing required fields in Generate mode: %v", missingFields)
 		}
-		if err := a.runLoadTest(ctx); err != nil {
+		if err := a.runGenerate(ctx); err != nil {
 			return err
 		}
 	default:
-		return errors.Errorf("unknown mode: %v", runtimeSettings.Mode)
+		return fmt.Errorf("unknown mode: %v", runtimeSettings.Mode)
 	}
 
 	a.logger.Infof("Blaster finished successfully")
@@ -90,7 +96,7 @@ func (a *App) init(ctx context.Context, runtimeSettings config.RuntimeSettings) 
 
 	a.client = util.SharedHTTPClient()
 	if a.config, err = config.NewConfig(ctx, runtimeSettings, a.logger, a.client); err != nil {
-		return errors.Wrap(err, "Could not load configuration")
+		return fmt.Errorf("Could not load configuration: %v", err)
 	}
 	return nil
 }
@@ -117,4 +123,12 @@ func (a *App) runLoadTest(ctx context.Context) error {
 	wg.Wait()
 
 	return err
+}
+
+func (a *App) runGenerate(ctx context.Context) error {
+	g, err := generate.NewGenerator(ctx, a.config)
+	if err != nil {
+		return fmt.Errorf("could not make new generator: %v", err)
+	}
+	return g.Generate(ctx, a.logger, a.config)
 }

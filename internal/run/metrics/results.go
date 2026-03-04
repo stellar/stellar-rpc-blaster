@@ -2,6 +2,7 @@ package blasterMetrics
 
 import (
 	"fmt"
+	"maps"
 	"time"
 )
 
@@ -32,9 +33,6 @@ type ErrorResult struct {
 
 // Returns the final aggregated results
 func (a *Aggregator) Results() *Results {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
 	durationSeconds := time.Since(a.start).Round(time.Second).Seconds()
 	results := &Results{
 		Start:           a.start.UTC(),
@@ -43,15 +41,19 @@ func (a *Aggregator) Results() *Results {
 		Endpoints:       make(map[string]*EndpointResult, len(a.stats)),
 	}
 
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	for _, name := range a.orderedEndpoints {
 		stats := a.stats[name]
 		stats.refreshPercentiles() // compute final percentiles from histogram
 		totalRequests := stats.success + stats.errors
+		errorTypesCopy := make(map[string]ErrorResult, len(stats.errorTypes))
+		maps.Copy(errorTypesCopy, stats.errorTypes)
 		results.Endpoints[name] = &EndpointResult{
 			TotalRequests: totalRequests,
 			Success:       stats.success,
 			Errors:        stats.errors,
-			ErrorTypes:    stats.errorTypes,
+			ErrorTypes:    errorTypesCopy,
 			TargetRPS:     stats.targetRPS,
 			AchievedRPS:   stats.achievedRPS,
 			Percentiles:   make(map[string]float64),

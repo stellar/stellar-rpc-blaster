@@ -32,11 +32,12 @@ func blastAtEndpoint(
 	start := time.Now()
 	blaster := newBlaster()
 	results := blaster.Attack(endpointCfg.Targeter, blastPacer, blastPacer.TotalDuration, endpointCfg.EndpointKey)
-	flushBlastResults(endpointCfg.EndpointKey, blastPacer, start, results, out)
+	flushBlastResults(ctx, endpointCfg.EndpointKey, blastPacer, start, results, out)
 }
 
 // Reads results from a Vegeta results channel and forwards them to the output channel as a blasterMetrics.Sample
 func flushBlastResults(
+	ctx context.Context,
 	endpointKey string,
 	pacer RampToConstantPacer,
 	start time.Time,
@@ -46,13 +47,17 @@ func flushBlastResults(
 	for result := range results {
 		elapsed := time.Since(start)
 		expectedRPS := pacer.Hits(elapsed) / elapsed.Seconds()
-		out <- blasterMetrics.Sample{
+		select {
+		case out <- blasterMetrics.Sample{
 			Endpoint:   endpointKey,
 			CurrentRPS: expectedRPS,
 			Latency:    result.Latency,
 			Code:       result.Code,
 			Err:        result.Error,
 			OK:         result.Error == "" && result.Code >= 200 && result.Code < 300,
+		}:
+		case <-ctx.Done():
+			return
 		}
 	}
 }

@@ -2,16 +2,17 @@ package config
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"net/http"
 	"slices"
 	"time"
 
 	"github.com/pelletier/go-toml"
-	"github.com/pkg/errors"
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/support/log"
+	"github.com/stellar/stellar-rpc-blaster/internal/run/parameters"
 )
 
 type Config struct {
@@ -29,9 +30,12 @@ type Config struct {
 	RampUp         time.Duration
 	TestOutputPath string // path to write JSON results
 
-	// TODO: data-dependent endpoints & generate mode settings
-	SeedPath     string
-	LedgerWindow uint32
+	// Generate mode settings
+	OutputPath   string
+	LedgerWindow []uint32
+	Count        uint32
+
+	InputDataPath string `toml:"input_data_path"` // path to read seed data for data-dependent endpoints, output by generate mode
 }
 
 type Mode int
@@ -64,8 +68,9 @@ type RuntimeSettings struct {
 	RampUp         time.Duration
 
 	// Generate mode settings
-	SeedPath     string
-	LedgerWindow uint32
+	OutputPath   string
+	LedgerWindow []uint32
+	Count        uint32
 
 	Mode Mode
 	Ctx  context.Context
@@ -73,8 +78,7 @@ type RuntimeSettings struct {
 
 // Per-endpoint configuration
 type EndpointConfig struct {
-	RPS      int    `toml:"rps"`                 // requests per second
-	DataPath string `toml:"data_path,omitempty"` // path to data file for data-dependent endpoints
+	RPS int `toml:"rps"` // requests per second
 }
 
 func NewConfig(
@@ -86,9 +90,8 @@ func NewConfig(
 	cfg := Config{}
 	cfg.RpcClient = rpcclient.NewClient(settings.RpcUrl, client)
 
-	getNetworkResponse, err := cfg.RpcClient.GetNetwork(ctx)
-	if err != nil {
-		return Config{}, errors.Wrap(err, "failed to fetch network passphrase")
+	if getNetworkResponse, err := cfg.RpcClient.GetNetwork(ctx); err != nil {
+		return Config{}, fmt.Errorf("failed to fetch network passphrase: %v", err)
 	} else {
 		cfg.NetworkPassphrase = getNetworkResponse.Passphrase
 	}
@@ -96,23 +99,23 @@ func NewConfig(
 	cfg.ConfigPath = settings.ConfigPath
 	cfg.RpcUrl = settings.RpcUrl
 	cfg.Mode = settings.Mode
+	logger.Debugf("Requested %v mode", settings.Mode.Name())
 	switch cfg.Mode {
 	case Run:
 		cfg.Duration = settings.Duration
 		cfg.RampUp = settings.RampUp
 		cfg.TestOutputPath = settings.TestOutputPath
+		if err := cfg.processToml(settings.ConfigPath); err != nil {
+			return Config{}, err
+		}
 	case Generate:
-		cfg.SeedPath = settings.SeedPath
+		cfg.OutputPath = settings.OutputPath
 		cfg.LedgerWindow = settings.LedgerWindow
+		cfg.Count = settings.Count
 	default:
-		return Config{}, errors.Errorf("unknown mode: %v", cfg.Mode)
+		return Config{}, fmt.Errorf("unknown mode: %v", cfg.Mode)
 	}
 
-	logger.Infof("Requested %v mode", settings.Mode.Name())
-
-	if err := cfg.processToml(settings.ConfigPath); err != nil {
-		return Config{}, err
-	}
 	logger.Infof("Successfully loaded config from %s", settings.ConfigPath)
 
 	return cfg, nil
@@ -122,15 +125,14 @@ func (c *Config) processToml(tomlPath string) error {
 	// Load config TOML file
 	cfg, err := toml.LoadFile(tomlPath)
 	if err != nil {
-		return errors.Wrapf(err, "config file %v was not found", tomlPath)
+		return fmt.Errorf("config file \"%s\" was not found: %v", tomlPath, err)
 	}
 
 	// Unmarshal TOML data into the Config struct
 	if err = cfg.Unmarshal(c); err != nil {
-		return errors.Wrap(err, "Error unmarshalling TOML config.")
+		return fmt.Errorf("error unmarshalling TOML config: %v", err)
 	}
 
-	// Ensure at least one endpoint is configured if launching a load test
 	if c.Mode == Run {
 		if err = c.validateEndpointConfig(); err != nil {
 			return err
@@ -140,15 +142,21 @@ func (c *Config) processToml(tomlPath string) error {
 	return nil
 }
 
+// Ensure at least one endpoint is configured if launching a load test and data-dependent endpoints have input data
 func (c *Config) validateEndpointConfig() error {
 	hasValidEndpoint := false
-	for _, endpointData := range c.Endpoints {
+	for endpoint, endpointData := range c.Endpoints {
 		if endpointData.RPS > 0 {
 			hasValidEndpoint = true
 		}
+		if needs, err := parameters.EndpointNeedsData(endpoint); err != nil {
+			return fmt.Errorf("failed to check if endpoint %s needs data: %v", endpoint, err)
+		} else if needs && c.InputDataPath == "" {
+			return fmt.Errorf("endpoint %s requires input data, but no input-data-path was provided", endpoint)
+		}
 	}
 	if !hasValidEndpoint {
-		return errors.New("at least one endpoint must be configured with RPS > 0")
+		return fmt.Errorf("at least one endpoint must be configured with RPS > 0")
 	}
 	return nil
 }

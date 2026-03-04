@@ -2,23 +2,41 @@ package util
 
 import "time"
 
+// External configuration "facts"
 const (
-	CheckpointFrequency = 64
+	CheckpointFrequency uint32 = 64
+	// Maximum time to wait for a single RPC response for most endpoints
+	RequestTimeout = 15 * time.Second // (this isn't accessible from outside stellar-rpc)
+)
 
-	GetLatestLedgerMethodName = "getLatestLedger"
+// Configurable limits for generate
+const (
+	TxPageLimit          uint32 = 200
+	EventsPageLimit      uint32 = 100
+	DefaultSeedSliceSize uint32 = 64 // starting size for slices of bootstrapped seed data
+)
 
-	// Total number of ephemeral ports available on most systems
-	PortCount = 16384
+// Configurable limits for run
+const (
+	// HTTP constants for connection management and request timeouts
+	PortCount           = 16384 // total number of ephemeral ports available on most systems
+	PortAllocationRatio = 0.60  // fraction of ports to use for connections (leaves 40% free for other processes)
+	WorkerMultiplier    = 2.5   // ratio for how many workers can share one connection
+	MaxWorkers          = uint64(float64(PortCount) * PortAllocationRatio * WorkerMultiplier)
+)
 
-	// Fraction of available ephemeral ports to use for connections (leaves 40% free for other processes)
-	PortAllocationRatio = 0.60
+// Data dependent endpoint limits and probabilities for run
+var PrKeyCount = []float64{0.8, 0.15, 0.05} // getLedgerEntries key distribution (80% 1 key, 15% [2,10], 5% [50,200])
+const (
+	LedgerKeyLimit         = 200
+	PrJson         float64 = 0.5 // probability of using "json" vs "xdr" format for transaction requests
+	PrCursor       float64 = 0.5 // probability of paginating with a cursor
+)
 
-	// Ratio determining how many workers can share one connection
-	WorkerMultiplier = 2.5
-
-	// Maximum time to wait for a single RPC response
-	// (for most endpoints -- this isn't accessible from outside stellar-rpc)
-	RequestTimeout = 15 * time.Second
-
-	MaxWorkers = uint64(float64(PortCount) * PortAllocationRatio * WorkerMultiplier)
+// getEvents filter dimension probabilities
+const (
+	PrEventContractFilter float64 = 0.5 // probability of including contract ID(s) in an event filter
+	PrEventMultiContract  float64 = 0.5 // when contract filter is present, probability of multiple (2-5) vs single
+	PrEventTypeFilter     float64 = 0.5 // probability of including an event type filter
+	PrEventTopicFilter    float64 = 0.5 // probability of including a topic filter
 )

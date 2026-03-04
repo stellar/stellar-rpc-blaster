@@ -3,16 +3,17 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync"
 
-	"github.com/pkg/errors"
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 
 	"github.com/stellar/go-stellar-sdk/support/log"
 
 	"github.com/stellar/stellar-rpc-blaster/internal/config"
 	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/run/metrics"
+	"github.com/stellar/stellar-rpc-blaster/internal/run/parameters"
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
@@ -38,24 +39,48 @@ func RunVegeta(
 		return NewBlasterWithClient(httpClient, util.MaxWorkers)
 	}
 
+	// Pre-load seed parameters once for all data-dependent endpoints
+	var sharedParams *parameters.Parameters
+	if cfg.InputDataPath != "" {
+		p, err := parameters.GetParameters(cfg.InputDataPath)
+		if err != nil {
+			return fmt.Errorf("failed to load seed data: %v", err)
+		}
+		sharedParams = p
+	}
+
 	// Construct endpoint blast configs
 	// 3... 2... 1...
 	var endpointBlasts []endpointBlast
+	var skippedEndpoints []string
 	for _, endpointKey := range cfg.GetEndpoints() {
 		rps := cfg.GetEndpointRPS(endpointKey)
+		if rps <= 0 {
+			skippedEndpoints = append(skippedEndpoints, endpointKey)
+			continue
+		}
 
-		// Form request and Vegeta targeter from that
-		request := map[string]any{
-			"jsonrpc": "2.0",
-			"id":      1,
-			"method":  endpointKey,
-			"params":  map[string]any{}, // optional -- to be used when we do PR 573/data-dependent endpoints
-		}
-		body, err := json.Marshal(request)
+		paramMaps, err := parameters.BuildEndpointParams(endpointKey, sharedParams)
 		if err != nil {
-			return errors.Wrap(err, "error marshalling JSON request")
+			return fmt.Errorf("couldn't build params for endpoint %s: %v", endpointKey, err)
 		}
-		targeter := NewJSONRPCTargeter(cfg.RpcUrl, body)
+		bodies := make([][]byte, len(paramMaps))
+		for i, p := range paramMaps {
+			req := map[string]any{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"method":  endpointKey,
+				"params":  p,
+			}
+			bodies[i], err = json.Marshal(req)
+			if err != nil {
+				return fmt.Errorf("couldn't marshal request for endpoint %s: %v", endpointKey, err)
+			}
+		}
+		targeter := NewJSONRPCTargeter(cfg.RpcUrl, bodies)
+		if len(bodies) > 1 {
+			logger.Infof("Endpoint %s: rotating through %d parameterized request bodies", endpointKey, len(bodies))
+		}
 
 		endpointBlasts = append(endpointBlasts, endpointBlast{
 			EndpointBlastConfig: EndpointBlastConfig{
@@ -70,6 +95,9 @@ func RunVegeta(
 				MaxRPS:        rps,
 			},
 		})
+	}
+	if len(skippedEndpoints) > 0 {
+		logger.Infof("Skipping endpoints with RPS<=0: %v", skippedEndpoints)
 	}
 
 	// Fire!
