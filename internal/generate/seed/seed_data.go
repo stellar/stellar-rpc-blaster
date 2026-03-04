@@ -4,7 +4,5 @@ package seed
 type SeedData struct {
 	LedgerRange Range    `json:"ledger_range"`
 	TxHashes    []string `json:"tx_hashes"`
-	ContractIds []string `json:"contract_ids"`
-	EventTopics []string `json:"event_topics"`
 	LedgerKeys  []string `json:"ledger_keys"`
 }

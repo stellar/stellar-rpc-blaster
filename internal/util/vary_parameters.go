@@ -63,39 +63,6 @@ func VaryKeyCount() uint {
 	}
 }
 
-// VaryEventFilter builds a random event filter map by independently deciding
-// whether to include contract IDs, an event type, and/or a topic filter.
-// Each dimension is toggled by its own probability constant.
-func VaryEventFilter(contractIDs []string, topics []string) map[string]any {
-	eventTypes := []string{"contract", "system"}
-	filter := map[string]any{}
-
-	// vary contract ID(s)
-	if len(contractIDs) > 0 && rand.Float64() < PrEventContractFilter {
-		if rand.Float64() < PrEventMultiContract {
-			// Multiple contracts (2-5)
-			n := 2 + rand.IntN(min(4, len(contractIDs)))
-			ids := ChooseNAtRandom(contractIDs, n)
-			filter["contractIds"] = ids
-		} else {
-			// Single contract
-			filter["contractIds"] = []string{contractIDs[rand.IntN(len(contractIDs))]}
-		}
-	}
-
-	// vary event type
-	if rand.Float64() < PrEventTypeFilter {
-		filter["type"] = eventTypes[rand.IntN(len(eventTypes))]
-	}
-
-	// vary topic
-	if len(topics) > 0 && rand.Float64() < PrEventTopicFilter {
-		filter["topics"] = [][]string{{topics[rand.IntN(len(topics))]}}
-	}
-
-	return filter
-}
-
 func ChooseNAtRandom[T any](items []T, n int) []T {
 	if n >= len(items) {
 		return items

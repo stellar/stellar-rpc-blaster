@@ -73,16 +73,6 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 	logger.Infof("Successfully fetched %d transaction hashes %s",
 		len(writer.TxHashes), util.LogElapsed(start))
 
-	// Bootstrap active contract IDs and event topics within the ledger range
-	eventSeeder := seed.NewEventDataSeeder(g.client, logger)
-	if err := seed.RunSeeder(ctx, g.parameters, eventSeeder); err != nil {
-		return fmt.Errorf("failed to seed events data: %v", err)
-	}
-	writer.ContractIds = eventSeeder.ContractIds()
-	writer.EventTopics = eventSeeder.EventTopics()
-	logger.Infof("Successfully fetched %d active contract IDs %s", len(writer.ContractIds), util.LogElapsed(start))
-	logger.Infof("Successfully fetched %d unique event topics %s", len(writer.EventTopics), util.LogElapsed(start))
-
 	// Seed ledger keys
 	ledgerKeySeeder := seed.NewLedgerKeySeeder(g.client, logger)
 	if err := seed.RunSeeder(ctx, g.parameters, ledgerKeySeeder); err != nil {
