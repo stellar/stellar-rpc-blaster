@@ -4,7 +4,6 @@ import (
 	"math/rand/v2"
 
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
-	"github.com/stellar/go-stellar-sdk/support/collections/set"
 )
 
 // VaryLimit returns a random limit between 1 and the provided max lVmit.
@@ -83,20 +82,17 @@ func ChooseNAtRandom[T any](items []T, n int) []T {
 	if n >= len(items) {
 		return items
 	}
-	chosen := set.NewSet[any](n)
-	result := make([]T, 0, n)
-	continuedCounter := 0
-	for len(chosen) < n {
-		item := items[rand.IntN(len(items))]
-		if chosen.Contains(item) {
-			continuedCounter++
-			if continuedCounter > n*10 { // safeguard against tiny sample size
-				break
-			}
-			continue
-		}
-		chosen.Add(item)
-		result = append(result, item)
+	indices := make([]int, len(items))
+	for i := range indices {
+		indices[i] = i
+	}
+	for i := range n {
+		j := i + rand.IntN(len(indices)-i)
+		indices[i], indices[j] = indices[j], indices[i]
+	}
+	result := make([]T, n)
+	for i := range n {
+		result[i] = items[indices[i]]
 	}
 	return result
 }
