@@ -73,6 +73,15 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 	logger.Infof("Successfully fetched %d transaction hashes %s",
 		len(writer.TxHashes), util.LogElapsed(start))
 
+	// Bootstrap per-contract event topic associations within the ledger range
+	eventSeeder := seed.NewEventDataSeeder(g.client, logger)
+	if err := seed.RunSeeder(ctx, g.parameters, eventSeeder); err != nil {
+		return fmt.Errorf("failed to seed events data: %v", err)
+	}
+	writer.ContractEventData = eventSeeder.Results()
+	logger.Infof("Successfully fetched %d contracts and their associated event topics %s",
+		len(writer.ContractEventData.ContractIds), util.LogElapsed(start))
+
 	// Seed ledger keys
 	ledgerKeySeeder := seed.NewLedgerKeySeeder(g.client, logger)
 	if err := seed.RunSeeder(ctx, g.parameters, ledgerKeySeeder); err != nil {

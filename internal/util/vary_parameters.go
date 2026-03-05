@@ -63,6 +63,22 @@ func VaryKeyCount() uint {
 	}
 }
 
+func VaryEventsFilter(contractIDs []string) map[string]any {
+	filter := make(map[string]any)
+	if len(contractIDs) > 0 && rand.Float64() < PrEventContractFilter {
+		if rand.Float64() < PrEventMultiContract {
+			n := 2 + rand.IntN(min(4, len(contractIDs)))
+			ids := ChooseNAtRandom(contractIDs, n)
+			filter["contractIds"] = ids
+		} else {
+			cid := contractIDs[rand.IntN(len(contractIDs))]
+			filter["contractIds"] = []string{cid}
+		}
+	}
+
+	return filter
+}
+
 func ChooseNAtRandom[T any](items []T, n int) []T {
 	if n >= len(items) {
 		return items
