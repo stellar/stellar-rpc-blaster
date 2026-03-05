@@ -62,22 +62,6 @@ func VaryKeyCount() uint {
 	}
 }
 
-func VaryEventsFilter(contractIDs []string) map[string]any {
-	filter := make(map[string]any)
-	if len(contractIDs) > 0 && rand.Float64() < PrEventContractFilter {
-		if rand.Float64() < PrEventMultiContract {
-			n := 2 + rand.IntN(min(4, len(contractIDs)))
-			ids := ChooseNAtRandom(contractIDs, n)
-			filter["contractIds"] = ids
-		} else {
-			cid := contractIDs[rand.IntN(len(contractIDs))]
-			filter["contractIds"] = []string{cid}
-		}
-	}
-
-	return filter
-}
-
 func ChooseNAtRandom[T any](items []T, n int) []T {
 	if n >= len(items) {
 		return items
@@ -93,6 +77,36 @@ func ChooseNAtRandom[T any](items []T, n int) []T {
 	result := make([]T, n)
 	for i := range n {
 		result[i] = items[indices[i]]
+	}
+	return result
+}
+
+func WeightedChooseN[T any](items []T, weights []int, n int) []T {
+	if n >= len(items) {
+		return items
+	}
+	w := make([]int, len(weights))
+	copy(w, weights)
+
+	result := make([]T, 0, n)
+	for range n {
+		total := 0
+		for _, wt := range w {
+			total += wt
+		}
+		if total == 0 {
+			break
+		}
+		r := rand.IntN(total)
+		cumulative := 0
+		for i, wt := range w {
+			cumulative += wt
+			if r < cumulative {
+				result = append(result, items[i])
+				w[i] = 0
+				break
+			}
+		}
 	}
 	return result
 }
