@@ -24,6 +24,9 @@ rps = 20
 rps = 20
 
 # Parameter-based/generate-required endpoints
+[endpoints.getEvents]
+rps = 20
+
 [endpoints.getLedgerEntries]
 rps = 20
 

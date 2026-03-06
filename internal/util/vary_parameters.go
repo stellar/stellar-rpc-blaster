@@ -6,7 +6,7 @@ import (
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 )
 
-// VaryLimit returns a random limit between 1 and the provided max lVmit.
+// VaryLimit returns a random limit between 1 and the provided max limit.
 func VaryLimit(limitMax uint) uint {
 	return uint(rand.Float64()*float64(limitMax-1) + 1)
 }

@@ -61,11 +61,11 @@ func (c *ContractEvents) AddEventData(contractId string, eventData protocol.Even
 	}
 }
 
-func (c *ContractEvents) BuildEventsFilter() map[string]any {
+func (c *ContractEvents) BuildEventsFilters() map[string]any {
 	var cIds []string
 	filter := make(map[string]any)
 	// Choose up to 5 random contract IDs
-	nCIds := rand.IntN(5)
+	nCIds := rand.IntN(6)
 	cIds = util.ChooseNAtRandom(c.getContractIds(), max(nCIds, 1))
 	if nCIds != 0 {
 		// In the 0 case, even though we picked one contract ID for filtering purposes, add none
@@ -77,7 +77,7 @@ func (c *ContractEvents) BuildEventsFilter() map[string]any {
 
 	refContractTopics := c.ContractIds[cIds[0]]
 	// Choose up to 5 random topics from the first contract ID's topics
-	nTopics := rand.IntN(5)
+	nTopics := rand.IntN(6)
 	alltopics, weights := refContractTopics.getTopicsAndWeights()
 	topics := util.WeightedChooseN(alltopics, weights, max(nTopics, 1))
 
@@ -90,7 +90,7 @@ func (c *ContractEvents) BuildEventsFilter() map[string]any {
 		params := allParams[rand.IntN(len(allParams))]
 
 		// choose up to 4 of the chosen invocation's parameters to include in the filter
-		nParams := min(rand.IntN(4), len(params))
+		nParams := min(rand.IntN(5), len(params))
 		entry = append(entry, params[:nParams]...)
 		topicsFilter = append(topicsFilter, entry)
 	}
