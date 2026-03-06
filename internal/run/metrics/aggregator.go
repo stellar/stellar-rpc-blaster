@@ -46,12 +46,14 @@ type EndpointStats struct {
 func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+	started := false
 
 	for {
 		select {
 		case sample, ok := <-in:
 			if !ok {
-				// channel closed
+				// channel closed — print final results and write output
+				a.logger.Info(a)
 				if err := WriteOutput(a); err != nil {
 					a.logger.Error(err)
 				}
@@ -61,6 +63,14 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 				a.logger.Error(err)
 			}
 		case <-ticker.C:
+			if a.start.IsZero() {
+				continue
+			}
+			if !started {
+				started = true
+				ticker.Reset(5 * time.Second) // realign ticker to blast start
+				continue
+			}
 			a.logger.Info(a)
 		case <-ctx.Done():
 			if err := ctx.Err(); err != nil {
@@ -74,15 +84,25 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 	}
 }
 
+func (a *Aggregator) Start() {
+	a.start = time.Now()
+}
+
 func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
 	a := Aggregator{
 		logger:          logger,
 		stats:           make(map[string]*EndpointStats),
-		start:           time.Now(),
+		start:           time.Time{},
 		duration:        settings.Duration,
 		writeOutputPath: settings.TestOutputPath,
 	}
-	endpoints := settings.GetEndpoints()
+	allEndpoints := settings.GetEndpoints()
+	var endpoints []string
+	for _, endpointKey := range allEndpoints {
+		if settings.GetEndpointRPS(endpointKey) > 0 {
+			endpoints = append(endpoints, endpointKey)
+		}
+	}
 	sort.Strings(endpoints)
 	a.orderedEndpoints = endpoints // maintain order for consistent output
 

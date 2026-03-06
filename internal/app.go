@@ -118,7 +118,7 @@ func (a *App) runLoadTest(ctx context.Context) error {
 		aggregator.Run(ctx, out)
 	})
 
-	err := engine.RunVegeta(ctx, a.logger, a.config, a.client, out)
+	err := engine.RunVegeta(ctx, a.logger, a.config, a.client, out, aggregator.Start)
 	close(out)
 	wg.Wait()
 

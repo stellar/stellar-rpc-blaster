@@ -9,29 +9,38 @@ input_data_path = "./output/seed.json"
 
 # No-parameter/run-only endpoints
 [endpoints.getHealth]
-rps = 1000
+rps = 0
 
 [endpoints.getNetwork]
-rps = 20
+rps = 0
 
 [endpoints.getVersionInfo]
-rps = 20
+rps = 0
 
 [endpoints.getLatestLedger]
-rps = 20
+rps = 0
 
 [endpoints.getFeeStats]
-rps = 20
+rps = 0
 
 # Parameter-based/generate-required endpoints
+[endpoints.getEvents] # this only takes optional arguments
+rps = 0
+
 [endpoints.getLedgerEntries]
-rps = 20
+rps = 0
 
 [endpoints.getLedgers]
-rps = 20
+rps = 10
 
 [endpoints.getTransaction]
-rps = 20
+rps = 0
 
 [endpoints.getTransactions]
-rps = 20
+rps = 0
+
+[endpoints.simulateTransaction]
+rps = 10
+
+[endpoints.sendTransaction]
+rps = 10

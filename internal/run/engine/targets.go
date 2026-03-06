@@ -4,6 +4,9 @@ import (
 	"net/http"
 	"sync/atomic"
 
+	"github.com/stellar/stellar-rpc-blaster/internal/run/parameters/tx"
+	"github.com/stellar/stellar-rpc-blaster/internal/util"
+
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 )
 
@@ -16,6 +19,27 @@ func NewJSONRPCTargeter(rpcURL string, bodies [][]byte) vegeta.Targeter {
 		t.Method = http.MethodPost
 		t.URL = rpcURL
 		t.Body = bodies[i%uint64(len(bodies))]
+		t.Header = http.Header{
+			"Content-Type": []string{"application/json"},
+		}
+		return nil
+	}
+}
+
+func NewSendTxTargeter(rpcURL string, pool *tx.AccountPool, networkPassphrase string) vegeta.Targeter {
+	return func(t *vegeta.Target) error {
+		acct, seq := pool.Next()                                      // round-robin pick an account and get its current sequence number
+		txB64, err := tx.BuildSendTxB64(acct, seq, networkPassphrase) // build + sign
+		if err != nil {
+			return err
+		}
+		body, err := util.MarshalJsonRpcRequest("sendTransaction", map[string]any{"transaction": txB64})
+		if err != nil {
+			return err
+		}
+		t.Method = http.MethodPost
+		t.URL = rpcURL
+		t.Body = body
 		t.Header = http.Header{
 			"Content-Type": []string{"application/json"},
 		}

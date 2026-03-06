@@ -1,8 +1,20 @@
 package util
 
 import (
+	"encoding/json"
+
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 )
+
+func MarshalJsonRpcRequest(method string, params map[string]any) ([]byte, error) {
+	req := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  method,
+		"params":  params,
+	}
+	return json.Marshal(req)
+}
 
 func MakeGetTransactionsRequest(start uint32, cursor string) protocol.GetTransactionsRequest {
 	req := protocol.GetTransactionsRequest{

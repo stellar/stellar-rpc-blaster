@@ -2,9 +2,9 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 
 	vegeta "github.com/tsenart/vegeta/v12/lib"
@@ -14,6 +14,7 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/internal/config"
 	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/run/metrics"
 	"github.com/stellar/stellar-rpc-blaster/internal/run/parameters"
+	"github.com/stellar/stellar-rpc-blaster/internal/run/parameters/tx"
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
@@ -31,10 +32,8 @@ func RunVegeta(
 	cfg config.Config,
 	httpClient *http.Client,
 	out chan<- blasterMetrics.Sample,
+	startAggregator func(),
 ) error {
-	ctx, cancel := context.WithTimeout(ctx, cfg.Duration)
-	defer cancel()
-
 	newBlaster := func() *vegeta.Attacker {
 		return NewBlasterWithClient(httpClient, util.MaxWorkers)
 	}
@@ -49,37 +48,52 @@ func RunVegeta(
 		sharedParams = p
 	}
 
+	var activeEndpoints, skippedEndpoints []string
+	for _, endpointKey := range cfg.GetEndpoints() {
+		if cfg.GetEndpointRPS(endpointKey) <= 0 {
+			skippedEndpoints = append(skippedEndpoints, endpointKey)
+		} else {
+			activeEndpoints = append(activeEndpoints, endpointKey)
+		}
+	}
+	if len(skippedEndpoints) > 0 {
+		logger.Infof("Skipping endpoints with RPS<=0: %v", strings.Join(skippedEndpoints, ", "))
+	}
+
 	// Construct endpoint blast configs
 	// 3... 2... 1...
 	var endpointBlasts []endpointBlast
-	var skippedEndpoints []string
-	for _, endpointKey := range cfg.GetEndpoints() {
+	for _, endpointKey := range activeEndpoints {
 		rps := cfg.GetEndpointRPS(endpointKey)
-		if rps <= 0 {
-			skippedEndpoints = append(skippedEndpoints, endpointKey)
-			continue
-		}
 
-		paramMaps, err := parameters.BuildEndpointParams(endpointKey, sharedParams)
-		if err != nil {
-			return fmt.Errorf("couldn't build params for endpoint %s: %v", endpointKey, err)
-		}
-		bodies := make([][]byte, len(paramMaps))
-		for i, p := range paramMaps {
-			req := map[string]any{
-				"jsonrpc": "2.0",
-				"id":      1,
-				"method":  endpointKey,
-				"params":  p,
-			}
-			bodies[i], err = json.Marshal(req)
+		var targeter vegeta.Targeter
+		if endpointKey == "sendTransaction" {
+			numAccounts := uint32(min(rps, 100)) // cap # of accounts to lessen friendbot calls and account creation
+
+			logger.Warn("sendTransaction causes greater load on the RPC server than other endpoints!")
+			logger.Infof("Creating + funding %d on-chain accounts for the sendTransaction endpoint...", numAccounts)
+			pool, err := tx.NewTestnetAccountPool(ctx, numAccounts, cfg.RpcClient) // create pool of accounts
 			if err != nil {
-				return fmt.Errorf("couldn't marshal request for endpoint %s: %v", endpointKey, err)
+				return fmt.Errorf("failed to create account pool for sendTransaction: %v", err)
 			}
-		}
-		targeter := NewJSONRPCTargeter(cfg.RpcUrl, bodies)
-		if len(bodies) > 1 {
-			logger.Infof("Endpoint %s: rotating through %d parameterized request bodies", endpointKey, len(bodies))
+			// Need custom targeter to generate unique (tx, sequence) params for each request
+			targeter = NewSendTxTargeter(cfg.RpcUrl, pool, cfg.NetworkPassphrase)
+		} else {
+			paramMaps, err := parameters.BuildEndpointParams(endpointKey, sharedParams)
+			if err != nil {
+				return fmt.Errorf("couldn't build params for endpoint %s: %v", endpointKey, err)
+			}
+			bodies := make([][]byte, len(paramMaps))
+			for i, p := range paramMaps {
+				bodies[i], err = util.MarshalJsonRpcRequest(endpointKey, p)
+				if err != nil {
+					return fmt.Errorf("couldn't marshal request for endpoint %s: %v", endpointKey, err)
+				}
+			}
+			targeter = NewJSONRPCTargeter(cfg.RpcUrl, bodies)
+			if len(bodies) > 1 {
+				logger.Infof("Endpoint %s: rotating through %d parameterized request bodies", endpointKey, len(bodies))
+			}
 		}
 
 		endpointBlasts = append(endpointBlasts, endpointBlast{
@@ -96,9 +110,13 @@ func RunVegeta(
 			},
 		})
 	}
-	if len(skippedEndpoints) > 0 {
-		logger.Infof("Skipping endpoints with RPS<=0: %v", skippedEndpoints)
-	}
+
+	// Start the blast duration clock only after all setup is done
+	ctx, cancel := context.WithTimeout(ctx, cfg.Duration)
+	defer cancel()
+
+	// Start the aggregator
+	startAggregator()
 
 	// Fire!
 	var wg sync.WaitGroup

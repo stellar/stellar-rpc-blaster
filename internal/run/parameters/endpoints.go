@@ -98,7 +98,7 @@ func EndpointNeedsData(endpointKey string) (bool, error) {
 	switch endpointKey {
 	case "getTransaction", "getLedgerEntries", "getTransactions", "getLedgers", "getEvents", "simulateTransaction":
 		return true, nil
-	case "getHealth", "getNetwork", "getVersionInfo", "getLatestLedger", "getFeeStats":
+	case "getHealth", "getNetwork", "getVersionInfo", "getLatestLedger", "getFeeStats", "sendTransaction":
 		return false, nil
 	default:
 		return false, fmt.Errorf("unknown endpoint %q", endpointKey)
