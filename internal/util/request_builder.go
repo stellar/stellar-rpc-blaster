@@ -52,3 +52,9 @@ func MakeGetEventsRequest(start uint32, end uint32, cursor *protocol.Cursor) pro
 	}
 	return req
 }
+
+func MakeSendTransactionRequest(txB64 string) protocol.SendTransactionRequest {
+	return protocol.SendTransactionRequest{
+		Transaction: txB64,
+	}
+}

@@ -72,7 +72,7 @@ func RunVegeta(
 
 			logger.Warn("sendTransaction causes greater load on the RPC server than other endpoints!")
 			logger.Infof("Creating + funding %d on-chain accounts for the sendTransaction endpoint...", numAccounts)
-			pool, err := tx.NewTestnetAccountPool(ctx, numAccounts, cfg.RpcClient) // create pool of accounts
+			pool, err := tx.NewTestnetAccountPool(ctx, cfg.RpcClient, numAccounts) // create pool of accounts
 			if err != nil {
 				return fmt.Errorf("failed to create account pool for sendTransaction: %v", err)
 			}
