@@ -1,6 +1,7 @@
 package util
 
 import (
+	"fmt"
 	"net/http"
 )
 
@@ -17,5 +18,16 @@ func SharedHTTPClient() *http.Client {
 			MaxIdleConns:        0,                  // unlimited, MaxIdleConnsPerHost limits per-host idle connections
 			IdleConnTimeout:     RequestTimeout * 3, // keep connections warm for a few request cycles
 		},
+	}
+}
+
+func IsPubnetOrTestnet(networkPassphrase string) (string, error) {
+	switch networkPassphrase {
+	case "Public Global Stellar Network ; September 2015":
+		return "pubnet", nil
+	case "Test SDF Network ; September 2015":
+		return "testnet", nil
+	default:
+		return "", fmt.Errorf("unknown network passphrase: %s", networkPassphrase)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/pelletier/go-toml"
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
+	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/stellar-rpc-blaster/internal/run/parameters"
 )
@@ -26,9 +27,11 @@ type Config struct {
 	Mode              Mode
 
 	// Run mode settings
-	Duration       time.Duration
-	RampUp         time.Duration
-	TestOutputPath string // path to write JSON results
+	Duration            time.Duration
+	RampUp              time.Duration
+	TestOutputPath      string        // path to write JSON results
+	OriginAccountSecret string        `toml:"origin_account_secret"` // Stellar secret seed (S...) for the origin funding account
+	OriginAccount       *keypair.Full // parsed from OriginAccountSecret; if nil, a new account will be generated (and funded via friendbot on testnet)
 
 	// Generate mode settings
 	OutputPath   string
@@ -136,6 +139,13 @@ func (c *Config) processToml(tomlPath string) error {
 	if c.Mode == Run {
 		if err = c.validateEndpointConfig(); err != nil {
 			return err
+		}
+		if c.OriginAccountSecret != "" {
+			kp, err := keypair.ParseFull(c.OriginAccountSecret)
+			if err != nil {
+				return fmt.Errorf("invalid origin_account_secret: %v", err)
+			}
+			c.OriginAccount = kp
 		}
 	}
 

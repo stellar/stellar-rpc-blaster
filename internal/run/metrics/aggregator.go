@@ -27,6 +27,7 @@ type Aggregator struct {
 	orderedEndpoints []string
 
 	start    time.Time
+	startCh  chan struct{}
 	duration time.Duration
 	mu       sync.RWMutex
 }
@@ -44,16 +45,20 @@ type EndpointStats struct {
 
 // Main driver function; consumes samples from the channel and prints progress every 5 seconds
 func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
+	// Wait for Start() before ticking
+	<-a.startCh
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
-	started := false
 
+	printed := false
 	for {
 		select {
 		case sample, ok := <-in:
 			if !ok {
 				// channel closed — print final results and write output
-				a.logger.Info(a)
+				if !printed {
+					a.logger.Info(a)
+				}
 				if err := WriteOutput(a); err != nil {
 					a.logger.Error(err)
 				}
@@ -63,15 +68,13 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 				a.logger.Error(err)
 			}
 		case <-ticker.C:
-			if a.start.IsZero() {
-				continue
-			}
-			if !started {
-				started = true
-				ticker.Reset(5 * time.Second) // realign ticker to blast start
+			if printed {
 				continue
 			}
 			a.logger.Info(a)
+			if time.Since(a.start) >= a.duration {
+				printed = true
+			}
 		case <-ctx.Done():
 			if err := ctx.Err(); err != nil {
 				a.logger.Errorf("aggregator.Run terminating due to context error: %v", err)
@@ -86,13 +89,14 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 
 func (a *Aggregator) Start() {
 	a.start = time.Now()
+	close(a.startCh)
 }
 
 func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
 	a := Aggregator{
 		logger:          logger,
 		stats:           make(map[string]*EndpointStats),
-		start:           time.Time{},
+		startCh:         make(chan struct{}),
 		duration:        settings.Duration,
 		writeOutputPath: settings.TestOutputPath,
 	}

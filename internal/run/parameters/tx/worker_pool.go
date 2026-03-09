@@ -25,7 +25,7 @@ type AccountPool struct {
 }
 
 // Makes a pool of workers and funds each of them with testnet friendbot XLM
-func NewTestnetAccountPool(
+func NewAccountPool(
 	ctx context.Context,
 	rpcClient *rpcclient.Client,
 	originAccountKp *keypair.Full, // optional param to specify funding account
@@ -34,14 +34,24 @@ func NewTestnetAccountPool(
 	pool := &AccountPool{
 		rpcClient: rpcClient,
 	}
+	// Validate and set up network based on its type
 	getNetworkResponse, err := pool.rpcClient.GetNetwork(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get network info: %v", err)
 	}
-	pool.friendbotURL = getNetworkResponse.FriendbotURL
+	network, err := util.IsPubnetOrTestnet(getNetworkResponse.Passphrase)
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine network type: %v", err)
+	}
+	if network == "testnet" {
+		pool.friendbotURL = getNetworkResponse.FriendbotURL
+	} else if originAccountKp == nil {
+		return nil, fmt.Errorf("origin account keypair must be provided for pubnet")
+	}
 	pool.passphrase = getNetworkResponse.Passphrase
 
-	originAccount, err := pool.NewTestnetOriginAccount(ctx, originAccountKp)
+	// Set up origin account struct
+	originAccount, err := pool.NewOriginAccount(ctx, originAccountKp, network)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create and fund origin account: %v", err)
 	}
@@ -144,11 +154,11 @@ func (p *AccountPool) FundWorkers(ctx context.Context, budgetPerWorker int64, nu
 }
 
 // Creates a new origin account using friendbot
-func (p *AccountPool) NewTestnetOriginAccount(ctx context.Context, originAccountKp *keypair.Full) (*WorkerAccount, error) {
+func (p *AccountPool) NewOriginAccount(ctx context.Context, originAccountKp *keypair.Full, network string) (*WorkerAccount, error) {
 	acct := &WorkerAccount{}
 	if originAccountKp != nil {
 		acct = &WorkerAccount{Keypair: originAccountKp}
-	} else {
+	} else if network == "testnet" {
 		kp, err := keypair.Random()
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate random keypair: %v", err)

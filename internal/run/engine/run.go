@@ -80,7 +80,7 @@ func NewBlastEngine(
 			logger.Warn("sendTransaction causes greater load on the RPC server than other endpoints!")
 			logger.Infof("Creating + funding %d on-chain accounts for the sendTransaction endpoint...", numAccounts)
 			var err error
-			ap, err = tx.NewTestnetAccountPool(ctx, cfg.RpcClient, nil, numAccounts) // create pool of accounts
+			ap, err = tx.NewAccountPool(ctx, cfg.RpcClient, cfg.OriginAccount, numAccounts) // create pool of accounts
 			if err != nil {
 				return nil, fmt.Errorf("failed to create account pool for sendTransaction: %v", err)
 			}
