@@ -18,22 +18,29 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
+type BlastEngine struct {
+	BlastSpecs        []endpointBlast
+	AggregatorStartFn func()
+	BlastFn           func() *vegeta.Attacker
+	TxAccountPool     *tx.AccountPool
+	OutCh             chan<- blasterMetrics.Sample
+	Config            config.Config
+}
+
 type endpointBlast struct {
 	EndpointBlastConfig EndpointBlastConfig
 	BlastPacer          RampToConstantPacer
 }
 
-// Entry/exit point from app.go
-// RunVegeta runs a load test using Vegeta using the config settings through the LoadTestSettings interface
-// Sets up shared HTTP client, constructs per-endpoint blast configs, and fires off the blasts asynchronously
-func RunVegeta(
+// Sets up shared HTTP client, constructs per-endpoint blast configs or targeters, and initializes the blast engine
+func NewBlastEngine(
 	ctx context.Context,
 	logger *log.Entry,
 	cfg config.Config,
 	httpClient *http.Client,
 	out chan<- blasterMetrics.Sample,
 	startAggregator func(),
-) error {
+) (*BlastEngine, error) {
 	newBlaster := func() *vegeta.Attacker {
 		return NewBlasterWithClient(httpClient, util.MaxWorkers)
 	}
@@ -43,7 +50,7 @@ func RunVegeta(
 	if cfg.InputDataPath != "" {
 		p, err := parameters.GetParameters(cfg.InputDataPath)
 		if err != nil {
-			return fmt.Errorf("failed to load seed data: %v", err)
+			return nil, fmt.Errorf("failed to load seed data: %v", err)
 		}
 		sharedParams = p
 	}
@@ -61,8 +68,8 @@ func RunVegeta(
 	}
 
 	// Construct endpoint blast configs
-	// 3... 2... 1...
 	var endpointBlasts []endpointBlast
+	var ap *tx.AccountPool
 	for _, endpointKey := range activeEndpoints {
 		rps := cfg.GetEndpointRPS(endpointKey)
 
@@ -72,22 +79,24 @@ func RunVegeta(
 
 			logger.Warn("sendTransaction causes greater load on the RPC server than other endpoints!")
 			logger.Infof("Creating + funding %d on-chain accounts for the sendTransaction endpoint...", numAccounts)
-			pool, err := tx.NewTestnetAccountPool(ctx, cfg.RpcClient, numAccounts) // create pool of accounts
+			var err error
+			ap, err = tx.NewTestnetAccountPool(ctx, cfg.RpcClient, nil, numAccounts) // create pool of accounts
 			if err != nil {
-				return fmt.Errorf("failed to create account pool for sendTransaction: %v", err)
+				return nil, fmt.Errorf("failed to create account pool for sendTransaction: %v", err)
 			}
+
 			// Need custom targeter to generate unique (tx, sequence) params for each request
-			targeter = NewSendTxTargeter(cfg.RpcUrl, pool, cfg.NetworkPassphrase)
+			targeter = NewSendTxTargeter(cfg.RpcUrl, ap, cfg.NetworkPassphrase)
 		} else {
 			paramMaps, err := parameters.BuildEndpointParams(endpointKey, sharedParams)
 			if err != nil {
-				return fmt.Errorf("couldn't build params for endpoint %s: %v", endpointKey, err)
+				return nil, fmt.Errorf("couldn't build params for endpoint %s: %v", endpointKey, err)
 			}
 			bodies := make([][]byte, len(paramMaps))
 			for i, p := range paramMaps {
 				bodies[i], err = util.MarshalJsonRpcRequest(endpointKey, p)
 				if err != nil {
-					return fmt.Errorf("couldn't marshal request for endpoint %s: %v", endpointKey, err)
+					return nil, fmt.Errorf("couldn't marshal request for endpoint %s: %v", endpointKey, err)
 				}
 			}
 			targeter = NewJSONRPCTargeter(cfg.RpcUrl, bodies)
@@ -110,21 +119,42 @@ func RunVegeta(
 			},
 		})
 	}
+	return &BlastEngine{
+		BlastSpecs:        endpointBlasts,
+		AggregatorStartFn: startAggregator,
+		BlastFn:           newBlaster,
+		TxAccountPool:     ap,
+		OutCh:             out,
+		Config:            cfg,
+	}, nil
+}
 
+func (b *BlastEngine) Close(ctx context.Context, logger *log.Entry) error {
+	if b.TxAccountPool != nil {
+		if err := b.TxAccountPool.Close(ctx, b.Config.RpcClient, logger); err != nil {
+			return fmt.Errorf("failed to close blast engine: %v", err)
+		}
+	}
+	return nil
+}
+
+// Runs a load test using Vegeta using the config settings through the BlastEngine struct
+func (b *BlastEngine) FireBlasts(ctx context.Context) error {
 	// Start the blast duration clock only after all setup is done
-	ctx, cancel := context.WithTimeout(ctx, cfg.Duration)
+	ctx, cancel := context.WithTimeout(ctx, b.Config.Duration)
 	defer cancel()
 
 	// Start the aggregator
-	startAggregator()
+	b.AggregatorStartFn()
 
 	// Fire!
 	var wg sync.WaitGroup
-	for _, blast := range endpointBlasts {
+	for _, blast := range b.BlastSpecs {
 		wg.Go(func() {
-			blastAtEndpoint(ctx, blast.EndpointBlastConfig, blast.BlastPacer, newBlaster, out)
+			blastAtEndpoint(ctx, blast.EndpointBlastConfig, blast.BlastPacer, b.BlastFn, b.OutCh)
 		})
 	}
 	wg.Wait()
+	close(b.OutCh)
 	return nil
 }

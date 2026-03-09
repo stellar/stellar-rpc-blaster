@@ -40,3 +40,13 @@ const (
 	PrEventTypeFilter     float64 = 0.5 // probability of including an event type filter
 	PrEventTopicFilter    float64 = 0.5 // probability of including a topic filter
 )
+
+// sendTransaction parameters for run
+const (
+	// Number of accounts to create and rotate through for sendTransaction requests in run
+	MaxSendTxAccounts = 100
+	// Minimum balance (in XLM) for worker accounts to ensure they can send transactions throughout the test
+	MinimumWorkerBalance = 10
+	StroopsPerXLM        = 1 * 1e7
+	FeeTolerance         = 1000 // extra fee buffer in stroops to account for fee fluctuations during the test when verifying worker account balances at the end
+)

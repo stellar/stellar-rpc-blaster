@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/stellar/go-stellar-sdk/support/log"
 
@@ -29,6 +30,9 @@ type App struct {
 	logger *log.Entry
 	config config.Config
 	client *http.Client
+
+	// Populated if in Run mode
+	blastEngine *engine.BlastEngine
 }
 
 func NewApp() *App {
@@ -103,14 +107,24 @@ func (a *App) init(ctx context.Context, runtimeSettings config.RuntimeSettings) 
 
 func (a *App) close() {
 	a.logger.Info("Shutting down Blaster")
-	// TODO: Clean up here if needed (e.g. close DB connection/metrics file)
-	// this isn't implemented yet
+	if a.blastEngine != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := a.blastEngine.Close(ctx, a.logger); err != nil {
+			a.logger.Errorf("failed to close blast engine: %v", err)
+		}
+	}
 }
 
 func (a *App) runLoadTest(ctx context.Context) error {
 	out := make(chan blasterMetrics.Sample, 1000)
 
 	aggregator := blasterMetrics.NewAggregator(a.logger, a.config)
+	be, err := engine.NewBlastEngine(ctx, a.logger, a.config, a.client, out, aggregator.Start)
+	if err != nil {
+		return fmt.Errorf("failed to create blast engine: %v", err)
+	}
+	a.blastEngine = be
 
 	// Aggregator goroutine: consumes samples and prints every 5s
 	var wg sync.WaitGroup
@@ -118,8 +132,7 @@ func (a *App) runLoadTest(ctx context.Context) error {
 		aggregator.Run(ctx, out)
 	})
 
-	err := engine.RunVegeta(ctx, a.logger, a.config, a.client, out, aggregator.Start)
-	close(out)
+	be.FireBlasts(ctx)
 	wg.Wait()
 
 	return err
