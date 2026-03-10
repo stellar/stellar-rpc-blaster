@@ -61,6 +61,7 @@ func (c *ContractEvents) AddEventData(contractId string, eventData protocol.Even
 	}
 }
 
+// BuildEventsFilters builds a filter map for a getEvents request based on our contract event seed data.
 func (c *ContractEvents) BuildEventsFilters() map[string]any {
 	var cIds []string
 	filter := make(map[string]any)
@@ -76,7 +77,7 @@ func (c *ContractEvents) BuildEventsFilters() map[string]any {
 	}
 
 	refContractTopics := c.ContractIds[cIds[0]]
-	// Choose up to 5 random topics from the first contract ID's topics
+	// Choose up to 5 random topics (weighted by their probability of occurrence) from the first contract ID's topics
 	nTopics := rand.IntN(6)
 	alltopics, weights := refContractTopics.getTopicsAndWeights()
 	topics := util.WeightedChooseN(alltopics, weights, max(nTopics, 1))
@@ -85,9 +86,9 @@ func (c *ContractEvents) BuildEventsFilters() map[string]any {
 	topicsFilter := make([][]string, 0, len(topics))
 	for _, topic := range topics {
 		entry := []string{topic} // first entry in the topic filter is the topic name
-		// choose some random parameters/invocation for this topic
-		allParams := refContractTopics.Topic[topic].Params
-		params := allParams[rand.IntN(len(allParams))]
+		// select one parameter set for topic out of the sets of parameters we observed for this topic in seed data
+		allParamsForTopic := refContractTopics.Topic[topic].Params
+		params := allParamsForTopic[rand.IntN(len(allParamsForTopic))]
 
 		// choose up to 4 of the chosen invocation's parameters to include in the filter
 		nParams := min(rand.IntN(5), len(params))

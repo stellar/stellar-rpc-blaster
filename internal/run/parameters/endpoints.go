@@ -32,7 +32,7 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 
 	case "getLedgerEntries":
 		keys := params.Output.LedgerKeys
-		count := min(len(keys), util.DefaultPrebuiltBodies)
+		count := min(len(keys), util.DefaultNumPrebuiltBodies)
 		result := make([]map[string]any, count)
 		for i := range count {
 			n := min(util.VaryKeyCount(), uint(len(keys)))
@@ -51,7 +51,7 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 		if span <= 0 {
 			return nil, fmt.Errorf("empty ledger range for %s", endpointKey)
 		}
-		count := min(span, util.DefaultPrebuiltBodies)
+		count := min(span, util.DefaultNumPrebuiltBodies)
 		result := make([]map[string]any, count)
 		for i := range count {
 			start := lr.First + uint32(rand.IntN(span))
@@ -70,7 +70,7 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 		if span <= 0 {
 			return nil, fmt.Errorf("empty ledger range for %s", endpointKey)
 		}
-		count := min(span, util.DefaultPrebuiltBodies)
+		count := min(span, util.DefaultNumPrebuiltBodies)
 		result := make([]map[string]any, count)
 		for i := range count {
 			start := lr.First + uint32(rand.IntN(span))
@@ -91,7 +91,7 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 		}
 
 		eventBodies := params.Output.ContractEventData
-		count := util.DefaultPrebuiltBodies
+		count := util.DefaultNumPrebuiltBodies
 		result := make([]map[string]any, count)
 		for i := range count {
 			filters := eventBodies.BuildEventsFilters()

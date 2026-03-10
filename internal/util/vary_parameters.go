@@ -62,6 +62,7 @@ func VaryKeyCount() uint {
 	}
 }
 
+// This chooses N at random from T without replacement using the Fisher-Yates shuffle algorithm.
 func ChooseNAtRandom[T any](items []T, n int) []T {
 	if n >= len(items) {
 		return items
@@ -81,6 +82,8 @@ func ChooseNAtRandom[T any](items []T, n int) []T {
 	return result
 }
 
+// This chooses N items from T without replacement according to the item weights
+// Does not replace so that filters don't have the same topic repeated
 func WeightedChooseN[T any](items []T, weights []int, n int) []T {
 	if n >= len(items) {
 		return items
@@ -88,12 +91,13 @@ func WeightedChooseN[T any](items []T, weights []int, n int) []T {
 	w := make([]int, len(weights))
 	copy(w, weights)
 
+	total := 0
+	for _, wt := range w {
+		total += wt
+	}
+
 	result := make([]T, 0, n)
 	for range n {
-		total := 0
-		for _, wt := range w {
-			total += wt
-		}
 		if total == 0 {
 			break
 		}
@@ -101,8 +105,10 @@ func WeightedChooseN[T any](items []T, weights []int, n int) []T {
 		cumulative := 0
 		for i, wt := range w {
 			cumulative += wt
+			// If r is less than the cumulative weight, select this item
 			if r < cumulative {
 				result = append(result, items[i])
+				total -= w[i]
 				w[i] = 0
 				break
 			}

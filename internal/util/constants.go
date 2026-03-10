@@ -25,7 +25,7 @@ const (
 	MaxWorkers          = uint64(float64(PortCount) * PortAllocationRatio * WorkerMultiplier)
 
 	// Number of request bodies to pre-generate for data-dependent endpoints
-	DefaultPrebuiltBodies = int(1000)
+	DefaultNumPrebuiltBodies = int(1000)
 )
 
 // Data dependent endpoint limits and probabilities for run

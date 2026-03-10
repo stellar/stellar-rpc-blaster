@@ -4,6 +4,8 @@ import (
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 )
 
+// MakeGetTransactionsRequest builds a GetTransactionsRequest with the given start ledger or cursor.
+// Used for making generate mode requests to the getTransactions endpoint.
 func MakeGetTransactionsRequest(start uint32, cursor string) protocol.GetTransactionsRequest {
 	req := protocol.GetTransactionsRequest{
 		StartLedger: start,
@@ -18,6 +20,8 @@ func MakeGetTransactionsRequest(start uint32, cursor string) protocol.GetTransac
 	return req
 }
 
+// MakeGetEventsRequest builds a GetEventsRequest with the given start and end ledgers or cursor.
+// Used for making generate mode requests to the getEvents endpoint.
 func MakeGetEventsRequest(start uint32, end uint32, cursor *protocol.Cursor) protocol.GetEventsRequest {
 	req := protocol.GetEventsRequest{
 		StartLedger: start,
