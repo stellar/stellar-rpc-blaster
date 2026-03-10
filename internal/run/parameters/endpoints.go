@@ -6,19 +6,21 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/toid"
 
+	"github.com/stellar/stellar-rpc-blaster/internal/run/parameters/tx"
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
 // Builds a list of params maps for a data-dependent endpoint,
 // one per seed item, so the targeter can rotate through distinct request payloads.
 func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]any, error) {
-	if needs, err := EndpointNeedsData(endpointKey); err != nil {
-		return nil, err
-	} else if !needs {
-		return []map[string]any{{}}, nil
-	}
-
 	switch endpointKey {
+	case "simulateTransaction":
+		txB64, err := tx.BuildSimulateTxB64()
+		if err != nil {
+			return nil, fmt.Errorf("failed to build simulate tx: %v", err)
+		}
+		return []map[string]any{{"transaction": txB64}}, nil
+
 	case "getTransaction":
 		txs := params.Output.TxHashes
 		var result []map[string]any
@@ -88,6 +90,9 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 	case "getEvents":
 		return nil, fmt.Errorf("getEvents endpoint not yet implemented")
 
+	case "getHealth", "getNetwork", "getVersionInfo", "getLatestLedger", "getFeeStats", "sendTransaction":
+		return []map[string]any{{}}, nil
+
 	default:
 		return nil, fmt.Errorf("unsupported endpoint %s", endpointKey)
 	}
@@ -96,9 +101,9 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 // EndpointNeedsData reports whether the endpoint requires seed data to build requests.
 func EndpointNeedsData(endpointKey string) (bool, error) {
 	switch endpointKey {
-	case "getTransaction", "getLedgerEntries", "getTransactions", "getLedgers", "getEvents", "simulateTransaction":
+	case "getTransaction", "getLedgerEntries", "getTransactions", "getLedgers", "getEvents":
 		return true, nil
-	case "getHealth", "getNetwork", "getVersionInfo", "getLatestLedger", "getFeeStats", "sendTransaction":
+	case "getHealth", "getNetwork", "getVersionInfo", "getLatestLedger", "getFeeStats", "sendTransaction", "simulateTransaction":
 		return false, nil
 	default:
 		return false, fmt.Errorf("unknown endpoint %q", endpointKey)

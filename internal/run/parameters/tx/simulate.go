@@ -8,26 +8,44 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// BuildSimulateTxB64 takes a contract ID and builds a base64-encoded transaction envelope
-// used for simulateTransaction calls targeting that contract.
-func BuildSimulateTxB64(contractStrkey string) (string, error) {
-	contractID, err := decodeContractID(contractStrkey)
-	if err != nil {
-		return "", err
-	}
-
+// BuildSimulateTxB64 builds a base64-encoded transaction envelope used for simulateTransaction calls.
+// Uses zero contract/source accounts — no real accounts needed since this is never submitted on-chain.
+func BuildSimulateTxB64() (string, error) {
+	var contractID xdr.ContractId // 32 zero bytes
 	contractAddr := xdr.ScAddress{
 		Type:       xdr.ScAddressTypeScAddressTypeContract,
 		ContractId: &contractID,
 	}
 
-	op := txnbuild.InvokeHostFunction{
+	op := BuildInvokeHostFunction(contractAddr, xdr.ScSymbol("transfer"), xdr.ScVec{})
+
+	sa := txnbuild.NewSimpleAccount(strkey.MustEncode(strkey.VersionByteAccountID, make([]byte, 32)), 0)
+	tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+		SourceAccount:        &sa,
+		IncrementSequenceNum: false,
+		Operations:           []txnbuild.Operation{&op},
+		BaseFee:              txnbuild.MinBaseFee,
+		Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimebounds(0, 0)},
+	})
+	if err != nil {
+		return "", fmt.Errorf("couldn't build simulate tx: %w", err)
+	}
+	return tx.Base64()
+}
+
+// Build a simple InvokeHostFunction tx touching contract storage and erroring only at execution
+func BuildInvokeHostFunction(
+	contractAddr xdr.ScAddress,
+	functionName xdr.ScSymbol,
+	args []xdr.ScVal,
+) txnbuild.InvokeHostFunction {
+	return txnbuild.InvokeHostFunction{
 		HostFunction: xdr.HostFunction{
 			Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
 			InvokeContract: &xdr.InvokeContractArgs{
 				ContractAddress: contractAddr,
-				FunctionName:    "transfer", // arbitrary; WASM errors at runtime, not before
-				Args:            xdr.ScVec{},
+				FunctionName:    functionName,
+				Args:            xdr.ScVec(args),
 			},
 		},
 		Ext: xdr.TransactionExt{
@@ -52,32 +70,4 @@ func BuildSimulateTxB64(contractStrkey string) (string, error) {
 			},
 		},
 	}
-
-	source := zeroAccountID()
-	sa := txnbuild.NewSimpleAccount(source, 0)
-	tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
-		SourceAccount:        &sa,
-		IncrementSequenceNum: false,
-		Operations:           []txnbuild.Operation{&op},
-		BaseFee:              txnbuild.MinBaseFee,
-		Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimebounds(0, 0)},
-	})
-	if err != nil {
-		return "", fmt.Errorf("couldn't build simulate tx for %s: %w", contractStrkey, err)
-	}
-	return tx.Base64()
-}
-
-func decodeContractID(contractStrkey string) (xdr.ContractId, error) {
-	decoded, err := strkey.Decode(strkey.VersionByteContract, contractStrkey)
-	if err != nil {
-		return xdr.ContractId{}, fmt.Errorf("invalid contract strkey %q: %w", contractStrkey, err)
-	}
-	var id xdr.ContractId
-	copy(id[:], decoded)
-	return id, nil
-}
-
-func zeroAccountID() string {
-	return strkey.MustEncode(strkey.VersionByteAccountID, make([]byte, 32))
 }

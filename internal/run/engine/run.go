@@ -88,21 +88,14 @@ func NewBlastEngine(
 			// Need custom targeter to generate unique (tx, sequence) params for each request
 			targeter = NewSendTxTargeter(cfg.RpcUrl, ap, cfg.NetworkPassphrase)
 		} else {
-			paramMaps, err := parameters.BuildEndpointParams(endpointKey, sharedParams)
+			bodies, err := buildBodies(endpointKey, sharedParams)
 			if err != nil {
-				return nil, fmt.Errorf("couldn't build params for endpoint %s: %v", endpointKey, err)
+				return nil, err
 			}
-			bodies := make([][]byte, len(paramMaps))
-			for i, p := range paramMaps {
-				bodies[i], err = util.MarshalJsonRpcRequest(endpointKey, p)
-				if err != nil {
-					return nil, fmt.Errorf("couldn't marshal request for endpoint %s: %v", endpointKey, err)
-				}
-			}
-			targeter = NewJSONRPCTargeter(cfg.RpcUrl, bodies)
 			if len(bodies) > 1 {
 				logger.Infof("Endpoint %s: rotating through %d parameterized request bodies", endpointKey, len(bodies))
 			}
+			targeter = NewJSONRPCTargeter(cfg.RpcUrl, bodies)
 		}
 
 		endpointBlasts = append(endpointBlasts, endpointBlast{
@@ -127,6 +120,21 @@ func NewBlastEngine(
 		OutCh:             out,
 		Config:            cfg,
 	}, nil
+}
+
+func buildBodies(endpointKey string, sharedParams *parameters.Parameters) ([][]byte, error) {
+	paramMaps, err := parameters.BuildEndpointParams(endpointKey, sharedParams)
+	if err != nil {
+		return nil, fmt.Errorf("couldn't build params for endpoint %s: %v", endpointKey, err)
+	}
+	bodies := make([][]byte, len(paramMaps))
+	for i, p := range paramMaps {
+		bodies[i], err = util.MarshalJsonRpcRequest(endpointKey, p)
+		if err != nil {
+			return nil, fmt.Errorf("couldn't marshal request for endpoint %s: %v", endpointKey, err)
+		}
+	}
+	return bodies, nil
 }
 
 func (b *BlastEngine) Close(ctx context.Context, logger *log.Entry) error {
