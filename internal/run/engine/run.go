@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 
 	vegeta "github.com/tsenart/vegeta/v12/lib"
@@ -56,23 +55,15 @@ func NewBlastEngine(
 		sharedParams.NetworkPassphrase = cfg.NetworkPassphrase
 	}
 
-	var activeEndpoints, skippedEndpoints []string
-	for _, endpointKey := range cfg.GetEndpoints() {
-		if cfg.GetEndpointRPS(endpointKey) <= 0 {
-			skippedEndpoints = append(skippedEndpoints, endpointKey)
-		} else {
-			activeEndpoints = append(activeEndpoints, endpointKey)
-		}
-	}
-	if len(skippedEndpoints) > 0 {
-		logger.Infof("Skipping endpoints with RPS<=0: %v", strings.Join(skippedEndpoints, ", "))
-	}
-
 	// Construct endpoint blast configs
 	var endpointBlasts []endpointBlast
 	var ap *tx.AccountPool
-	for _, endpointKey := range activeEndpoints {
+	for _, endpointKey := range cfg.GetEndpoints() {
 		rps := cfg.GetEndpointRPS(endpointKey)
+		if rps <= 0 {
+			logger.Infof("Skipping endpoint: %v (RPS <= 0)", endpointKey)
+			continue
+		}
 
 		var targeter vegeta.Targeter
 		if endpointKey == "sendTransaction" {
