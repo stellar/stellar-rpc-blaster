@@ -10,8 +10,9 @@ import (
 )
 
 type Parameters struct {
-	Output       seed.SeedData
-	SampleCounts map[string]int
+	Output            seed.SeedData
+	SampleCounts      map[string]int
+	NetworkPassphrase string
 }
 
 func GetParameters(dataPath string) (*Parameters, error) {

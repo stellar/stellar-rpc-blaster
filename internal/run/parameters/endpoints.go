@@ -15,7 +15,7 @@ import (
 func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]any, error) {
 	switch endpointKey {
 	case "simulateTransaction":
-		txB64, err := tx.BuildSimulateTxB64()
+		txB64, err := tx.BuildSimulateTxB64(params.NetworkPassphrase)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build simulate tx: %v", err)
 		}

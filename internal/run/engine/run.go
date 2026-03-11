@@ -53,6 +53,7 @@ func NewBlastEngine(
 			return nil, fmt.Errorf("failed to load seed data: %v", err)
 		}
 		sharedParams = p
+		sharedParams.NetworkPassphrase = cfg.NetworkPassphrase
 	}
 
 	var activeEndpoints, skippedEndpoints []string
