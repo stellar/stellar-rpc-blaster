@@ -28,6 +28,7 @@ type Config struct {
 	// Run mode settings
 	Duration       time.Duration
 	RampUp         time.Duration
+	Serial         bool   // run endpoints one at a time instead of concurrently
 	TestOutputPath string // path to write JSON results
 
 	// Generate mode settings
@@ -64,8 +65,10 @@ type RuntimeSettings struct {
 	// Run mode settings
 	ConfigPath     string
 	TestOutputPath string
+	InputDataPath  string
 	Duration       time.Duration
 	RampUp         time.Duration
+	Serial         bool
 
 	// Generate mode settings
 	OutputPath   string
@@ -104,9 +107,14 @@ func NewConfig(
 	case Run:
 		cfg.Duration = settings.Duration
 		cfg.RampUp = settings.RampUp
+		cfg.Serial = settings.Serial
 		cfg.TestOutputPath = settings.TestOutputPath
 		if err := cfg.processToml(settings.ConfigPath); err != nil {
 			return Config{}, err
+		}
+		// CLI flag overrides TOML value if provided
+		if settings.InputDataPath != "" {
+			cfg.InputDataPath = settings.InputDataPath
 		}
 	case Generate:
 		cfg.OutputPath = settings.OutputPath

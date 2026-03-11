@@ -32,8 +32,11 @@ func RunVegeta(
 	httpClient *http.Client,
 	out chan<- blasterMetrics.Sample,
 ) error {
-	ctx, cancel := context.WithTimeout(ctx, cfg.Duration)
-	defer cancel()
+	if !cfg.Serial {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, cfg.Duration)
+		defer cancel()
+	}
 
 	newBlaster := func() *vegeta.Attacker {
 		return NewBlasterWithClient(httpClient, util.MaxWorkers)
@@ -101,12 +104,19 @@ func RunVegeta(
 	}
 
 	// Fire!
-	var wg sync.WaitGroup
-	for _, blast := range endpointBlasts {
-		wg.Go(func() {
+	if cfg.Serial {
+		for _, blast := range endpointBlasts {
+			logger.Infof("Serial mode: starting endpoint %s", blast.EndpointBlastConfig.EndpointKey)
 			blastAtEndpoint(ctx, blast.EndpointBlastConfig, blast.BlastPacer, newBlaster, out)
-		})
+		}
+	} else {
+		var wg sync.WaitGroup
+		for _, blast := range endpointBlasts {
+			wg.Go(func() {
+				blastAtEndpoint(ctx, blast.EndpointBlastConfig, blast.BlastPacer, newBlaster, out)
+			})
+		}
+		wg.Wait()
 	}
-	wg.Wait()
 	return nil
 }
