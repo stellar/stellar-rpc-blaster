@@ -84,6 +84,8 @@ type EndpointConfig struct {
 	RPS int `toml:"rps"` // requests per second
 }
 
+// NewConfig loads the config from a TOML file, validates it, and returns a Config struct
+// Also initializes the RPC client and fetches the network passphrase.
 func NewConfig(
 	ctx context.Context,
 	settings RuntimeSettings,
@@ -124,6 +126,7 @@ func NewConfig(
 	return cfg, nil
 }
 
+// processToml loads the config from a TOML file and validates it. Called internally by NewConfig.
 func (c *Config) processToml(tomlPath string) error {
 	// Load config TOML file
 	cfg, err := toml.LoadFile(tomlPath)
@@ -171,13 +174,26 @@ func (c *Config) validateEndpointConfig() error {
 	return nil
 }
 
+// GetEndpoints returns a list of all endpoints specified in the config regardless of RPS
 func (c *Config) GetEndpoints() []string {
 	return slices.Collect(maps.Keys(c.Endpoints))
 }
 
+// GetEndpointRPS returns the RPS for a given endpoint key
 func (c *Config) GetEndpointRPS(key string) int {
 	if ep, ok := c.Endpoints[key]; ok {
 		return ep.RPS
 	}
 	return 0
+}
+
+// GetActiveEndpoints returns a list of endpoints targeted in a load test run.
+func (c *Config) GetActiveEndpoints() []string {
+	var activeEndpoints []string
+	for _, endpointKey := range c.GetEndpoints() {
+		if c.GetEndpointRPS(endpointKey) > 0 {
+			activeEndpoints = append(activeEndpoints, endpointKey)
+		}
+	}
+	return activeEndpoints
 }

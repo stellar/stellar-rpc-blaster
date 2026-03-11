@@ -100,13 +100,7 @@ func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
 		duration:        settings.Duration,
 		writeOutputPath: settings.TestOutputPath,
 	}
-	allEndpoints := settings.GetEndpoints()
-	var endpoints []string
-	for _, endpointKey := range allEndpoints {
-		if settings.GetEndpointRPS(endpointKey) > 0 {
-			endpoints = append(endpoints, endpointKey)
-		}
-	}
+	endpoints := settings.GetActiveEndpoints()
 	sort.Strings(endpoints)
 	a.orderedEndpoints = endpoints // maintain order for consistent output
 
