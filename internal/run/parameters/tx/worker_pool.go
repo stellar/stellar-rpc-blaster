@@ -15,8 +15,9 @@ type AccountPool struct {
 	rpcClient    *rpcclient.Client
 	passphrase   string
 	friendbotURL string
+	logger       *log.Entry
 
-	PoolBalance   int64          // track total balance across all accounts in the pool for verification at the end of the test
+	PoolBalance   int64          // track total balance across all accounts in the pool for verification after test
 	originAccount *WorkerAccount // account that funds the worker accounts
 	accounts      []*WorkerAccount
 	idx           int64 // atomically incr index to rotate through accounts
@@ -27,12 +28,14 @@ type AccountPool struct {
 // Makes a pool of workers and funds each of them with testnet friendbot XLM
 func NewAccountPool(
 	ctx context.Context,
+	logger *log.Entry,
 	rpcClient *rpcclient.Client,
 	originAccountKp *keypair.Full, // optional param to specify funding account
 	numAccounts uint32,
 ) (*AccountPool, error) {
 	pool := &AccountPool{
 		rpcClient: rpcClient,
+		logger:    logger,
 	}
 	// Validate and set up network based on its type
 	getNetworkResponse, err := pool.rpcClient.GetNetwork(ctx)
@@ -111,7 +114,11 @@ func (p *AccountPool) Close(ctx context.Context, rpcClient *rpcclient.Client, lo
 }
 
 // Creates and funds all workers in the pool with the specified amount from the origin account
-func (p *AccountPool) FundWorkers(ctx context.Context, budgetPerWorker int64, numWorkers uint32) ([]*WorkerAccount, error) {
+func (p *AccountPool) FundWorkers(
+	ctx context.Context,
+	budgetPerWorker int64,
+	numWorkers uint32,
+) ([]*WorkerAccount, error) {
 	if budgetPerWorker*int64(numWorkers) > p.originAccount.Balance.Load() {
 		return nil, fmt.Errorf("origin account does not have enough balance to fund workers")
 	}
@@ -154,11 +161,16 @@ func (p *AccountPool) FundWorkers(ctx context.Context, budgetPerWorker int64, nu
 }
 
 // Creates a new origin account using friendbot
-func (p *AccountPool) NewOriginAccount(ctx context.Context, originAccountKp *keypair.Full, network string) (*WorkerAccount, error) {
+func (p *AccountPool) NewOriginAccount(
+	ctx context.Context,
+	originAccountKp *keypair.Full,
+	network string,
+) (*WorkerAccount, error) {
 	acct := &WorkerAccount{}
 	if originAccountKp != nil {
 		acct = &WorkerAccount{Keypair: originAccountKp}
 	} else if network == "testnet" {
+		p.logger.Infof("No origin account provided in config, creating a new origin account for testnet...")
 		kp, err := keypair.Random()
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate random keypair: %v", err)
@@ -167,6 +179,9 @@ func (p *AccountPool) NewOriginAccount(ctx context.Context, originAccountKp *key
 		if err := acct.fundTestnetAccount(p.friendbotURL); err != nil {
 			return nil, fmt.Errorf("failed to fund origin account %s: %v", kp.Address(), err)
 		}
+		p.logger.Infof("Created + funded origin account on testnet with seed %s", kp.Seed())
+	} else {
+		return nil, fmt.Errorf("origin account keypair must be provided for %s", network)
 	}
 
 	if err := VerifyOnChainSeqAndStore(ctx, p.rpcClient, []*WorkerAccount{acct}); err != nil {

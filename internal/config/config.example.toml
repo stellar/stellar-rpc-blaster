@@ -16,13 +16,13 @@ input_data_path = "./output/seed.json"
 rps = 0
 
 [endpoints.getNetwork]
-rps = 10
+rps = 0
 
 [endpoints.getVersionInfo]
 rps = 0
 
 [endpoints.getLatestLedger]
-rps = 10
+rps = 0
 
 [endpoints.getFeeStats]
 rps = 0
@@ -35,16 +35,16 @@ rps = 0
 rps = 0
 
 [endpoints.getLedgers]
-rps = 10
+rps = 0
 
 [endpoints.getTransaction]
-rps = 10
+rps = 0
 
 [endpoints.getTransactions]
-rps = 10
+rps = 0
 
 [endpoints.simulateTransaction]
-rps = 10
+rps = 0
 
 [endpoints.sendTransaction]
 rps = 10
