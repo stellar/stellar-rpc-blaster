@@ -47,16 +47,20 @@ func RunVegeta(
 			return fmt.Errorf("failed to load seed data: %v", err)
 		}
 		sharedParams = p
+
+		validator := parameters.NewEndpointSeedValidator(cfg.RpcClient, sharedParams.Output)
+		if err := validator.ValidateConfiguredEndpoints(ctx, cfg.GetActiveEndpoints()); err != nil {
+			return fmt.Errorf("preflight seed validation failed (try rerunning `generate`): %v", err)
+		}
 	}
 
 	// Construct endpoint blast configs
 	// 3... 2... 1...
 	var endpointBlasts []endpointBlast
-	var skippedEndpoints []string
 	for _, endpointKey := range cfg.GetEndpoints() {
 		rps := cfg.GetEndpointRPS(endpointKey)
 		if rps <= 0 {
-			skippedEndpoints = append(skippedEndpoints, endpointKey)
+			logger.Infof("Skipping endpoint: %v (RPS <= 0)", endpointKey)
 			continue
 		}
 
@@ -95,9 +99,6 @@ func RunVegeta(
 				MaxRPS:        rps,
 			},
 		})
-	}
-	if len(skippedEndpoints) > 0 {
-		logger.Infof("Skipping endpoints with RPS<=0: %v", skippedEndpoints)
 	}
 
 	// Fire!
