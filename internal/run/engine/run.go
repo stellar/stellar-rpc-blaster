@@ -48,6 +48,7 @@ func RunVegeta(
 		}
 		sharedParams = p
 
+		// Run preflight validation to ensure seed data is fresh enough for the target RPC before blasting any endpoints
 		validator := parameters.NewEndpointSeedValidator(cfg.RpcClient, sharedParams.Output)
 		if err := validator.ValidateConfiguredEndpoints(ctx, cfg.GetActiveEndpoints()); err != nil {
 			return fmt.Errorf("preflight seed validation failed (try rerunning `generate`): %v", err)
