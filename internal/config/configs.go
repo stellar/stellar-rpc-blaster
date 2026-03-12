@@ -171,3 +171,14 @@ func (c *Config) GetEndpointRPS(key string) int {
 	}
 	return 0
 }
+
+// GetActiveEndpoints returns the endpoints configured with RPS > 0.
+func (c *Config) GetActiveEndpoints() []string {
+	activeEndpoints := make([]string, 0, len(c.Endpoints))
+	for _, endpointKey := range c.GetEndpoints() {
+		if c.GetEndpointRPS(endpointKey) > 0 {
+			activeEndpoints = append(activeEndpoints, endpointKey)
+		}
+	}
+	return activeEndpoints
+}
