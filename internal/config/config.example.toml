@@ -9,7 +9,7 @@ input_data_path = "./output/seed.json"
 
 # Optional: secret seed (S...) for the origin account that funds worker accounts for sendTransaction.
 # Required for pubnet. On testnet, if omitted, a new account is created and funded via friendbot.
-# origin_account_secret = "S..."
+origin_account_secret = "SATW2SA53PSQY35QHRRBADSXSOYJQ45HPV3Z7SDXH6X6CKRAXW4KVF3O"
 
 # No-parameter/run-only endpoints
 [endpoints.getHealth]

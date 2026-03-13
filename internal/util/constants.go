@@ -43,8 +43,8 @@ const (
 
 // sendTransaction parameters for run
 const (
-	// Number of accounts to create and rotate through for sendTransaction requests in run
-	MaxSendTxAccounts = 100
+	// Max number of accounts to create per transaction when funding worker accounts
+	MaxCreateAccountsPerTx = 100
 	// Minimum balance (in XLM) for worker accounts to ensure they can send transactions throughout the test
 	MinimumWorkerBalance = 10
 	StroopsPerXLM        = 1 * 1e7

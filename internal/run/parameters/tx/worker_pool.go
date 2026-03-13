@@ -124,26 +124,32 @@ func (p *AccountPool) FundWorkers(
 	}
 	sa := p.originAccount
 	accounts := make([]*WorkerAccount, numWorkers)
-	// Submit and confirm each CreateAccount tx one at a time
 	for i := range accounts {
 		workerKp, err := keypair.Random()
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate random keypair: %v", err)
 		}
 		accounts[i] = &WorkerAccount{Keypair: workerKp}
+	}
 
-		hash, err := sa.CreateAccountFor(
+	// Create worker accounts in batches
+	for start := 0; start < len(accounts); start += util.MaxCreateAccountsPerTx {
+		end := start + util.MaxCreateAccountsPerTx
+		end = min(end, len(accounts))
+		batch := accounts[start:end]
+
+		hash, err := sa.CreateAccountsFor(
 			ctx,
 			p,
-			accounts[i],
+			batch,
 			budgetPerWorker,
 			p.passphrase,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fund worker account %s: %v", workerKp.Address(), err)
+			return nil, fmt.Errorf("failed to fund worker accounts %d-%d: %v", start, end-1, err)
 		}
 		if err := awaitTxConfirmation(ctx, p.rpcClient, hash); err != nil {
-			return nil, fmt.Errorf("failed to confirm funding tx for %s: %v", workerKp.Address(), err)
+			return nil, fmt.Errorf("failed to confirm funding tx for accounts %d-%d: %v", start, end-1, err)
 		}
 	}
 	// Fetch and store sequence numbers for all accounts

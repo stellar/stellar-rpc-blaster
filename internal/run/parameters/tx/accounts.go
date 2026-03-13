@@ -64,12 +64,18 @@ func (w *WorkerAccount) MergeInto(ctx context.Context, pool *AccountPool, to *Wo
 	return resp.Hash, nil
 }
 
-func (w *WorkerAccount) CreateAccountFor(ctx context.Context, pool *AccountPool, to *WorkerAccount, amount int64, networkPassphrase string) (string, error) {
+func (w *WorkerAccount) CreateAccountsFor(
+	ctx context.Context,
+	pool *AccountPool,
+	to []*WorkerAccount,
+	amount int64,
+	networkPassphrase string,
+) (string, error) {
 	seq, err := w.fetchOnChainSeq(ctx, pool.rpcClient)
 	if err != nil {
 		return "", fmt.Errorf("failed to get on-chain sequence for %s: %v", w.Keypair.Address(), err)
 	}
-	txB64, err := BuildCreateAccountTxB64(w, to, amount, seq, networkPassphrase)
+	txB64, err := BuildCreateAccountsTxB64(w, to, amount, seq, networkPassphrase)
 	if err != nil {
 		return "", fmt.Errorf("failed to build create account tx: %v", err)
 	}
@@ -81,8 +87,10 @@ func (w *WorkerAccount) CreateAccountFor(ctx context.Context, pool *AccountPool,
 		return "", fmt.Errorf("create account transaction rejected: %s", resp.ErrorResultXDR)
 	}
 	w.Id.Store(seq + 1)
-	w.Balance.Swap(w.Balance.Load() - amount)
-	to.Balance.Store(amount)
+	w.Balance.Swap(w.Balance.Load() - amount*int64(len(to)))
+	for _, acct := range to {
+		acct.Balance.Store(amount)
+	}
 	return resp.Hash, nil
 }
 

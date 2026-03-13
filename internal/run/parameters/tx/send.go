@@ -12,7 +12,7 @@ func BuildSendPaymentTxB64(from *WorkerAccount, to *WorkerAccount, amount int64,
 		Amount:      fmt.Sprintf("%d", amount),
 		Asset:       txnbuild.NativeAsset{},
 	}
-	return buildTxB64(&op, from, seq, networkPassphrase)
+	return buildTxB64([]txnbuild.Operation{&op}, from, seq, networkPassphrase)
 }
 
 // BuildAccountMergeTxB64 builds a tx that closes the source account and transfers all remaining funds to the destination.
@@ -20,23 +20,27 @@ func BuildAccountMergeTxB64(from *WorkerAccount, to *WorkerAccount, seq int64, n
 	op := txnbuild.AccountMerge{
 		Destination: to.Keypair.Address(),
 	}
-	return buildTxB64(&op, from, seq, networkPassphrase)
+	return buildTxB64([]txnbuild.Operation{&op}, from, seq, networkPassphrase)
 }
 
-// BuildCreateAccountTxB64 builds a base64-encoded transaction that creates and funds a new account.
+// BuildCreateAccountTxB64 builds a base64-encoded transaction that creates and funds new accounts.
 // Used to fund worker accounts that don't yet exist on-chain.
-func BuildCreateAccountTxB64(
+func BuildCreateAccountsTxB64(
 	from *WorkerAccount,
-	to *WorkerAccount,
+	to []*WorkerAccount,
 	amount int64,
 	seq int64,
 	networkPassphrase string,
 ) (string, error) {
-	op := txnbuild.CreateAccount{
-		Destination: to.Keypair.Address(),
-		Amount:      fmt.Sprintf("%d", amount),
+	ops := make([]txnbuild.Operation, 0, len(to))
+	for _, acct := range to {
+		op := txnbuild.CreateAccount{
+			Destination: acct.Keypair.Address(),
+			Amount:      fmt.Sprintf("%d", amount),
+		}
+		ops = append(ops, &op)
 	}
-	return buildTxB64(&op, from, seq, networkPassphrase)
+	return buildTxB64(ops, from, seq, networkPassphrase)
 }
 
 // BuildSelfSendTxB64 builds a base64-encoded transaction for a 1 XLM self-payment used for sendTransaction calls.
@@ -44,12 +48,17 @@ func BuildSelfSendTxB64(acct *WorkerAccount, seq int64, networkPassphrase string
 	return BuildSendPaymentTxB64(acct, acct, 1, seq, networkPassphrase)
 }
 
-func buildTxB64(op txnbuild.Operation, from *WorkerAccount, seq int64, networkPassphrase string) (string, error) {
+func buildTxB64(
+	ops []txnbuild.Operation,
+	from *WorkerAccount,
+	seq int64,
+	networkPassphrase string,
+) (string, error) {
 	sa := txnbuild.NewSimpleAccount(from.Keypair.Address(), seq)
 	txn, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
 		SourceAccount:        &sa,
 		IncrementSequenceNum: true,
-		Operations:           []txnbuild.Operation{op},
+		Operations:           ops,
 		BaseFee:              txnbuild.MinBaseFee,
 		Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewInfiniteTimeout()},
 	})
