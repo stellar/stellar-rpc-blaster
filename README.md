@@ -14,6 +14,38 @@ Example usage on localhost RPC testnet instance (note that instance must be runn
   --ramp-up 10s
 ```
 
+### Using `sendTransaction`
+
+The `sendTransaction` endpoint needs an origin account that can fund the worker accounts used during the run.
+
+On testnet, `stellar-rpc-blaster` can create and fund that origin account automatically through friendbot if `ORIGIN_ACCOUNT_SECRET` is unset.
+
+On pubnet, you must provide the funding account secret through the environment:
+
+```bash
+export ORIGIN_ACCOUNT_SECRET="S..."
+
+./stellar-rpc-blaster run \
+  --rpc-url "https://your-rpc-host" \
+  --config-path "./internal/config/config.example.toml" \
+  --duration 30s \
+  --ramp-up 10s
+```
+
+To target only `sendTransaction`, enable it in the TOML config and keep the secret out of the file:
+
+```toml
+input_data_path = "./output/seed.json"
+
+[endpoints.sendTransaction]
+rps = 10
+```
+
+Notes:
+- `sendTransaction` creates and funds worker accounts before the test starts, then merges them back into the origin account during cleanup.
+- The origin account must have enough XLM to fund the worker accounts and cover fees.
+- The tool logs the generated seed if it auto-creates an origin account on testnet.
+
 To generate data for the `generate` command, example usage is as follows:
 ```
 ./stellar-rpc-loadtest generate \

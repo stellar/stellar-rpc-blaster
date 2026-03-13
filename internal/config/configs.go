@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"os"
 	"slices"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/stellar-rpc-blaster/internal/run/parameters"
 )
+
+const OriginAccountSecretEnvVar = "ORIGIN_ACCOUNT_SECRET"
 
 type Config struct {
 	Endpoints map[string]EndpointConfig `toml:"endpoints"`
@@ -27,11 +30,10 @@ type Config struct {
 	Mode              Mode
 
 	// Run mode settings
-	Duration            time.Duration
-	RampUp              time.Duration
-	TestOutputPath      string        // path to write JSON results
-	OriginAccountSecret string        `toml:"origin_account_secret"` // Stellar secret seed (S...) for the origin funding account
-	OriginAccount       *keypair.Full // parsed from OriginAccountSecret; if nil, a new account will be generated (and funded via friendbot on testnet)
+	Duration       time.Duration
+	RampUp         time.Duration
+	TestOutputPath string        // path to write JSON results
+	OriginAccount  *keypair.Full // parsed from OriginAccountSecret if provided
 
 	// Generate mode settings
 	OutputPath   string
@@ -143,10 +145,11 @@ func (c *Config) processToml(tomlPath string) error {
 		if err = c.validateEndpointConfig(); err != nil {
 			return err
 		}
-		if c.OriginAccountSecret != "" {
-			kp, err := keypair.ParseFull(c.OriginAccountSecret)
+		originAccountSecret := os.Getenv(OriginAccountSecretEnvVar)
+		if originAccountSecret != "" {
+			kp, err := keypair.ParseFull(originAccountSecret)
 			if err != nil {
-				return fmt.Errorf("invalid origin_account_secret: %v", err)
+				return fmt.Errorf("invalid %s: %v", OriginAccountSecretEnvVar, err)
 			}
 			c.OriginAccount = kp
 		}

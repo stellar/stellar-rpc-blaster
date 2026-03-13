@@ -7,9 +7,9 @@
 # Using the default seed data output path, this is "./output/seed.json"
 input_data_path = "./output/seed.json"
 
-# Optional: secret seed (S...) for the origin account that funds worker accounts for sendTransaction.
+# Optional: set ORIGIN_ACCOUNT_SECRET in the environment for the origin account that funds worker accounts for sendTransaction.
 # Required for pubnet. On testnet, if omitted, a new account is created and funded via friendbot.
-origin_account_secret = "SATW2SA53PSQY35QHRRBADSXSOYJQ45HPV3Z7SDXH6X6CKRAXW4KVF3O"
+# Example: export ORIGIN_ACCOUNT_SECRET="S..."
 
 # No-parameter/run-only endpoints
 [endpoints.getHealth]
