@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -117,8 +116,7 @@ func (p *AccountPool) Close(ctx context.Context, rpcClient *rpcclient.Client, lo
 		}
 
 		logger.Warnf("Retrying merge for %d worker accounts after attempt %d", len(p.accounts), attempt)
-		pauseFloat64 := math.Pow(float64(util.WorkerMergeRetryPause), float64(attempt))
-		pause := min(time.Duration(int64(pauseFloat64)), remaining)
+		pause := min(util.WorkerMergeRetryPause<<attempt, remaining)
 		if pause <= 0 {
 			continue
 		}
