@@ -2,8 +2,14 @@ package tx
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
+	"os"
+	"path/filepath"
+	"slices"
 	"sync"
+	"time"
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/keypair"
@@ -11,6 +17,11 @@ import (
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
+
+type mergeSubmission struct {
+	account *WorkerAccount
+	hash    string
+}
 
 type AccountPool struct {
 	rpcClient    *rpcclient.Client
@@ -83,36 +94,61 @@ func NewAccountPool(
 }
 
 func (p *AccountPool) Close(ctx context.Context, rpcClient *rpcclient.Client, logger *log.Entry) error {
-	// Submit all merge txs first, then confirm all at once.
-	// Each worker is a separate source account so there are no sequence dependencies.
-	hashes := make([]string, 0, len(p.accounts))
-	for _, acct := range p.accounts {
-		hash, err := acct.MergeInto(ctx, p, p.originAccount)
-		if err != nil {
-			logger.Errorf("failed to merge worker account %s: %v", acct.Keypair.Address(), err)
+	totalAccounts := len(p.accounts)
+	deadline := time.Now().Add(util.WorkerMergeRetryWindow)
+
+	// Try merging until the deadline or all accounts are merged
+	for attempt := 0; len(p.accounts) > 0; attempt++ {
+		submissions := make([]mergeSubmission, 0, len(p.accounts))
+
+		for _, acct := range p.accounts {
+			hash, err := acct.MergeInto(ctx, p, p.originAccount)
+			if err != nil {
+				logger.Errorf("failed to submit merge for worker account %s on attempt %d: %v", acct.Keypair.Address(), attempt, err)
+				continue
+			}
+			submissions = append(submissions, mergeSubmission{account: acct, hash: hash})
+		}
+
+		awaitMergeConfirmations(ctx, p, p.rpcClient, logger, submissions, attempt)
+		remaining := time.Until(deadline)
+		if len(p.accounts) == 0 || remaining <= 0 {
+			break
+		}
+
+		logger.Warnf("Retrying merge for %d worker accounts after attempt %d", len(p.accounts), attempt)
+		pauseFloat64 := math.Pow(float64(util.WorkerMergeRetryPause), float64(attempt))
+		pause := min(time.Duration(int64(pauseFloat64)), remaining)
+		if pause <= 0 {
 			continue
 		}
-		hashes = append(hashes, hash)
-	}
-
-	// Await all merge confirmations
-	for _, hash := range hashes {
-		if err := awaitTxConfirmation(ctx, p.rpcClient, hash); err != nil {
-			logger.Errorf("failed to confirm merge tx %s: %v", hash, err)
+		select {
+		case <-ctx.Done():
+			logger.Warnf("stopping merge retries early: %v", ctx.Err())
+		case <-time.After(pause): // exponential backoff capped at remaining time until deadline
 		}
 	}
-	balance, err := p.originAccount.GetOnChainBalance(ctx, rpcClient)
-	if err != nil {
-		logger.Errorf("balance verification failed after merging worker accounts back into origin account: %v", err)
-	} else if balance > p.PoolBalance {
-		logger.Warnf("origin balance increased unexpectedly after consolidation: started %d, ended %d",
-			p.PoolBalance, balance)
-	} else {
-		logger.Infof("Origin account balance after consolidation: %d (approximately %d XLM spent on setup, load, and cleanup fees)",
-			balance, p.PoolBalance-balance)
+
+	// If we failed to merge any accounts, write their seeds to a file in ./output (safety: it's in .gitignore)
+	if len(p.accounts) > 0 {
+		if err := p.writeUnmergedWorkersJSON(util.UnmergedWorkersPath); err != nil {
+			return fmt.Errorf("failed to merge %d worker accounts after retries and failed to write %s: %w",
+				len(p.accounts), util.UnmergedWorkersPath, err)
+		}
+		logger.Errorf("Failed to merge %d worker accounts after retries; wrote seeds to %s",
+			len(p.accounts), util.UnmergedWorkersPath)
 	}
 
-	logger.Infof("Successfully merged %d worker accounts back into origin account", len(hashes))
+	if err := p.verifyOriginBalance(ctx, rpcClient); err != nil {
+		logger.Errorf("Origin account balance verification failed after merging workers: %v", err)
+	}
+
+	logger.Infof("Successfully merged %d worker accounts back into origin account",
+		totalAccounts-len(p.accounts))
+	if len(p.accounts) > 0 {
+		return fmt.Errorf("failed to merge %d worker accounts after retrying for at least %s",
+			len(p.accounts), util.WorkerMergeRetryWindow)
+	}
 	return nil
 }
 
@@ -233,4 +269,79 @@ func (p *AccountPool) WrapWithOriginFeeBumpB64(innerTx *txnbuild.Transaction) (s
 	}
 
 	return feeBumpTx.Base64()
+}
+
+func awaitMergeConfirmations(
+	ctx context.Context,
+	pool *AccountPool,
+	rpcClient *rpcclient.Client,
+	logger *log.Entry,
+	submissions []mergeSubmission,
+	attempt int,
+) {
+	if len(submissions) == 0 {
+		return
+	}
+
+	var wg sync.WaitGroup
+	for _, submission := range submissions {
+		wg.Go(func() {
+			if err := awaitTxConfirmation(ctx, rpcClient, submission.hash); err != nil {
+				logger.Errorf("failed to confirm merge tx %s for worker account %s on attempt %d: %v",
+					submission.hash, submission.account.Keypair.Address(), attempt, err)
+				return
+			}
+			pool.removeWorkerAccount(submission.account.Keypair.Address())
+		})
+	}
+	wg.Wait()
+}
+
+func (p *AccountPool) removeWorkerAccount(address string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for i, acct := range p.accounts {
+		if acct.Keypair.Address() != address {
+			continue
+		}
+		p.accounts = append(p.accounts[:i], p.accounts[i+1:]...)
+		return
+	}
+}
+
+func (p *AccountPool) writeUnmergedWorkersJSON(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("failed to create output directories for path %s: %v", path, err)
+	}
+
+	seeds := make([]string, 0, len(p.accounts))
+	for _, acct := range p.accounts {
+		seeds = append(seeds, acct.Keypair.Seed())
+	}
+	slices.Sort(seeds)
+
+	data, err := json.MarshalIndent(seeds, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal unmerged worker seeds: %v", err)
+	}
+
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		return fmt.Errorf("failed to write unmerged workers to %s: %v", path, err)
+	}
+
+	return nil
+}
+
+func (p *AccountPool) verifyOriginBalance(ctx context.Context, rpcClient *rpcclient.Client) error {
+	balance, err := p.originAccount.GetOnChainBalance(ctx, rpcClient)
+	if err != nil {
+		return err
+	}
+	if balance > p.PoolBalance {
+		return fmt.Errorf("origin balance increased unexpectedly after consolidation: started %d, ended %d",
+			p.PoolBalance, balance)
+	}
+	return fmt.Errorf("Origin account balance after consolidation: %d (approximately %d XLM spent on fees)",
+		balance, p.PoolBalance-balance)
 }
