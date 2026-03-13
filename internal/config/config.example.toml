@@ -47,4 +47,4 @@ rps = 0
 rps = 0
 
 [endpoints.sendTransaction]
-rps = 10
+rps = 100

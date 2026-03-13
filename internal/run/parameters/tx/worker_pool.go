@@ -8,6 +8,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/support/log"
+	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
@@ -66,11 +67,10 @@ func NewAccountPool(
 	}
 	pool.PoolBalance = originAccountBalance
 
-	// Reserve 100 XLM in the origin account for base reserve + tx fees
-	spendable := originAccountBalance - 100
-	budgetPerWorker := spendable / int64(numAccounts)
-	if budgetPerWorker <= util.MinimumWorkerBalance {
-		return nil, fmt.Errorf("origin account does not have enough balance to fund workers")
+	budgetPerWorker := int64(util.MinimumWorkerBalance)
+	// Reserve 100 XLM in the origin account so it can remain the sole fee payer throughout the run.
+	if budgetPerWorker*int64(numAccounts) > originAccountBalance-100 {
+		return nil, fmt.Errorf("origin account does not have enough balance to minimally fund workers and pay fees")
 	}
 
 	// Fund worker accounts to ensure they have enough balance for the test
@@ -87,7 +87,7 @@ func (p *AccountPool) Close(ctx context.Context, rpcClient *rpcclient.Client, lo
 	// Each worker is a separate source account so there are no sequence dependencies.
 	hashes := make([]string, 0, len(p.accounts))
 	for _, acct := range p.accounts {
-		hash, err := acct.MergeInto(ctx, p, p.originAccount, p.passphrase)
+		hash, err := acct.MergeInto(ctx, p, p.originAccount)
 		if err != nil {
 			logger.Errorf("failed to merge worker account %s: %v", acct.Keypair.Address(), err)
 			continue
@@ -104,9 +104,12 @@ func (p *AccountPool) Close(ctx context.Context, rpcClient *rpcclient.Client, lo
 	balance, err := p.originAccount.GetOnChainBalance(ctx, rpcClient)
 	if err != nil {
 		logger.Errorf("balance verification failed after merging worker accounts back into origin account: %v", err)
-	} else if balance < p.PoolBalance-util.FeeTolerance {
-		logger.Errorf("balance verification failed after consolidating accounts: expected %d, got %d",
+	} else if balance > p.PoolBalance {
+		logger.Warnf("origin balance increased unexpectedly after consolidation: started %d, ended %d",
 			p.PoolBalance, balance)
+	} else {
+		logger.Infof("Origin account balance after consolidation: %d (approximately %d XLM spent on setup, load, and cleanup fees)",
+			balance, p.PoolBalance-balance)
 	}
 
 	logger.Infof("Successfully merged %d worker accounts back into origin account", len(hashes))
@@ -211,4 +214,23 @@ func (p *AccountPool) Next() (*WorkerAccount, int64) {
 	acct := p.accounts[i%int64(len(p.accounts))]
 	p.idx++
 	return acct, acct.Id.Add(1) - 1
+}
+
+// WrapWithOriginFeeBumpB64 wraps a signed inner transaction so the origin account pays the fee.
+func (p *AccountPool) WrapWithOriginFeeBumpB64(innerTx *txnbuild.Transaction) (string, error) {
+	feeBumpTx, err := txnbuild.NewFeeBumpTransaction(txnbuild.FeeBumpTransactionParams{
+		Inner:      innerTx,
+		FeeAccount: p.originAccount.Keypair.Address(),
+		BaseFee:    innerTx.BaseFee(),
+	})
+	if err != nil {
+		return "", fmt.Errorf("couldn't create fee bump transaction: %w", err)
+	}
+
+	feeBumpTx, err = feeBumpTx.Sign(p.passphrase, p.originAccount.Keypair)
+	if err != nil {
+		return "", fmt.Errorf("couldn't sign fee bump transaction: %w", err)
+	}
+
+	return feeBumpTx.Base64()
 }

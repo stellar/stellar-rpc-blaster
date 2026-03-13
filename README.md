@@ -42,8 +42,9 @@ rps = 10
 ```
 
 Notes:
-- `sendTransaction` creates and funds worker accounts before the test starts, then merges them back into the origin account during cleanup.
-- The origin account must have enough XLM to fund the worker accounts and cover fees.
+- `sendTransaction` creates and minimally funds worker accounts before the test starts, wraps worker transactions in fee bumps so the origin account pays the fees, then fee-bump-merges the workers back into the origin account during cleanup.
+- Worker accounts hold only the minimum balance needed to exist and authorize the inner transactions.
+- The origin account must have enough XLM to fund the worker accounts and cover setup, runtime, and cleanup fees.
 - The tool logs the generated seed if it auto-creates an origin account on testnet.
 
 To generate data for the `generate` command, example usage is as follows:

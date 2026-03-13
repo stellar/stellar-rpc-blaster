@@ -33,9 +33,13 @@ func (w *WorkerAccount) SendPaymentTo(
 	if err != nil {
 		return "", fmt.Errorf("failed to get on-chain sequence for %s: %v", w.Keypair.Address(), err)
 	}
-	txB64, err := BuildSendPaymentTxB64(w, to, amount, seq, networkPassphrase)
+	tx, err := BuildSendPaymentTx(w, to, amount, seq, networkPassphrase)
 	if err != nil {
 		return "", fmt.Errorf("failed to build XDR for funding payment: %v", err)
+	}
+	txB64, err := tx.Base64()
+	if err != nil {
+		return "", fmt.Errorf("failed to encode transaction to base64: %v", err)
 	}
 	resp, err := pool.rpcClient.SendTransaction(ctx, util.MakeSendTransactionRequest(txB64))
 	if err != nil {
@@ -48,14 +52,19 @@ func (w *WorkerAccount) SendPaymentTo(
 }
 
 // MergeInto closes this account and transfers all remaining funds to the destination account.
-func (w *WorkerAccount) MergeInto(ctx context.Context, pool *AccountPool, to *WorkerAccount, networkPassphrase string) (string, error) {
+func (w *WorkerAccount) MergeInto(ctx context.Context, pool *AccountPool, to *WorkerAccount) (string, error) {
 	seq, err := w.fetchOnChainSeq(ctx, pool.rpcClient)
 	if err != nil {
 		return "", fmt.Errorf("failed to get on-chain sequence for %s: %v", w.Keypair.Address(), err)
 	}
-	txB64, err := BuildAccountMergeTxB64(w, to, seq, networkPassphrase)
+
+	innerTx, err := BuildAccountMergeTx(w, to, seq, pool.passphrase)
 	if err != nil {
 		return "", fmt.Errorf("failed to build account merge tx: %v", err)
+	}
+	txB64, err := pool.WrapWithOriginFeeBumpB64(innerTx)
+	if err != nil {
+		return "", fmt.Errorf("failed to wrap account merge tx with origin fee bump: %v", err)
 	}
 	resp, err := pool.rpcClient.SendTransaction(ctx, util.MakeSendTransactionRequest(txB64))
 	if err != nil {
@@ -75,10 +84,16 @@ func (w *WorkerAccount) CreateAccountsFor(
 	if err != nil {
 		return "", fmt.Errorf("failed to get on-chain sequence for %s: %v", w.Keypair.Address(), err)
 	}
-	txB64, err := BuildCreateAccountsTxB64(w, to, amount, seq, networkPassphrase)
+
+	tx, err := BuildCreateAccountsTx(w, to, amount, seq, networkPassphrase)
 	if err != nil {
 		return "", fmt.Errorf("failed to build create account tx: %v", err)
 	}
+	txB64, err := tx.Base64()
+	if err != nil {
+		return "", fmt.Errorf("failed to encode transaction to base64: %v", err)
+	}
+
 	resp, err := pool.rpcClient.SendTransaction(ctx, util.MakeSendTransactionRequest(txB64))
 	if err != nil {
 		return "", fmt.Errorf("failed to submit create account transaction: %v", err)
@@ -86,6 +101,7 @@ func (w *WorkerAccount) CreateAccountsFor(
 	if resp.Status == proto.TXStatusError {
 		return "", fmt.Errorf("create account transaction rejected: %s", resp.ErrorResultXDR)
 	}
+
 	w.Id.Store(seq + 1)
 	w.Balance.Swap(w.Balance.Load() - amount*int64(len(to)))
 	for _, acct := range to {
@@ -150,7 +166,7 @@ func (w *WorkerAccount) GetOnChainBalance(ctx context.Context, rpcClient *rpccli
 	}
 	xlmBalance := entry.Account.Balance / util.StroopsPerXLM
 
-	return int64(xlmBalance), nil // balance in stroops (1 XLM = 10^7 stroops)
+	return int64(xlmBalance), nil // balance in whole XLM units
 }
 
 // fetchOnChainSeq always fetches the current sequence from the network.
