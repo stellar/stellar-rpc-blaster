@@ -28,10 +28,11 @@ func TestValidatorChecksSeedStartForSeededEndpoints(t *testing.T) {
 			OldestLedger: 100,
 		},
 	}
-	params := seed.SeedData{LedgerRange: seed.Range{First: 123, Last: 456}}
+	params := &Parameters{Output: seed.SeedData{LedgerRange: seed.Range{First: 123, Last: 456}}}
 
-	err := NewEndpointSeedValidator(client, params).ValidateConfiguredEndpoints(
+	err := params.ValidateConfiguredEndpoints(
 		context.Background(),
+		client,
 		[]string{"getEvents"},
 	)
 	require.NoError(t, err)
@@ -39,10 +40,11 @@ func TestValidatorChecksSeedStartForSeededEndpoints(t *testing.T) {
 
 func TestValidatorSkipsStaticEndpoints(t *testing.T) {
 	client := &preflightEndpointSeedValidationClient{}
-	params := seed.SeedData{LedgerRange: seed.Range{First: 123, Last: 456}}
+	params := &Parameters{Output: seed.SeedData{LedgerRange: seed.Range{First: 123, Last: 456}}}
 
-	err := NewEndpointSeedValidator(client, params).ValidateConfiguredEndpoints(
+	err := params.ValidateConfiguredEndpoints(
 		context.Background(),
+		client,
 		[]string{"getHealth", "getNetwork"},
 	)
 	require.NoError(t, err)
@@ -55,10 +57,11 @@ func TestValidatorRejectsStaleStart(t *testing.T) {
 			OldestLedger: 300,
 		},
 	}
-	params := seed.SeedData{LedgerRange: seed.Range{First: 123, Last: 350}}
+	params := &Parameters{Output: seed.SeedData{LedgerRange: seed.Range{First: 123, Last: 350}}}
 
-	err := NewEndpointSeedValidator(client, params).ValidateConfiguredEndpoints(
+	err := params.ValidateConfiguredEndpoints(
 		context.Background(),
+		client,
 		[]string{"getEvents"},
 	)
 	require.Error(t, err)
@@ -71,10 +74,11 @@ func TestValidatorRejectsMissingLatestLedger(t *testing.T) {
 			OldestLedger: 100,
 		},
 	}
-	params := seed.SeedData{LedgerRange: seed.Range{First: 123, Last: 456}}
+	params := &Parameters{Output: seed.SeedData{LedgerRange: seed.Range{First: 123, Last: 456}}}
 
-	err := NewEndpointSeedValidator(client, params).ValidateConfiguredEndpoints(
+	err := params.ValidateConfiguredEndpoints(
 		context.Background(),
+		client,
 		[]string{"getLedgerEntries"},
 	)
 	require.Error(t, err)

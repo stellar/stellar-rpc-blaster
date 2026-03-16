@@ -5,27 +5,16 @@ import (
 	"fmt"
 
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
-
-	"github.com/stellar/stellar-rpc-blaster/internal/generate/seed"
 )
 
 type endpointSeedValidationClient interface {
 	GetHealth(ctx context.Context) (protocol.GetHealthResponse, error)
 }
 
-type EndpointSeedValidator struct {
-	client   endpointSeedValidationClient
-	seedData seed.SeedData
-}
-
-func NewEndpointSeedValidator(client endpointSeedValidationClient, seedData seed.SeedData) *EndpointSeedValidator {
-	return &EndpointSeedValidator{client: client, seedData: seedData}
-}
-
 // ValidateConfiguredEndpoints runs seed freshness probes for the enabled endpoints
 // before run mode starts sending load.
-func (v *EndpointSeedValidator) ValidateConfiguredEndpoints(ctx context.Context, endpointKeys []string) error {
-	if v == nil || v.client == nil {
+func (p *Parameters) ValidateConfiguredEndpoints(ctx context.Context, client endpointSeedValidationClient, endpointKeys []string) error {
+	if p == nil || client == nil {
 		return nil
 	}
 
@@ -44,13 +33,13 @@ func (v *EndpointSeedValidator) ValidateConfiguredEndpoints(ctx context.Context,
 		return nil
 	}
 
-	return v.validateRetentionWindow(ctx)
+	return p.validateRetentionWindow(ctx, client)
 }
 
-func (v *EndpointSeedValidator) validateRetentionWindow(ctx context.Context) error {
-	oldestSeedLedger := v.seedData.LedgerRange.First
+func (p *Parameters) validateRetentionWindow(ctx context.Context, client endpointSeedValidationClient) error {
+	oldestSeedLedger := p.Output.LedgerRange.First
 
-	resp, err := v.client.GetHealth(ctx)
+	resp, err := client.GetHealth(ctx)
 	if err != nil {
 		return fmt.Errorf("target RPC health check failed: %w", err)
 	}
