@@ -10,7 +10,6 @@ import (
 
 	"github.com/stellar/stellar-rpc-blaster/internal/config"
 	"github.com/stellar/stellar-rpc-blaster/internal/generate/seed"
-	"github.com/stellar/stellar-rpc-blaster/internal/generate/writer"
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
@@ -56,7 +55,7 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 	}
 	start := time.Now()
 
-	writer, err := writer.NewSeedWriter(cfg.OutputPath)
+	writer, err := seed.NewSeedWriter(cfg.OutputPath)
 	if err != nil {
 		return fmt.Errorf("failed to create seed writer: %v", err)
 	}
@@ -69,7 +68,7 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 	if err := seed.RunSeeder(ctx, g.parameters, txHashSeeder); err != nil {
 		return fmt.Errorf("failed to seed transaction hash data: %v", err)
 	}
-	writer.TxHashes = txHashSeeder.Results()
+	txHashSeeder.WriteResults(writer)
 	logger.Infof("Successfully fetched %d transaction hashes %s",
 		len(writer.TxHashes), util.LogElapsed(start))
 
@@ -78,7 +77,7 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 	if err := seed.RunSeeder(ctx, g.parameters, eventSeeder); err != nil {
 		return fmt.Errorf("failed to seed events data: %v", err)
 	}
-	writer.ContractEventData = eventSeeder.Results()
+	eventSeeder.WriteResults(writer)
 	logger.Infof("Successfully fetched %d contracts and their associated event topics %s",
 		len(writer.ContractEventData.ContractIds), util.LogElapsed(start))
 
@@ -87,7 +86,7 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 	if err := seed.RunSeeder(ctx, g.parameters, ledgerKeySeeder); err != nil {
 		return fmt.Errorf("failed to seed ledger keys: %v", err)
 	}
-	writer.LedgerKeys = ledgerKeySeeder.Results()
+	ledgerKeySeeder.WriteResults(writer)
 	logger.Infof("Successfully fetched %d ledger keys %s", len(writer.LedgerKeys), util.LogElapsed(start))
 
 	if err := writer.Close(); err != nil {

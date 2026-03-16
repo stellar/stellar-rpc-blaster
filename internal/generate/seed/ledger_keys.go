@@ -18,7 +18,7 @@ type LedgerKeySeeder struct {
 	entry     []string
 }
 
-func NewLedgerKeySeeder(rpcClient *rpcclient.Client, logger *log.Entry) *LedgerKeySeeder {
+func NewLedgerKeySeeder(rpcClient *rpcclient.Client, logger *log.Entry) Seeder {
 	return &LedgerKeySeeder{
 		rpcClient: rpcClient,
 		logger:    logger,
@@ -26,9 +26,9 @@ func NewLedgerKeySeeder(rpcClient *rpcclient.Client, logger *log.Entry) *LedgerK
 	}
 }
 
-// Results returns the accumulated ledger keys.
-func (s *LedgerKeySeeder) Results() []string {
-	return s.entry
+// WriteResults writes the accumulated ledger keys to the SeedWriter.
+func (s *LedgerKeySeeder) WriteResults(w *SeedWriter) {
+	w.LedgerKeys = s.entry
 }
 
 // SeedDataForRange implements Seeder for LedgerKeySeeder.

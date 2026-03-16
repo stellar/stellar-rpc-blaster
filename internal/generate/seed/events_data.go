@@ -19,7 +19,7 @@ type EventDataSeeder struct {
 	contractEvents ContractEvents
 }
 
-func NewEventDataSeeder(rpcClient *rpcclient.Client, logger *log.Entry) *EventDataSeeder {
+func NewEventDataSeeder(rpcClient *rpcclient.Client, logger *log.Entry) Seeder {
 	return &EventDataSeeder{
 		rpcClient:    rpcClient,
 		logger:       logger,
@@ -30,9 +30,9 @@ func NewEventDataSeeder(rpcClient *rpcclient.Client, logger *log.Entry) *EventDa
 	}
 }
 
-// Results returns the accumulated event data as a serializable EventData.
-func (s *EventDataSeeder) Results() ContractEvents {
-	return s.contractEvents
+// WriteResults writes the accumulated event data to the SeedWriter.
+func (s *EventDataSeeder) WriteResults(w *SeedWriter) {
+	w.ContractEventData = s.contractEvents
 }
 
 // SeedDataForRange implements Seeder for EventDataSeeder.

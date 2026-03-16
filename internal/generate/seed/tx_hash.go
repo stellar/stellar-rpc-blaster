@@ -24,9 +24,9 @@ func NewTxHashSeeder(rpcClient *rpcclient.Client, logger *log.Entry) *TxHashSeed
 	}
 }
 
-// Results returns the accumulated transaction hash data.
-func (s *TxHashSeeder) Results() []string {
-	return s.data
+// WriteResults writes the accumulated transaction hashes to the SeedWriter.
+func (s *TxHashSeeder) WriteResults(w *SeedWriter) {
+	w.TxHashes = s.data
 }
 
 // SeedDataForRange implements Seeder for TxHashSeeder by getting hashes and categorizing them by success or failure.

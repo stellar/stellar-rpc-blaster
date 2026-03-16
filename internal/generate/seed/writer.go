@@ -1,4 +1,4 @@
-package writer
+package seed
 
 import (
 	"encoding/json"
@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-
-	"github.com/stellar/stellar-rpc-blaster/internal/generate/seed"
 )
 
 var (
@@ -19,7 +17,7 @@ var (
 // then encodes it as a single ordered JSON object on Flush().
 type SeedWriter struct {
 	io.WriteCloser
-	seed.SeedData
+	SeedData
 }
 
 func NewSeedWriter(path string) (*SeedWriter, error) {
