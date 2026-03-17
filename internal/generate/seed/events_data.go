@@ -69,3 +69,7 @@ func (s *EventDataSeeder) SeedDataForRange(ctx context.Context, r Range) error {
 	}
 	return nil
 }
+
+func (s *EventDataSeeder) String() string {
+	return "event data"
+}

@@ -54,3 +54,7 @@ func (s *TxHashSeeder) SeedDataForRange(ctx context.Context, r Range) error {
 	}
 	return nil
 }
+
+func (s *TxHashSeeder) String() string {
+	return "transaction hash data"
+}

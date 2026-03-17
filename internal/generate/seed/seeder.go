@@ -11,6 +11,7 @@ type Seeder interface {
 	SeedDataForRange(ctx context.Context, r Range) error
 	// WriteResults writes the accumulated data to the given SeedWriter.
 	WriteResults(w *SeedWriter)
+	String() string
 }
 
 // RunSeeder iterates over processing ranges and delegates collection to the given Seeder for each range.

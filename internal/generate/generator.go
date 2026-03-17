@@ -63,31 +63,17 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 	// Set the ledger range
 	writer.LedgerRange = g.parameters.Range
 
-	// Bootstrap transaction hashes and success status within the ledger range
-	txHashSeeder := seed.NewTxHashSeeder(g.client, logger)
-	if err := seed.RunSeeder(ctx, g.parameters, txHashSeeder); err != nil {
-		return fmt.Errorf("failed to seed transaction hash data: %v", err)
+	for _, s := range []seed.Seeder{
+		seed.NewTxHashSeeder(g.client, logger),
+		seed.NewEventDataSeeder(g.client, logger),
+		seed.NewLedgerKeySeeder(g.client, logger),
+	} {
+		if err := seed.RunSeeder(ctx, g.parameters, s); err != nil {
+			return fmt.Errorf("failed to run seeder for %s: %v", s, err)
+		}
+		s.WriteResults(writer)
+		logger.Infof("Successfully fetched %s %s", s, util.LogElapsed(start))
 	}
-	txHashSeeder.WriteResults(writer)
-	logger.Infof("Successfully fetched %d transaction hashes %s",
-		len(writer.TxHashes), util.LogElapsed(start))
-
-	// Bootstrap per-contract event topic associations within the ledger range
-	eventSeeder := seed.NewEventDataSeeder(g.client, logger)
-	if err := seed.RunSeeder(ctx, g.parameters, eventSeeder); err != nil {
-		return fmt.Errorf("failed to seed events data: %v", err)
-	}
-	eventSeeder.WriteResults(writer)
-	logger.Infof("Successfully fetched %d contracts and their associated event topics %s",
-		len(writer.ContractEventData.ContractIds), util.LogElapsed(start))
-
-	// Seed ledger keys
-	ledgerKeySeeder := seed.NewLedgerKeySeeder(g.client, logger)
-	if err := seed.RunSeeder(ctx, g.parameters, ledgerKeySeeder); err != nil {
-		return fmt.Errorf("failed to seed ledger keys: %v", err)
-	}
-	ledgerKeySeeder.WriteResults(writer)
-	logger.Infof("Successfully fetched %d ledger keys %s", len(writer.LedgerKeys), util.LogElapsed(start))
 
 	if err := writer.Close(); err != nil {
 		return fmt.Errorf("failed to close seed writer: %v", err)

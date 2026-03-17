@@ -147,3 +147,7 @@ func getLedgerEntryChangesFromMeta(meta xdr.TransactionMeta) ([]xdr.LedgerEntryC
 	}
 	return changes, true
 }
+
+func (s *LedgerKeySeeder) String() string {
+	return "ledger key data"
+}
