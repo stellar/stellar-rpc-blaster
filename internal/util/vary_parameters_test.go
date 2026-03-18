@@ -47,7 +47,7 @@ func TestChooseNAtRandomDeterministicWithFixedSeed(t *testing.T) {
 
 func TestDistributionCoversAllItems(t *testing.T) {
 	items := []string{"a", "b", "c", "d", "e"}
-	counts := make(map[string]int)
+	counts := map[string]int{}
 	rng := newSeededRand(7)
 	runs := 1000
 	for range runs {
@@ -77,7 +77,7 @@ func TestWeightedChooseNZeroWeightNeverChosen(t *testing.T) {
 func TestWeightedChooseN_RespectsWeightDistribution(t *testing.T) {
 	items := []string{"heavy", "medium", "light"}
 	weights := []int{100, 10, 1}
-	counts := make(map[string]int)
+	counts := map[string]int{}
 	rng := newSeededRand(7)
 	runs := 1000
 	for range runs {
