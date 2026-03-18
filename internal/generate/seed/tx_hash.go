@@ -36,7 +36,7 @@ func (s *TxHashSeeder) SeedDataForRange(ctx context.Context, r Range) error {
 
 		txsResponse, err := s.rpcClient.GetTransactions(ctx, req)
 		if err != nil {
-			return fmt.Errorf("failed to fetch transaction data for ledger %d, cursor %s: %v", r.First, cursor, err)
+			return fmt.Errorf("failed to fetch transaction data for ledger %d, cursor %s: %w", r.First, cursor, err)
 		}
 		if len(txsResponse.Transactions) == 0 {
 			break

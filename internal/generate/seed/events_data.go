@@ -45,7 +45,7 @@ func (s *EventDataSeeder) SeedDataForRange(ctx context.Context, r Range) error {
 			req := util.MakeGetEventsRequest(start, endLedger, cursor)
 			eventsResponse, err := s.rpcClient.GetEvents(ctx, req)
 			if err != nil {
-				return fmt.Errorf("failed to fetch event data for ledgers %d->%d: %v",
+				return fmt.Errorf("failed to fetch event data for ledgers %d->%d: %w",
 					start, endLedger, err)
 			}
 
@@ -58,7 +58,7 @@ func (s *EventDataSeeder) SeedDataForRange(ctx context.Context, r Range) error {
 			}
 			c, err := protocol.ParseCursor(eventsResponse.Cursor)
 			if err != nil {
-				return fmt.Errorf("failed to parse events cursor %q: %v", eventsResponse.Cursor, err)
+				return fmt.Errorf("failed to parse events cursor %q: %w", eventsResponse.Cursor, err)
 			}
 			cursor = &c
 		}

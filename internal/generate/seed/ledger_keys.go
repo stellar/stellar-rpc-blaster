@@ -38,7 +38,7 @@ func (s *LedgerKeySeeder) SeedDataForRange(ctx context.Context, r Range) error {
 
 		txsResponse, err := s.rpcClient.GetTransactions(ctx, req)
 		if err != nil {
-			return fmt.Errorf("failed to fetch transaction data from ledger %d, cursor %s: %v",
+			return fmt.Errorf("failed to fetch transaction data from ledger %d, cursor %s: %w",
 				r.First, cursor, err)
 		}
 
@@ -58,7 +58,7 @@ func (s *LedgerKeySeeder) SeedDataForRange(ctx context.Context, r Range) error {
 
 			keys, err := s.getKeysFromTxResultMeta(txResultMeta)
 			if err != nil {
-				return fmt.Errorf("failed to extract ledger keys from transaction result meta XDR for tx %s: %v",
+				return fmt.Errorf("failed to extract ledger keys from transaction result meta XDR for tx %s: %w",
 					tx.TransactionDetails.TransactionHash, err)
 			}
 			for _, key := range keys {
@@ -74,7 +74,7 @@ func (s *LedgerKeySeeder) SeedDataForRange(ctx context.Context, r Range) error {
 
 				keyXDR, err := xdr.MarshalBase64(key)
 				if err != nil {
-					return fmt.Errorf("failed to marshal ledger key to XDR for tx %s: %v",
+					return fmt.Errorf("failed to marshal ledger key to XDR for tx %s: %w",
 						tx.TransactionDetails.TransactionHash, err)
 				}
 				s.entry = append(s.entry, keyXDR)
@@ -87,7 +87,7 @@ func (s *LedgerKeySeeder) SeedDataForRange(ctx context.Context, r Range) error {
 func (s *LedgerKeySeeder) getKeysFromTxResultMeta(resultMetaXDR string) ([]xdr.LedgerKey, error) {
 	var meta xdr.TransactionMeta
 	if err := xdr.SafeUnmarshalBase64(resultMetaXDR, &meta); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal transaction result meta XDR: %v", err)
+		return nil, fmt.Errorf("failed to unmarshal transaction result meta XDR: %w", err)
 	}
 
 	changes, ok := getLedgerEntryChangesFromMeta(meta)
@@ -99,7 +99,7 @@ func (s *LedgerKeySeeder) getKeysFromTxResultMeta(resultMetaXDR string) ([]xdr.L
 	for _, change := range changes {
 		key, err := change.LedgerKey()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get ledger key from change: %v", err)
+			return nil, fmt.Errorf("failed to get ledger key from change: %w", err)
 		}
 		out = append(out, key)
 	}

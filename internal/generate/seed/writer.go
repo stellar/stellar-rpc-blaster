@@ -23,7 +23,7 @@ type SeedWriter struct {
 func NewSeedWriter(path string, ledgerRange Range) (*SeedWriter, error) {
 	f, err := os.Create(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create seed file %s: %v", path, err)
+		return nil, fmt.Errorf("failed to create seed file %s: %w", path, err)
 	}
 	sw := SeedWriter{
 		WriteCloser: f,
@@ -43,10 +43,10 @@ func (w *SeedWriter) Write(bytes []byte) (int, error) {
 func (w *SeedWriter) Close() error {
 	data, err := w.MarshalJSON()
 	if err != nil {
-		return errors.Join(fmt.Errorf("failed to marshal seed data to JSON: %v", err), w.WriteCloser.Close())
+		return errors.Join(fmt.Errorf("failed to marshal seed data to JSON: %w", err), w.WriteCloser.Close())
 	}
 	if _, err := w.Write(data); err != nil {
-		return errors.Join(fmt.Errorf("failed to write seed data to file: %v", err), w.WriteCloser.Close())
+		return errors.Join(fmt.Errorf("failed to write seed data to file: %w", err), w.WriteCloser.Close())
 	}
 	return w.WriteCloser.Close()
 }

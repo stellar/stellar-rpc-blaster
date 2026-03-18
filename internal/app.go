@@ -96,7 +96,7 @@ func (a *App) init(ctx context.Context, runtimeSettings config.RuntimeSettings) 
 
 	a.client = util.SharedHTTPClient()
 	if a.config, err = config.NewConfig(ctx, runtimeSettings, a.logger, a.client); err != nil {
-		return fmt.Errorf("Could not load configuration: %v", err)
+		return fmt.Errorf("Could not load configuration: %w", err)
 	}
 	return nil
 }
@@ -128,7 +128,7 @@ func (a *App) runLoadTest(ctx context.Context) error {
 func (a *App) runGenerate(ctx context.Context) error {
 	g, err := generate.NewGenerator(ctx, a.config)
 	if err != nil {
-		return fmt.Errorf("could not make new generator: %v", err)
+		return fmt.Errorf("could not make new generator: %w", err)
 	}
 	return g.Generate(ctx, a.logger, a.config)
 }

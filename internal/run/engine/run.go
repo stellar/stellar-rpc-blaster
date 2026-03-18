@@ -44,13 +44,13 @@ func RunVegeta(
 	if cfg.InputDataPath != "" {
 		p, err := parameters.GetParameters(cfg.InputDataPath)
 		if err != nil {
-			return fmt.Errorf("failed to load seed data: %v", err)
+			return fmt.Errorf("failed to load seed data: %w", err)
 		}
 		sharedParams = p
 
 		// Run preflight validation to ensure seed data is fresh enough for the target RPC before blasting any endpoints
 		if err := sharedParams.ValidateConfiguredEndpoints(ctx, cfg.RpcClient, cfg.GetActiveEndpoints()); err != nil {
-			return fmt.Errorf("preflight seed validation failed (try rerunning `generate`): %v", err)
+			return fmt.Errorf("preflight seed validation failed (try rerunning `generate`): %w", err)
 		}
 	}
 
@@ -66,7 +66,7 @@ func RunVegeta(
 
 		paramMaps, err := parameters.BuildEndpointParams(endpointKey, sharedParams)
 		if err != nil {
-			return fmt.Errorf("couldn't build params for endpoint %s: %v", endpointKey, err)
+			return fmt.Errorf("couldn't build params for endpoint %s: %w", endpointKey, err)
 		}
 		bodies := make([][]byte, len(paramMaps))
 		for i, p := range paramMaps {
@@ -78,7 +78,7 @@ func RunVegeta(
 			}
 			bodies[i], err = json.Marshal(req)
 			if err != nil {
-				return fmt.Errorf("couldn't marshal request for endpoint %s: %v", endpointKey, err)
+				return fmt.Errorf("couldn't marshal request for endpoint %s: %w", endpointKey, err)
 			}
 		}
 		targeter := NewJSONRPCTargeter(cfg.RpcUrl, bodies)
