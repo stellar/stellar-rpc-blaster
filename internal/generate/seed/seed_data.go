@@ -34,15 +34,16 @@ type ParamTopics struct {
 	Params [][]string `json:"params"`
 }
 
-func (c *ContractEvents) AddEventData(contractId string, eventData protocol.EventInfo) {
-	td, ok := c.ContractIds[contractId]
+func (c *ContractEvents) AddEventData(eventData protocol.EventInfo) {
+	cId := eventData.ContractID
+	td, ok := c.ContractIds[cId]
 	if !ok {
 		// new contract, add contract + topic + params
 		data := TopicData{
 			Topic:        map[string]ParamTopics{},
 			uniqueTopics: set.NewSet[string](int(util.DefaultSeedSliceSize)),
 		}
-		c.ContractIds[contractId] = &data
+		c.ContractIds[cId] = &data
 		td = &data
 	}
 

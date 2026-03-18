@@ -50,8 +50,7 @@ func (s *EventDataSeeder) SeedDataForRange(ctx context.Context, r Range) error {
 			}
 
 			for _, event := range eventsResponse.Events {
-				cid := event.ContractID
-				s.contractEvents.AddEventData(cid, event)
+				s.contractEvents.AddEventData(event)
 			}
 
 			if eventsResponse.Cursor == "" || len(eventsResponse.Events) == 0 {
