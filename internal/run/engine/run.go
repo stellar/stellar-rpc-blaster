@@ -60,7 +60,7 @@ func RunVegeta(
 	for _, endpointKey := range cfg.GetEndpoints() {
 		rps := cfg.GetEndpointRPS(endpointKey)
 		if rps <= 0 {
-			logger.Infof("Skipping endpoint: %v (RPS <= 0)", endpointKey)
+			logger.Infof("Skipping endpoint: %s (RPS <= 0)", endpointKey)
 			continue
 		}
 

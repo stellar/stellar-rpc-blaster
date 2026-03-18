@@ -99,7 +99,7 @@ func NewConfig(
 	cfg.ConfigPath = settings.ConfigPath
 	cfg.RpcUrl = settings.RpcUrl
 	cfg.Mode = settings.Mode
-	logger.Debugf("Requested %v mode", settings.Mode.Name())
+	logger.Debugf("Requested %s mode", settings.Mode.Name())
 	switch cfg.Mode {
 	case Run:
 		cfg.Duration = settings.Duration
@@ -113,7 +113,7 @@ func NewConfig(
 		cfg.LedgerWindow = settings.LedgerWindow
 		cfg.Count = settings.Count
 	default:
-		return Config{}, fmt.Errorf("unknown mode: %v", cfg.Mode)
+		return Config{}, fmt.Errorf("unknown mode: %s", cfg.Mode.Name())
 	}
 
 	logger.Infof("Successfully loaded config from %s", settings.ConfigPath)
