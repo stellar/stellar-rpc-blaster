@@ -16,7 +16,7 @@ Example usage on localhost RPC testnet instance (note that instance must be runn
 
 To generate data for the `generate` command, example usage is as follows:
 ```
-./stellar-rpc-loadtest generate \
+./stellar-rpc-blaster generate \
   --rpc-url <RPC_URL> \
   [--output <PATH_TO_REQUEST_DATA_DAT>] \
   [--ledger-window START[,END]]
