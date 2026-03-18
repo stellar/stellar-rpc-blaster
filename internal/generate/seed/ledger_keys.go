@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
-	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
@@ -14,14 +13,12 @@ import (
 // LedgerKeySeeder collects XDR-encoded ledger keys from transaction metadata.
 type LedgerKeySeeder struct {
 	rpcClient *rpcclient.Client
-	logger    *log.Entry
 	entry     []string
 }
 
-func NewLedgerKeySeeder(rpcClient *rpcclient.Client, logger *log.Entry) Seeder {
+func NewLedgerKeySeeder(rpcClient *rpcclient.Client) Seeder {
 	return &LedgerKeySeeder{
 		rpcClient: rpcClient,
-		logger:    logger,
 		entry:     make([]string, 0, util.DefaultSeedSliceSize),
 	}
 }
@@ -61,9 +58,8 @@ func (s *LedgerKeySeeder) SeedDataForRange(ctx context.Context, r Range) error {
 
 			keys, err := s.getKeysFromTxResultMeta(txResultMeta)
 			if err != nil {
-				s.logger.Errorf("failed to extract ledger keys from transaction result meta XDR for tx %s: %v",
+				return fmt.Errorf("failed to extract ledger keys from transaction result meta XDR for tx %s: %v",
 					tx.TransactionDetails.TransactionHash, err)
-				continue
 			}
 			for _, key := range keys {
 				switch key.Type {
@@ -78,9 +74,8 @@ func (s *LedgerKeySeeder) SeedDataForRange(ctx context.Context, r Range) error {
 
 				keyXDR, err := xdr.MarshalBase64(key)
 				if err != nil {
-					s.logger.Errorf("failed to marshal ledger key to XDR for tx %s: %v",
+					return fmt.Errorf("failed to marshal ledger key to XDR for tx %s: %v",
 						tx.TransactionDetails.TransactionHash, err)
-					continue
 				}
 				s.entry = append(s.entry, keyXDR)
 			}
@@ -104,8 +99,7 @@ func (s *LedgerKeySeeder) getKeysFromTxResultMeta(resultMetaXDR string) ([]xdr.L
 	for _, change := range changes {
 		key, err := change.LedgerKey()
 		if err != nil {
-			s.logger.Errorf("failed to get ledger key from change: %v", err)
-			continue
+			return nil, fmt.Errorf("failed to get ledger key from change: %v", err)
 		}
 		out = append(out, key)
 	}

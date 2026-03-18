@@ -16,10 +16,9 @@ type TxHashSeeder struct {
 	data      []string
 }
 
-func NewTxHashSeeder(rpcClient *rpcclient.Client, logger *log.Entry) *TxHashSeeder {
+func NewTxHashSeeder(rpcClient *rpcclient.Client) *TxHashSeeder {
 	return &TxHashSeeder{
 		rpcClient: rpcClient,
-		logger:    logger,
 		data:      make([]string, 0, util.DefaultSeedSliceSize),
 	}
 }

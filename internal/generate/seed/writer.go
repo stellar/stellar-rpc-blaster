@@ -20,14 +20,16 @@ type SeedWriter struct {
 	SeedData
 }
 
-func NewSeedWriter(path string) (*SeedWriter, error) {
+func NewSeedWriter(path string, ledgerRange Range) (*SeedWriter, error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create seed file %s: %v", path, err)
 	}
-	return &SeedWriter{
+	sw := SeedWriter{
 		WriteCloser: f,
-	}, nil
+	}
+	sw.LedgerRange = ledgerRange
+	return &sw, nil
 }
 
 func (w *SeedWriter) MarshalJSON() ([]byte, error) {

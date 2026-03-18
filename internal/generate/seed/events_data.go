@@ -6,7 +6,6 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
-	"github.com/stellar/go-stellar-sdk/support/log"
 
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
@@ -14,15 +13,13 @@ import (
 // EventDataSeeder collects per-contract event topic associations with a shared topic dictionary.
 type EventDataSeeder struct {
 	rpcClient      *rpcclient.Client
-	logger         *log.Entry
 	uniqueTopics   []string // ordered list of unique topics
 	contractEvents ContractEvents
 }
 
-func NewEventDataSeeder(rpcClient *rpcclient.Client, logger *log.Entry) Seeder {
+func NewEventDataSeeder(rpcClient *rpcclient.Client) Seeder {
 	return &EventDataSeeder{
 		rpcClient:    rpcClient,
-		logger:       logger,
 		uniqueTopics: make([]string, 0, util.DefaultSeedSliceSize),
 		contractEvents: ContractEvents{
 			ContractIds: make(map[string]*TopicData, util.DefaultSeedSliceSize),
