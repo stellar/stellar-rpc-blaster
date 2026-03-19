@@ -153,11 +153,7 @@ func (c *Config) processToml(tomlPath string) error {
 // Ensure at least one endpoint is configured if launching a load test and data-dependent endpoints have input data
 func (c *Config) validateEndpointConfig() error {
 	hasValidEndpoint := false
-	for endpoint, endpointData := range c.Endpoints {
-		if endpointData.RPS <= 0 {
-			continue
-		}
-
+	for _, endpoint := range c.GetActiveEndpoints() {
 		hasValidEndpoint = true
 		if needs, err := parameters.EndpointNeedsData(endpoint); err != nil {
 			return fmt.Errorf("failed to check if endpoint %s needs data: %w", endpoint, err)
