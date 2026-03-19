@@ -44,25 +44,29 @@ func RunVegeta(
 	if cfg.InputDataPath != "" {
 		p, err := parameters.GetParameters(cfg.InputDataPath)
 		if err != nil {
-			return fmt.Errorf("failed to load seed data: %v", err)
+			return fmt.Errorf("failed to load seed data: %w", err)
 		}
 		sharedParams = p
+
+		// Run preflight validation to ensure seed data is fresh enough for the target RPC before blasting any endpoints
+		if err := sharedParams.ValidateConfiguredEndpoints(ctx, cfg.RpcClient, cfg.GetActiveEndpoints()); err != nil {
+			return fmt.Errorf("preflight seed validation failed (try rerunning `generate`): %w", err)
+		}
 	}
 
 	// Construct endpoint blast configs
 	// 3... 2... 1...
 	var endpointBlasts []endpointBlast
-	var skippedEndpoints []string
 	for _, endpointKey := range cfg.GetEndpoints() {
 		rps := cfg.GetEndpointRPS(endpointKey)
 		if rps <= 0 {
-			skippedEndpoints = append(skippedEndpoints, endpointKey)
+			logger.Infof("Skipping endpoint: %s (RPS <= 0)", endpointKey)
 			continue
 		}
 
 		paramMaps, err := parameters.BuildEndpointParams(endpointKey, sharedParams)
 		if err != nil {
-			return fmt.Errorf("couldn't build params for endpoint %s: %v", endpointKey, err)
+			return fmt.Errorf("couldn't build params for endpoint %s: %w", endpointKey, err)
 		}
 		bodies := make([][]byte, len(paramMaps))
 		for i, p := range paramMaps {
@@ -74,7 +78,7 @@ func RunVegeta(
 			}
 			bodies[i], err = json.Marshal(req)
 			if err != nil {
-				return fmt.Errorf("couldn't marshal request for endpoint %s: %v", endpointKey, err)
+				return fmt.Errorf("couldn't marshal request for endpoint %s: %w", endpointKey, err)
 			}
 		}
 		targeter := NewJSONRPCTargeter(cfg.RpcUrl, bodies)
@@ -95,9 +99,6 @@ func RunVegeta(
 				MaxRPS:        rps,
 			},
 		})
-	}
-	if len(skippedEndpoints) > 0 {
-		logger.Infof("Skipping endpoints with RPS<=0: %v", skippedEndpoints)
 	}
 
 	// Fire!

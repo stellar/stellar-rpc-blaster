@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
-	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
@@ -14,21 +13,19 @@ import (
 // LedgerKeySeeder collects XDR-encoded ledger keys from transaction metadata.
 type LedgerKeySeeder struct {
 	rpcClient *rpcclient.Client
-	logger    *log.Entry
 	entry     []string
 }
 
-func NewLedgerKeySeeder(rpcClient *rpcclient.Client, logger *log.Entry) *LedgerKeySeeder {
+func NewLedgerKeySeeder(rpcClient *rpcclient.Client) Seeder {
 	return &LedgerKeySeeder{
 		rpcClient: rpcClient,
-		logger:    logger,
 		entry:     make([]string, 0, util.DefaultSeedSliceSize),
 	}
 }
 
-// Results returns the accumulated ledger keys.
-func (s *LedgerKeySeeder) Results() []string {
-	return s.entry
+// WriteResults writes the accumulated ledger keys to the SeedWriter.
+func (s *LedgerKeySeeder) WriteResults(w *SeedWriter) {
+	w.LedgerKeys = s.entry
 }
 
 // SeedDataForRange implements Seeder for LedgerKeySeeder.
@@ -41,7 +38,7 @@ func (s *LedgerKeySeeder) SeedDataForRange(ctx context.Context, r Range) error {
 
 		txsResponse, err := s.rpcClient.GetTransactions(ctx, req)
 		if err != nil {
-			return fmt.Errorf("failed to fetch transaction data from ledger %d, cursor %s: %v",
+			return fmt.Errorf("failed to fetch transaction data from ledger %d, cursor %s: %w",
 				r.First, cursor, err)
 		}
 
@@ -61,9 +58,8 @@ func (s *LedgerKeySeeder) SeedDataForRange(ctx context.Context, r Range) error {
 
 			keys, err := s.getKeysFromTxResultMeta(txResultMeta)
 			if err != nil {
-				s.logger.Errorf("failed to extract ledger keys from transaction result meta XDR for tx %s: %v",
+				return fmt.Errorf("failed to extract ledger keys from transaction result meta XDR for tx %s: %w",
 					tx.TransactionDetails.TransactionHash, err)
-				continue
 			}
 			for _, key := range keys {
 				switch key.Type {
@@ -78,9 +74,8 @@ func (s *LedgerKeySeeder) SeedDataForRange(ctx context.Context, r Range) error {
 
 				keyXDR, err := xdr.MarshalBase64(key)
 				if err != nil {
-					s.logger.Errorf("failed to marshal ledger key to XDR for tx %s: %v",
+					return fmt.Errorf("failed to marshal ledger key to XDR for tx %s: %w",
 						tx.TransactionDetails.TransactionHash, err)
-					continue
 				}
 				s.entry = append(s.entry, keyXDR)
 			}
@@ -92,7 +87,7 @@ func (s *LedgerKeySeeder) SeedDataForRange(ctx context.Context, r Range) error {
 func (s *LedgerKeySeeder) getKeysFromTxResultMeta(resultMetaXDR string) ([]xdr.LedgerKey, error) {
 	var meta xdr.TransactionMeta
 	if err := xdr.SafeUnmarshalBase64(resultMetaXDR, &meta); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal transaction result meta XDR: %v", err)
+		return nil, fmt.Errorf("failed to unmarshal transaction result meta XDR: %w", err)
 	}
 
 	changes, ok := getLedgerEntryChangesFromMeta(meta)
@@ -104,8 +99,7 @@ func (s *LedgerKeySeeder) getKeysFromTxResultMeta(resultMetaXDR string) ([]xdr.L
 	for _, change := range changes {
 		key, err := change.LedgerKey()
 		if err != nil {
-			s.logger.Errorf("failed to get ledger key from change: %v", err)
-			continue
+			return nil, fmt.Errorf("failed to get ledger key from change: %w", err)
 		}
 		out = append(out, key)
 	}
@@ -146,4 +140,8 @@ func getLedgerEntryChangesFromMeta(meta xdr.TransactionMeta) ([]xdr.LedgerEntryC
 		return nil, false
 	}
 	return changes, true
+}
+
+func (s *LedgerKeySeeder) String() string {
+	return "ledger key data"
 }

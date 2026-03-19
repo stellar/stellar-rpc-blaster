@@ -23,6 +23,9 @@ const (
 	PortAllocationRatio = 0.60  // fraction of ports to use for connections (leaves 40% free for other processes)
 	WorkerMultiplier    = 2.5   // ratio for how many workers can share one connection
 	MaxWorkers          = uint64(float64(PortCount) * PortAllocationRatio * WorkerMultiplier)
+
+	// Number of request bodies to pre-generate for data-dependent endpoints
+	DefaultNumPrebuiltBodies = int(1000)
 )
 
 // Data dependent endpoint limits and probabilities for run
@@ -31,12 +34,4 @@ const (
 	LedgerKeyLimit         = 200
 	PrJson         float64 = 0.5 // probability of using "json" vs "xdr" format for transaction requests
 	PrCursor       float64 = 0.5 // probability of paginating with a cursor
-)
-
-// getEvents filter dimension probabilities
-const (
-	PrEventContractFilter float64 = 0.5 // probability of including contract ID(s) in an event filter
-	PrEventMultiContract  float64 = 0.5 // when contract filter is present, probability of multiple (2-5) vs single
-	PrEventTypeFilter     float64 = 0.5 // probability of including an event type filter
-	PrEventTopicFilter    float64 = 0.5 // probability of including a topic filter
 )

@@ -16,17 +16,16 @@ type TxHashSeeder struct {
 	data      []string
 }
 
-func NewTxHashSeeder(rpcClient *rpcclient.Client, logger *log.Entry) *TxHashSeeder {
+func NewTxHashSeeder(rpcClient *rpcclient.Client) *TxHashSeeder {
 	return &TxHashSeeder{
 		rpcClient: rpcClient,
-		logger:    logger,
 		data:      make([]string, 0, util.DefaultSeedSliceSize),
 	}
 }
 
-// Results returns the accumulated transaction hash data.
-func (s *TxHashSeeder) Results() []string {
-	return s.data
+// WriteResults writes the accumulated transaction hashes to the SeedWriter.
+func (s *TxHashSeeder) WriteResults(w *SeedWriter) {
+	w.TxHashes = s.data
 }
 
 // SeedDataForRange implements Seeder for TxHashSeeder by getting hashes and categorizing them by success or failure.
@@ -37,7 +36,7 @@ func (s *TxHashSeeder) SeedDataForRange(ctx context.Context, r Range) error {
 
 		txsResponse, err := s.rpcClient.GetTransactions(ctx, req)
 		if err != nil {
-			return fmt.Errorf("failed to fetch transaction data for ledger %d, cursor %s: %v", r.First, cursor, err)
+			return fmt.Errorf("failed to fetch transaction data for ledger %d, cursor %s: %w", r.First, cursor, err)
 		}
 		if len(txsResponse.Transactions) == 0 {
 			break
@@ -53,4 +52,8 @@ func (s *TxHashSeeder) SeedDataForRange(ctx context.Context, r Range) error {
 		}
 	}
 	return nil
+}
+
+func (s *TxHashSeeder) String() string {
+	return "transaction hash data"
 }

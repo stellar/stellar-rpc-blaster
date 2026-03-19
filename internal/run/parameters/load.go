@@ -17,7 +17,7 @@ type Parameters struct {
 func GetParameters(dataPath string) (*Parameters, error) {
 	output, err := loadParameters(dataPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load parameters: %v", err)
+		return nil, fmt.Errorf("failed to load parameters: %w", err)
 	}
 
 	params := &Parameters{
@@ -31,13 +31,13 @@ func GetParameters(dataPath string) (*Parameters, error) {
 func loadParameters(dataPath string) (seed.SeedData, error) {
 	f, err := os.Open(dataPath)
 	if err != nil {
-		return seed.SeedData{}, fmt.Errorf("couldn't open seed data file %s: %v", dataPath, err)
+		return seed.SeedData{}, fmt.Errorf("couldn't open seed data file %s: %w", dataPath, err)
 	}
 	defer f.Close()
 
 	var output seed.SeedData
 	if err := json.NewDecoder(f).Decode(&output); err != nil {
-		return seed.SeedData{}, fmt.Errorf("failed to decode seed data: %v", err)
+		return seed.SeedData{}, fmt.Errorf("failed to decode seed data: %w", err)
 	}
 	return output, nil
 }

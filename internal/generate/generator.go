@@ -5,45 +5,52 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/support/log"
 
 	"github.com/stellar/stellar-rpc-blaster/internal/config"
 	"github.com/stellar/stellar-rpc-blaster/internal/generate/seed"
-	"github.com/stellar/stellar-rpc-blaster/internal/generate/writer"
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
 type Generator struct {
-	rpcUrl     string
-	client     *rpcclient.Client
+	Seeders    []seed.Seeder
+	Writer     *seed.SeedWriter
 	parameters seed.PreseedParameters
 }
 
-func NewGenerator(ctx context.Context, config config.Config) (*Generator, error) {
-	window, err := seed.GetLedgerRange(ctx, config.RpcClient, config.LedgerWindow, config.Count)
+func NewGenerator(ctx context.Context, cfg config.Config) (*Generator, error) {
+	window, err := seed.GetLedgerRange(ctx, cfg.RpcClient, cfg.LedgerWindow, cfg.Count)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get ledger range for generation: %v", err)
+		return nil, fmt.Errorf("failed to get ledger range for generation: %w", err)
 	}
 
 	parameters := seed.PreseedParameters{
-		ExportPath: config.OutputPath,
+		ExportPath: cfg.OutputPath,
 		Range:      window,
 	}
 
 	// If the window contains more ledgers than count, sample uniformly
-	if config.Count < window.Last-window.First+1 {
-		sampledLedgers, err := seed.ComputeSampledLedgers(window, config.Count)
+	if cfg.Count < window.Last-window.First+1 {
+		sampledLedgers, err := seed.ComputeSampledLedgers(window, cfg.Count)
 		if err != nil {
-			return nil, fmt.Errorf("could not get sample of ledgers: %v", err)
+			return nil, fmt.Errorf("could not get sample of ledgers: %w", err)
 		}
 		parameters.ProcessingRanges = seed.GroupSampledLedgersIntoRanges(sampledLedgers)
 	}
 
+	writer, err := seed.NewSeedWriter(cfg.OutputPath, parameters.Range)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create seed writer: %w", err)
+	}
+
 	return &Generator{
-		rpcUrl:     config.RpcUrl,
-		client:     config.RpcClient,
 		parameters: parameters,
+		Writer:     writer,
+		Seeders: []seed.Seeder{
+			seed.NewTxHashSeeder(cfg.RpcClient),
+			seed.NewEventDataSeeder(cfg.RpcClient),
+			seed.NewLedgerKeySeeder(cfg.RpcClient),
+		},
 	}, nil
 }
 
@@ -56,33 +63,16 @@ func (g *Generator) Generate(ctx context.Context, logger *log.Entry, cfg config.
 	}
 	start := time.Now()
 
-	writer, err := writer.NewSeedWriter(cfg.OutputPath)
-	if err != nil {
-		return fmt.Errorf("failed to create seed writer: %v", err)
+	for _, s := range g.Seeders {
+		if err := seed.RunSeeder(ctx, g.parameters, s); err != nil {
+			return fmt.Errorf("failed to run seeder for %s: %w", s, err)
+		}
+		s.WriteResults(g.Writer)
+		logger.Infof("Successfully fetched %s %s", s, util.LogElapsed(start))
 	}
 
-	// Set the ledger range
-	writer.LedgerRange = g.parameters.Range
-
-	// Bootstrap transaction hashes and success status within the ledger range
-	txHashSeeder := seed.NewTxHashSeeder(g.client, logger)
-	if err := seed.RunSeeder(ctx, g.parameters, txHashSeeder); err != nil {
-		return fmt.Errorf("failed to seed transaction hash data: %v", err)
-	}
-	writer.TxHashes = txHashSeeder.Results()
-	logger.Infof("Successfully fetched %d transaction hashes %s",
-		len(writer.TxHashes), util.LogElapsed(start))
-
-	// Seed ledger keys
-	ledgerKeySeeder := seed.NewLedgerKeySeeder(g.client, logger)
-	if err := seed.RunSeeder(ctx, g.parameters, ledgerKeySeeder); err != nil {
-		return fmt.Errorf("failed to seed ledger keys: %v", err)
-	}
-	writer.LedgerKeys = ledgerKeySeeder.Results()
-	logger.Infof("Successfully fetched %d ledger keys %s", len(writer.LedgerKeys), util.LogElapsed(start))
-
-	if err := writer.Close(); err != nil {
-		return fmt.Errorf("failed to close seed writer: %v", err)
+	if err := g.Writer.Close(); err != nil {
+		return fmt.Errorf("failed to close seed writer: %w", err)
 	}
 
 	logger.Infof("Generated data written to %s %s", cfg.OutputPath, util.LogElapsed(start))

@@ -26,7 +26,7 @@ func GetLatestCheckpointLedger(ctx context.Context, rpcClient *rpcclient.Client)
 	checkpointManager := checkpoint.NewCheckpointManager(util.CheckpointFrequency)
 	latestLedger, err := rpcClient.GetLatestLedger(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("failed to fetch latest ledger: %v", err)
+		return 0, fmt.Errorf("failed to fetch latest ledger: %w", err)
 	}
 
 	return checkpointManager.PrevCheckpoint(latestLedger.Sequence), nil
@@ -41,7 +41,7 @@ func GetLedgerRange(
 ) (Range, error) {
 	latestCheckpointLedger, err := GetLatestCheckpointLedger(ctx, rpcClient)
 	if err != nil {
-		return Range{}, fmt.Errorf("failed to get latest checkpoint ledger: %v", err)
+		return Range{}, fmt.Errorf("failed to get latest checkpoint ledger: %w", err)
 	}
 
 	var first, last uint32

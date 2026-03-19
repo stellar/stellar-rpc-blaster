@@ -91,7 +91,7 @@ func NewConfig(
 	cfg.RpcClient = rpcclient.NewClient(settings.RpcUrl, client)
 
 	if getNetworkResponse, err := cfg.RpcClient.GetNetwork(ctx); err != nil {
-		return Config{}, fmt.Errorf("failed to fetch network passphrase: %v", err)
+		return Config{}, fmt.Errorf("failed to fetch network passphrase: %w", err)
 	} else {
 		cfg.NetworkPassphrase = getNetworkResponse.Passphrase
 	}
@@ -99,7 +99,7 @@ func NewConfig(
 	cfg.ConfigPath = settings.ConfigPath
 	cfg.RpcUrl = settings.RpcUrl
 	cfg.Mode = settings.Mode
-	logger.Debugf("Requested %v mode", settings.Mode.Name())
+	logger.Debugf("Requested %s mode", settings.Mode.Name())
 	switch cfg.Mode {
 	case Run:
 		cfg.Duration = settings.Duration
@@ -113,7 +113,7 @@ func NewConfig(
 		cfg.LedgerWindow = settings.LedgerWindow
 		cfg.Count = settings.Count
 	default:
-		return Config{}, fmt.Errorf("unknown mode: %v", cfg.Mode)
+		return Config{}, fmt.Errorf("unknown mode: %s", cfg.Mode.Name())
 	}
 
 	logger.Infof("Successfully loaded config from %s", settings.ConfigPath)
@@ -125,12 +125,12 @@ func (c *Config) processToml(tomlPath string) error {
 	// Load config TOML file
 	cfg, err := toml.LoadFile(tomlPath)
 	if err != nil {
-		return fmt.Errorf("config file \"%s\" was not found: %v", tomlPath, err)
+		return fmt.Errorf("config file \"%s\" was not found: %w", tomlPath, err)
 	}
 
 	// Unmarshal TOML data into the Config struct
 	if err = cfg.Unmarshal(c); err != nil {
-		return fmt.Errorf("error unmarshalling TOML config: %v", err)
+		return fmt.Errorf("error unmarshalling TOML config: %w", err)
 	}
 
 	if c.Mode == Run {
@@ -150,7 +150,7 @@ func (c *Config) validateEndpointConfig() error {
 			hasValidEndpoint = true
 		}
 		if needs, err := parameters.EndpointNeedsData(endpoint); err != nil {
-			return fmt.Errorf("failed to check if endpoint %s needs data: %v", endpoint, err)
+			return fmt.Errorf("failed to check if endpoint %s needs data: %w", endpoint, err)
 		} else if needs && c.InputDataPath == "" {
 			return fmt.Errorf("endpoint %s requires input data, but no input-data-path was provided", endpoint)
 		}
@@ -170,4 +170,15 @@ func (c *Config) GetEndpointRPS(key string) int {
 		return ep.RPS
 	}
 	return 0
+}
+
+// GetActiveEndpoints returns the endpoints configured with RPS > 0.
+func (c *Config) GetActiveEndpoints() []string {
+	activeEndpoints := make([]string, 0, len(c.Endpoints))
+	for _, endpointKey := range c.GetEndpoints() {
+		if c.GetEndpointRPS(endpointKey) > 0 {
+			activeEndpoints = append(activeEndpoints, endpointKey)
+		}
+	}
+	return activeEndpoints
 }
