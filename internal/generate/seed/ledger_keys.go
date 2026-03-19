@@ -11,21 +11,25 @@ import (
 )
 
 // LedgerKeySeeder collects XDR-encoded ledger keys from transaction metadata.
+// Uses a set to deduplicate and track removals across the seeded range.
 type LedgerKeySeeder struct {
 	rpcClient *rpcclient.Client
-	entry     []string
+	live      map[string]struct{}
 }
 
 func NewLedgerKeySeeder(rpcClient *rpcclient.Client) Seeder {
 	return &LedgerKeySeeder{
 		rpcClient: rpcClient,
-		entry:     make([]string, 0, util.DefaultSeedSliceSize),
+		live:      make(map[string]struct{}, util.DefaultSeedSliceSize),
 	}
 }
 
-// WriteResults writes the accumulated ledger keys to the SeedWriter.
+// WriteResults writes the deduplicated live ledger keys to the SeedWriter.
 func (s *LedgerKeySeeder) WriteResults(w *SeedWriter) {
-	w.LedgerKeys = s.entry
+	w.LedgerKeys = make([]string, 0, len(s.live))
+	for k := range s.live {
+		w.LedgerKeys = append(w.LedgerKeys, k)
+	}
 }
 
 // SeedDataForRange implements Seeder for LedgerKeySeeder.
@@ -63,7 +67,6 @@ func (s *LedgerKeySeeder) SeedDataForRange(ctx context.Context, r Range) error {
 			}
 			for _, key := range keys {
 				switch key.Type {
-				// desired ledger entry types for which we want the keys
 				case xdr.LedgerEntryTypeAccount,
 					xdr.LedgerEntryTypeTrustline,
 					xdr.LedgerEntryTypeContractCode,
@@ -77,7 +80,7 @@ func (s *LedgerKeySeeder) SeedDataForRange(ctx context.Context, r Range) error {
 					return fmt.Errorf("failed to marshal ledger key to XDR for tx %s: %w",
 						tx.TransactionDetails.TransactionHash, err)
 				}
-				s.entry = append(s.entry, keyXDR)
+				s.live[keyXDR] = struct{}{}
 			}
 		}
 	}
