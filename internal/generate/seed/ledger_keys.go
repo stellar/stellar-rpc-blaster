@@ -5,31 +5,29 @@ import (
 	"fmt"
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
+	"github.com/stellar/go-stellar-sdk/support/collections/set"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
 // LedgerKeySeeder collects XDR-encoded ledger keys from transaction metadata.
-// Uses a set to deduplicate and track removals across the seeded range.
+// Uses a set to deduplicate keys across the seeded range.
 type LedgerKeySeeder struct {
 	rpcClient *rpcclient.Client
-	live      map[string]struct{}
+	keys      set.Set[string]
 }
 
 func NewLedgerKeySeeder(rpcClient *rpcclient.Client) Seeder {
 	return &LedgerKeySeeder{
 		rpcClient: rpcClient,
-		live:      make(map[string]struct{}, util.DefaultSeedSliceSize),
+		keys:      set.NewSet[string](int(util.DefaultSeedSliceSize)),
 	}
 }
 
-// WriteResults writes the deduplicated live ledger keys to the SeedWriter.
+// WriteResults writes the deduplicated ledger keys to the SeedWriter.
 func (s *LedgerKeySeeder) WriteResults(w *SeedWriter) {
-	w.LedgerKeys = make([]string, 0, len(s.live))
-	for k := range s.live {
-		w.LedgerKeys = append(w.LedgerKeys, k)
-	}
+	w.LedgerKeys = s.keys.Slice()
 }
 
 // SeedDataForRange implements Seeder for LedgerKeySeeder.
@@ -80,7 +78,7 @@ func (s *LedgerKeySeeder) SeedDataForRange(ctx context.Context, r Range) error {
 					return fmt.Errorf("failed to marshal ledger key to XDR for tx %s: %w",
 						tx.TransactionDetails.TransactionHash, err)
 				}
-				s.live[keyXDR] = struct{}{}
+				s.keys.Add(keyXDR)
 			}
 		}
 	}
