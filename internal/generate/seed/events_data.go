@@ -6,7 +6,6 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
-	"github.com/stellar/go-stellar-sdk/support/log"
 
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
@@ -14,15 +13,13 @@ import (
 // EventDataSeeder collects per-contract event topic associations with a shared topic dictionary.
 type EventDataSeeder struct {
 	rpcClient      *rpcclient.Client
-	logger         *log.Entry
 	uniqueTopics   []string // ordered list of unique topics
 	contractEvents ContractEvents
 }
 
-func NewEventDataSeeder(rpcClient *rpcclient.Client, logger *log.Entry) *EventDataSeeder {
+func NewEventDataSeeder(rpcClient *rpcclient.Client) Seeder {
 	return &EventDataSeeder{
 		rpcClient:    rpcClient,
-		logger:       logger,
 		uniqueTopics: make([]string, 0, util.DefaultSeedSliceSize),
 		contractEvents: ContractEvents{
 			ContractIds: make(map[string]*TopicData, util.DefaultSeedSliceSize),
@@ -30,9 +27,9 @@ func NewEventDataSeeder(rpcClient *rpcclient.Client, logger *log.Entry) *EventDa
 	}
 }
 
-// Results returns the accumulated event data as a serializable EventData.
-func (s *EventDataSeeder) Results() ContractEvents {
-	return s.contractEvents
+// WriteResults writes the accumulated event data to the SeedWriter.
+func (s *EventDataSeeder) WriteResults(w *SeedWriter) {
+	w.ContractEventData = s.contractEvents
 }
 
 // SeedDataForRange implements Seeder for EventDataSeeder.
@@ -48,13 +45,12 @@ func (s *EventDataSeeder) SeedDataForRange(ctx context.Context, r Range) error {
 			req := util.MakeGetEventsRequest(start, endLedger, cursor)
 			eventsResponse, err := s.rpcClient.GetEvents(ctx, req)
 			if err != nil {
-				return fmt.Errorf("failed to fetch event data for ledgers %d->%d: %v",
+				return fmt.Errorf("failed to fetch event data for ledgers %d->%d: %w",
 					start, endLedger, err)
 			}
 
 			for _, event := range eventsResponse.Events {
-				cid := event.ContractID
-				s.contractEvents.AddEventData(cid, event)
+				s.contractEvents.AddEventData(event)
 			}
 
 			if eventsResponse.Cursor == "" || len(eventsResponse.Events) == 0 {
@@ -62,10 +58,14 @@ func (s *EventDataSeeder) SeedDataForRange(ctx context.Context, r Range) error {
 			}
 			c, err := protocol.ParseCursor(eventsResponse.Cursor)
 			if err != nil {
-				return fmt.Errorf("failed to parse events cursor %q: %v", eventsResponse.Cursor, err)
+				return fmt.Errorf("failed to parse events cursor %q: %w", eventsResponse.Cursor, err)
 			}
 			cursor = &c
 		}
 	}
 	return nil
+}
+
+func (s *EventDataSeeder) String() string {
+	return "event data"
 }

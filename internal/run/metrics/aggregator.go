@@ -64,10 +64,10 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 			a.logger.Info(a)
 		case <-ctx.Done():
 			if err := ctx.Err(); err != nil {
-				a.logger.Errorf("aggregator.Run terminating due to context error: %v", err)
+				a.logger.Error(fmt.Errorf("aggregator.Run terminating due to context error: %w", err))
 			}
 			if err := WriteOutput(a); err != nil {
-				a.logger.Error(fmt.Errorf("Failed to write output results: %v", err))
+				a.logger.Error(fmt.Errorf("Failed to write output results: %w", err))
 			}
 			return
 		}
@@ -151,7 +151,7 @@ func (a *Aggregator) String() string {
 
 	for _, endpointName := range a.orderedEndpoints {
 		endpointStats := a.stats[endpointName]
-		fmt.Fprintf(&line, "\n%-20s: %v", endpointName, endpointStats)
+		fmt.Fprintf(&line, "\n%-20s: %s", endpointName, endpointStats)
 	}
 
 	if elapsed >= a.duration {

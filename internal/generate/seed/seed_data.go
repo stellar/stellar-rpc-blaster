@@ -34,15 +34,16 @@ type ParamTopics struct {
 	Params [][]string `json:"params"`
 }
 
-func (c *ContractEvents) AddEventData(contractId string, eventData protocol.EventInfo) {
-	td, ok := c.ContractIds[contractId]
+func (c *ContractEvents) AddEventData(eventData protocol.EventInfo) {
+	cId := eventData.ContractID
+	td, ok := c.ContractIds[cId]
 	if !ok {
 		// new contract, add contract + topic + params
 		data := TopicData{
 			Topic:        map[string]ParamTopics{},
 			uniqueTopics: set.NewSet[string](int(util.DefaultSeedSliceSize)),
 		}
-		c.ContractIds[contractId] = &data
+		c.ContractIds[cId] = &data
 		td = &data
 	}
 
@@ -85,7 +86,7 @@ func (c *ContractEvents) BuildEventsFilters() map[string]any {
 	// For each topic we chose, choose up to 4 parameters to include in that topic's filter
 	topicsFilter := make([][]string, 0, len(topics))
 	for _, topic := range topics {
-		entry := []string{topic} // first entry in the topic filter is the topic name
+		entry := []string{topic} // first entry in the topic filter is, generally, the topic name
 		// select one parameter set for topic out of the sets of parameters we observed for this topic in seed data
 		allParamsForTopic := refContractTopics.Topic[topic].Params
 		params := allParamsForTopic[rand.IntN(len(allParamsForTopic))]
