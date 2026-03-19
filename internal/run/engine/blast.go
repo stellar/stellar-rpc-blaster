@@ -2,9 +2,10 @@ package engine
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"time"
 
+	"github.com/creachadair/jrpc2"
 	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/run/metrics"
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 )
@@ -13,6 +14,10 @@ type EndpointBlastConfig struct {
 	EndpointKey string // config key / JSON-RPC method
 	RPS         int
 	Targeter    vegeta.Targeter
+}
+
+type JrpcErrEnvelope struct {
+	Error *jrpc2.Error `json:"error,omitempty"`
 }
 
 // Run the blaster at a given endpoint
@@ -50,11 +55,12 @@ func flushBlastResults(
 		expectedRPS := pacer.Hits(elapsed) / elapsed.Seconds()
 
 		ok := result.Error == "" && result.Code >= 200 && result.Code < 300
-		var rpcErr string
-		if ok {
-			if e := parseRPCError(result.Body); e != nil {
+		var rpcErr *jrpc2.Error
+		if ok && len(result.Body) > 0 {
+			var envelope JrpcErrEnvelope
+			if err := json.Unmarshal(result.Body, &envelope); err == nil && envelope.Error != nil {
+				rpcErr = envelope.Error
 				ok = false
-				rpcErr = fmt.Sprintf("%s (%d)", e.Message, e.Code)
 			}
 		}
 

@@ -2,6 +2,8 @@ package blasterMetrics
 
 import (
 	"time"
+
+	jrpc2 "github.com/creachadair/jrpc2"
 )
 
 // Represents a single blaster metrics sample, bridging a vegeta.Result to the aggregator
@@ -10,7 +12,7 @@ type Sample struct {
 	CurrentRPS float64 // expected cumulative RPS at the time of the sample
 	Latency    time.Duration
 	Code       uint16
-	Err        string // raw error from vegeta (if any)
-	RPCErr     string // JSON-RPC error from response body (e.g. "internal error (-32603)")
+	Err        string       // raw error from vegeta (if any)
+	RPCErr     *jrpc2.Error // JSON-RPC error from response body (e.g. "internal error (-32603)")
 	OK         bool
 }

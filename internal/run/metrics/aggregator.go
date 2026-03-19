@@ -122,11 +122,12 @@ func (a *Aggregator) Record(sample Sample) error {
 		epStats.success++
 	} else {
 		epStats.errors++
-		errKey := sample.RPCErr
-		if errKey == "" {
+		var errKey string
+		if sample.RPCErr != nil {
+			errKey = sample.RPCErr.Error()
+		} else if sample.Err != "" {
 			errKey = sample.Err
-		}
-		if errKey == "" {
+		} else {
 			errKey = strconv.Itoa(int(sample.Code))
 		}
 		if existing, ok := epStats.errorTypes[errKey]; ok {
