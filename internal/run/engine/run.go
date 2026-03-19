@@ -60,12 +60,8 @@ func RunVegeta(
 	// Construct endpoint blast configs
 	// 3... 2... 1...
 	var endpointBlasts []endpointBlast
-	for _, endpointKey := range cfg.GetEndpoints() {
+	for _, endpointKey := range cfg.GetActiveEndpoints() {
 		rps := cfg.GetEndpointRPS(endpointKey)
-		if rps <= 0 {
-			logger.Infof("Skipping endpoint: %s (RPS <= 0)", endpointKey)
-			continue
-		}
 
 		paramMaps, err := parameters.BuildEndpointParams(endpointKey, sharedParams)
 		if err != nil {

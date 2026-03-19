@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/run/metrics"
@@ -47,6 +48,16 @@ func flushBlastResults(
 	for result := range results {
 		elapsed := time.Since(start)
 		expectedRPS := pacer.Hits(elapsed) / elapsed.Seconds()
+
+		ok := result.Error == "" && result.Code >= 200 && result.Code < 300
+		var rpcErr string
+		if ok {
+			if e := parseRPCError(result.Body); e != nil {
+				ok = false
+				rpcErr = fmt.Sprintf("%s (%d)", e.Message, e.Code)
+			}
+		}
+
 		select {
 		case out <- blasterMetrics.Sample{
 			Endpoint:   endpointKey,
@@ -54,7 +65,8 @@ func flushBlastResults(
 			Latency:    result.Latency,
 			Code:       result.Code,
 			Err:        result.Error,
-			OK:         result.Error == "" && result.Code >= 200 && result.Code < 300,
+			RPCErr:     rpcErr,
+			OK:         ok,
 		}:
 		case <-ctx.Done():
 			return

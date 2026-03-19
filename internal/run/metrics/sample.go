@@ -11,5 +11,6 @@ type Sample struct {
 	Latency    time.Duration
 	Code       uint16
 	Err        string // raw error from vegeta (if any)
+	RPCErr     string // JSON-RPC error from response body (e.g. "internal error (-32603)")
 	OK         bool
 }

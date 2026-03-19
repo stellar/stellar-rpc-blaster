@@ -64,7 +64,7 @@ func (a *App) RunApp(runtimeSettings config.RuntimeSettings) error {
 		missingFields := strings.TrimSuffix(missingFieldsBuilder.String(), ", ")
 
 		if missingFields != "" {
-			return fmt.Errorf("missing required fields in Run mode: %v", missingFields)
+			return fmt.Errorf("missing required fields in Run mode: %s", missingFields)
 		}
 		if err := a.runLoadTest(ctx); err != nil {
 			return err
@@ -76,13 +76,13 @@ func (a *App) RunApp(runtimeSettings config.RuntimeSettings) error {
 		missingFields := strings.TrimSuffix(missingFieldsBuilder.String(), ", ")
 
 		if missingFields != "" {
-			return fmt.Errorf("missing required fields in Generate mode: %v", missingFields)
+			return fmt.Errorf("missing required fields in Generate mode: %s", missingFields)
 		}
 		if err := a.runGenerate(ctx); err != nil {
 			return err
 		}
 	default:
-		return fmt.Errorf("unknown mode: %v", runtimeSettings.Mode)
+		return fmt.Errorf("unknown mode: %s", runtimeSettings.Mode.Name())
 	}
 
 	a.logger.Infof("Blaster finished successfully")

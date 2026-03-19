@@ -75,14 +75,18 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 }
 
 func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
+	endpoints := settings.GetActiveEndpoints()
+	duration := settings.Duration
+	if settings.Serial {
+		duration *= time.Duration(len(endpoints))
+	}
 	a := Aggregator{
 		logger:          logger,
 		stats:           make(map[string]*EndpointStats),
 		start:           time.Now(),
-		duration:        settings.Duration,
+		duration:        duration,
 		writeOutputPath: settings.TestOutputPath,
 	}
-	endpoints := settings.GetEndpoints()
 	sort.Strings(endpoints)
 	a.orderedEndpoints = endpoints // maintain order for consistent output
 
@@ -118,7 +122,10 @@ func (a *Aggregator) Record(sample Sample) error {
 		epStats.success++
 	} else {
 		epStats.errors++
-		errKey := sample.Err
+		errKey := sample.RPCErr
+		if errKey == "" {
+			errKey = sample.Err
+		}
 		if errKey == "" {
 			errKey = strconv.Itoa(int(sample.Code))
 		}
@@ -151,6 +158,10 @@ func (a *Aggregator) String() string {
 
 	for _, endpointName := range a.orderedEndpoints {
 		endpointStats := a.stats[endpointName]
+		if endpointStats.targetRPS == 0 {
+			// avoid showing 0% progress for endpoints that haven't started yet
+			continue
+		}
 		fmt.Fprintf(&line, "\n%-20s: %s", endpointName, endpointStats)
 	}
 

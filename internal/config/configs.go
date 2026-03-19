@@ -154,9 +154,11 @@ func (c *Config) processToml(tomlPath string) error {
 func (c *Config) validateEndpointConfig() error {
 	hasValidEndpoint := false
 	for endpoint, endpointData := range c.Endpoints {
-		if endpointData.RPS > 0 {
-			hasValidEndpoint = true
+		if endpointData.RPS <= 0 {
+			continue
 		}
+
+		hasValidEndpoint = true
 		if needs, err := parameters.EndpointNeedsData(endpoint); err != nil {
 			return fmt.Errorf("failed to check if endpoint %s needs data: %w", endpoint, err)
 		} else if needs && c.InputDataPath == "" {
