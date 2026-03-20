@@ -61,7 +61,7 @@ require (
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.6.0 // indirect
-	github.com/stellar/go-xdr v0.0.0-20231122183749-b53fb00bcac2 // indirect
+	github.com/stellar/go-xdr v0.0.0-20260312225820-cc2b0611aabf // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
@@ -96,6 +96,6 @@ require (
 
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0
-	github.com/stellar/go-stellar-sdk v0.1.0
+	github.com/stellar/go-stellar-sdk v0.3.0
 	github.com/tsenart/vegeta/v12 v12.13.0
 )
