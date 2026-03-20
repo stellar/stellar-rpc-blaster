@@ -3,6 +3,7 @@
 package state
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -71,7 +72,67 @@ func NewPersistedState(path string) (*PersistedState, error) {
 	if err := json.Unmarshal(data, &ps); err != nil {
 		return nil, fmt.Errorf("parse state file: %w", err)
 	}
+	if err := ps.Validate(); err != nil {
+		return nil, fmt.Errorf("validate state file: %w", err)
+	}
 	return &ps, nil
+}
+
+// Validate checks that the persisted state contains the minimum required
+// fields for reconstruction and safe reuse.
+func (ps *PersistedState) Validate() error {
+	if ps == nil {
+		return fmt.Errorf("nil persisted state")
+	}
+	if ps.RPCURL == "" {
+		return fmt.Errorf("missing rpc_url")
+	}
+	if ps.NetworkPassphrase == "" {
+		return fmt.Errorf("missing network_passphrase")
+	}
+	if ps.FeePayerHash == "" {
+		return fmt.Errorf("missing fee_payer_hash")
+	}
+	return nil
+}
+
+// ValidateSetupConfig ensures a setup re-run uses the same network passphrase
+// that was recorded in the state file.
+func (ps *PersistedState) ValidateSetupConfig(networkPassphrase string) error {
+	if err := ps.Validate(); err != nil {
+		return err
+	}
+	if networkPassphrase != ps.NetworkPassphrase {
+		return fmt.Errorf(
+			"network passphrase mismatch: state file has %q but setup was given %q",
+			ps.NetworkPassphrase, networkPassphrase,
+		)
+	}
+	return nil
+}
+
+// ValidateRPCNetwork ensures the chosen RPC endpoint reports the same network
+// passphrase recorded in the state file. This allows different RPC URLs to be
+// used across phases while still preventing cross-network reuse.
+func (ps *PersistedState) ValidateRPCNetwork(ctx context.Context, rpcURL string) error {
+	if err := ps.Validate(); err != nil {
+		return err
+	}
+	if rpcURL == "" {
+		rpcURL = ps.RPCURL
+	}
+	rpc := rpcclient.NewClient(rpcURL, nil)
+	netInfo, err := rpc.GetNetwork(ctx)
+	if err != nil {
+		return fmt.Errorf("get network from %q: %w", rpcURL, err)
+	}
+	if netInfo.Passphrase != ps.NetworkPassphrase {
+		return fmt.Errorf(
+			"state file network mismatch: rpc %q reports %q but state file stores %q",
+			rpcURL, netInfo.Passphrase, ps.NetworkPassphrase,
+		)
+	}
+	return nil
 }
 
 // Save writes ps to path as indented JSON, creating or overwriting the
@@ -164,10 +225,14 @@ func (s *State) ToPersistedState(rpcURL string) (*PersistedState, error) {
 
 // FromPersistedState reconstructs a live State from a PersistedState.
 // The fee-payer seed must be supplied at runtime (from the environment); it is
-// verified against the stored hash before use.
-func FromPersistedState(ps *PersistedState, feePayerSeed string) (*State, error) {
-	if ps.FeePayerHash == "" {
-		return nil, fmt.Errorf("state file missing fee_payer_hash")
+// verified against the stored hash before use. If rpcURL is empty, the URL
+// recorded in the state file is used.
+func FromPersistedState(ps *PersistedState, feePayerSeed, rpcURL string) (*State, error) {
+	if err := ps.Validate(); err != nil {
+		return nil, err
+	}
+	if rpcURL == "" {
+		rpcURL = ps.RPCURL
 	}
 	if HashSeed(feePayerSeed) != ps.FeePayerHash {
 		return nil, fmt.Errorf(
@@ -195,7 +260,7 @@ func FromPersistedState(ps *PersistedState, feePayerSeed string) (*State, error)
 	}
 
 	return &State{
-		RPCClient:         rpcclient.NewClient(ps.RPCURL, nil),
+		RPCClient:         rpcclient.NewClient(rpcURL, nil),
 		FeePayerKP:        feePayerKP,
 		NetworkPassphrase: ps.NetworkPassphrase,
 		Assets:            assets,

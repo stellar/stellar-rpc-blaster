@@ -58,6 +58,7 @@ Creates all required ledger state and writes `state.json`. If a state file alrea
 The fee-payer seed is read from the `TX_LOAD_TEST_FEE_PAYER_SEED` environment variable. If unset, a temporary keypair is generated and funded via friendbot (testnet/futurenet only).
 
 If `setup` is re-run against an existing `state.json`, `TX_LOAD_TEST_FEE_PAYER_SEED` must be set and must match the hash recorded in the state file.
+Re-running `setup` requires the resolved network passphrase to match the value already recorded in `state.json`. The `--rpc-url` may change, but the chosen endpoint must report that same passphrase via `getNetwork`.
 
 **Setup steps (in order):**
 1. **Fee payer** -- verify/create/fund the fee-payer account. Auto-tops-up via friendbot if balance is insufficient.
@@ -81,13 +82,15 @@ If setup is interrupted, a best-effort cleanup merges whatever accounts exist an
 Runs a load-test workload against an already-initialized ledger.
 
 `bench` requires `TX_LOAD_TEST_FEE_PAYER_SEED` to be set. The supplied seed is not written to disk; it is hashed and checked against `fee_payer_hash` in `state.json` before participant accounts are re-derived from `account_indices`.
+Before the benchmark starts, the tool queries the chosen RPC endpoint (either `--rpc-url` or the stored `rpc_url`) and verifies that it reports the same `network_passphrase` recorded in the state file.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--mode` | `sac-transfer` | Workload: `sac-transfer`, `oz-transfer`, `soroswap` |
+| `--mode` | `sac-transfer` | Workload: `sac-transfer` |
 | `--target-rps` | `50` | Steady-state requests per second |
 | `--duration` | `100s` | Total benchmark duration |
 | `--ramp-up` | `20s` | Linear ramp from 1 RPS to target |
+| `--rpc-url` | *(from state file)* | Override the RPC URL stored in `state.json` |
 | `--state-file` | `state.json` | Input state file path |
 | `--log-level` | `info` | `debug`, `info`, `warn`, `error` |
 
@@ -96,9 +99,7 @@ Runs a load-test workload against an already-initialized ledger.
 - **Recommended minimum:** `accounts >= target-rps * 10` (two full ledgers between account reuse). Logs a warning if not met. This margin prevents mempool evictions from cascading into sequence errors.
 
 **Available modes:**
-- **`sac-transfer`** -- SAC token transfers between random participant accounts via `InvokeHostFunction`. Fully implemented.
-- **`oz-transfer`** -- OZ-style custom token transfers. *(Placeholder -- not yet implemented.)*
-- **`soroswap`** -- Soroswap AMM swaps across two independent pools. *(Placeholder -- not yet implemented.)*
+- **`sac-transfer`** -- SAC token transfers between random participant accounts via `InvokeHostFunction`.
 
 **Benchmark output:** after the attack and poll drain, bench logs:
 - Submission counters: submitted, queued, httpErr, tryAgainLater, submitErrors (with per-ResultCode breakdown)
@@ -113,10 +114,12 @@ Runs a load-test workload against an already-initialized ledger.
 Merges all participant accounts back into the fee payer.
 
 `teardown` requires `TX_LOAD_TEST_FEE_PAYER_SEED` to be set so the fee payer and participant accounts can be re-derived from the state file.
+Before teardown starts, the tool queries the chosen RPC endpoint (either `--rpc-url` or the stored `rpc_url`) and verifies that it reports the same `network_passphrase` recorded in the state file.
 
 | Flag | Default | Description |
 |---|---|---|
 | `--state-file` | `state.json` | State file to consume |
+| `--rpc-url` | *(from state file)* | Override the RPC URL stored in `state.json` |
 | `--log-level` | `info` | `debug`, `info`, `warn`, `error` |
 
 Accounts are merged in batches of 12 using two sequential fee-bumped transactions per batch:
@@ -130,6 +133,7 @@ On full success, deletes the state file. On partial failure, updates the state f
 Reconciles the state file with on-chain account existence.
 
 `sync` also requires `TX_LOAD_TEST_FEE_PAYER_SEED` to be set so participant accounts can be re-derived from the stored indices.
+Before sync starts, the tool queries the chosen RPC endpoint (either `--rpc-url` or the stored `rpc_url`) and verifies that it reports the same `network_passphrase` recorded in the state file.
 
 ```bash
 ./tx-load-test sync --state-file state.json
@@ -153,7 +157,7 @@ Removes entries for accounts that no longer exist on-chain, useful after a netwo
 }
 ```
 
-The file is written atomically (write to `.tmp`, then rename) to avoid corruption from interrupted writes. No raw seeds are stored on disk.
+The file is written atomically (write to `.tmp`, then rename) to avoid corruption from interrupted writes. No raw seeds are stored on disk. The recorded `rpc_url` and `network_passphrase` are treated as part of the state identity and are validated before the state is reused.
 
 ## Architecture
 
@@ -200,6 +204,8 @@ cmd/tx-load-test/
 **Deterministic keypair derivation.** Participant keypairs are derived from the fee-payer seed by overwriting the last 4 bytes with a big-endian index. This makes setup idempotent -- re-running with the same seed produces the same accounts.
 
 **Secret-free persisted state.** The state file stores `fee_payer_hash` plus `account_indices`, not raw Stellar seeds. Bench, teardown, and sync require `TX_LOAD_TEST_FEE_PAYER_SEED` so the fee payer and participant accounts can be re-derived in memory.
+
+**State is network-bound.** The state file stores both `rpc_url` and `network_passphrase`. Re-running setup requires the same network passphrase, and bench / teardown / sync verify that the chosen RPC endpoint (stored or overridden) reports that same network before doing any work.
 
 **Fee-bump retry with escalation.** Setup and teardown transactions use `SubmitFeeBumpAndWait`, which retries on `TxInsufficientFee` with exponential fee escalation up to 2x the base inclusion fee (200 -> 400 stroops/op).
 

@@ -1,9 +1,7 @@
 // tx-load-test is a standalone load-testing tool that benchmarks a Stellar RPC
-// endpoint through three distinct Soroban workloads:
+// endpoint using the currently supported Soroban workload:
 //
 //   - sac-transfer   SAC token transfers between random participant accounts.
-//   - oz-transfer    OZ-style custom token transfers between random accounts.
-//   - soroswap       Soroswap AMM swaps split 50/50 across two independent pools.
 //
 // Usage:
 //
@@ -224,12 +222,18 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 		if loadErr != nil {
 			return fmt.Errorf("state file %q exists but cannot be loaded: %w", stateFile, loadErr)
 		}
+		if err := ps.ValidateSetupConfig(cfg.NetworkPassphrase); err != nil {
+			return fmt.Errorf("validate existing state %q: %w", stateFile, err)
+		}
+		if err := ps.ValidateRPCNetwork(ctx, cfg.RPCURL); err != nil {
+			return fmt.Errorf("validate existing state network %q: %w", stateFile, err)
+		}
 		if cfg.FeePayerSeed == "" {
 			return fmt.Errorf(
 				"TX_LOAD_TEST_FEE_PAYER_SEED is required when re-running setup " +
 					"with an existing state file")
 		}
-		st, err = state.FromPersistedState(ps, cfg.FeePayerSeed)
+		st, err = state.FromPersistedState(ps, cfg.FeePayerSeed, cfg.RPCURL)
 		if err != nil {
 			return fmt.Errorf("reconstruct state from %q: %w", stateFile, err)
 		}
@@ -274,12 +278,10 @@ func buildBenchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bench",
 		Short: "Run a load-test benchmark against a pre-initialized ledger",
-		Long: `bench runs one of three Soroban workloads against an already initialized
+		Long: `bench runs the supported Soroban workload against an already initialized
 ledger (created by 'setup'):
 
   sac-transfer   -- SAC token transfers between random participant accounts.
-  oz-transfer    -- OZ custom-token transfers between random accounts.
-  soroswap       -- Soroswap swaps split 50/50 across pool-0 and pool-1.
 
 The load ramps linearly from 1 RPS to --target-rps over --ramp-up, then
 holds constant for the remainder of --duration (~100 s / ~20 ledgers).
@@ -290,10 +292,10 @@ Run bench as many times as needed.`,
 	}
 
 	cmd.Flags().String("log-level", "info", "Log verbosity: debug | info | warn | error")
+	cmd.Flags().String("rpc-url", "", "Override the RPC URL stored in the state JSON file")
 	cmd.Flags().String("state-file", state.DefaultStateFile, "Path to the state JSON file")
 	cmd.Flags().String("mode", string(config.ModeSACTransfer),
-		fmt.Sprintf("Benchmark mode: %s | %s | %s",
-			config.ModeSACTransfer, config.ModeOZTransfer, config.ModeSoroswap))
+		fmt.Sprintf("Benchmark mode: %s", config.ModeSACTransfer))
 	cmd.Flags().Duration("duration", 100*time.Second, "Total benchmark duration")
 	cmd.Flags().Duration("ramp-up", 20*time.Second, "Ramp-up period (RPS increases linearly from 1 to target-rps)")
 	cmd.Flags().Int("target-rps", 50, "Steady-state requests per second after ramp-up")
@@ -310,30 +312,43 @@ func runBench(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	rpcURL, err := cmd.Flags().GetString("rpc-url")
+	if err != nil {
+		return err
+	}
 
 	// Load state from disk.
 	ps, err := state.NewPersistedState(stateFile)
 	if err != nil {
 		return fmt.Errorf("load state file %q: %w  -- run 'setup' first", stateFile, err)
 	}
+	if err := ps.ValidateRPCNetwork(cmd.Context(), rpcURL); err != nil {
+		return fmt.Errorf("validate state network: %w", err)
+	}
 	feePayerSeed := os.Getenv("TX_LOAD_TEST_FEE_PAYER_SEED")
 	if feePayerSeed == "" {
 		return fmt.Errorf(
 			"TX_LOAD_TEST_FEE_PAYER_SEED is required -- set it to the fee-payer secret key")
 	}
-	st, err := state.FromPersistedState(ps, feePayerSeed)
+	st, err := state.FromPersistedState(ps, feePayerSeed, rpcURL)
 	if err != nil {
 		return fmt.Errorf("reconstruct state: %w", err)
 	}
 
 	cfg := config.DefaultConfig()
-	cfg.RPCURL = ps.RPCURL
+	if rpcURL == "" {
+		rpcURL = ps.RPCURL
+	}
+	cfg.RPCURL = rpcURL
 	cfg.NetworkPassphrase = ps.NetworkPassphrase
 	cfg.NumberOfAccounts = len(ps.AccountIndices)
 
 	modeStr, err := cmd.Flags().GetString("mode")
 	if err != nil {
 		return err
+	}
+	if modeStr != string(config.ModeSACTransfer) {
+		return fmt.Errorf("unsupported benchmark mode %q: only %q is currently available", modeStr, config.ModeSACTransfer)
 	}
 	cfg.Mode = config.BenchmarkMode(modeStr)
 
@@ -391,6 +406,7 @@ reflect only the remaining accounts so a subsequent teardown can finish the job.
 	}
 
 	cmd.Flags().String("log-level", "info", "Log verbosity: debug | info | warn | error")
+	cmd.Flags().String("rpc-url", "", "Override the RPC URL stored in the state JSON file")
 	cmd.Flags().String("state-file", state.DefaultStateFile, "Path to the state JSON file")
 	return cmd
 }
@@ -405,23 +421,33 @@ func runTeardown(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	rpcURL, err := cmd.Flags().GetString("rpc-url")
+	if err != nil {
+		return err
+	}
 
 	ps, err := state.NewPersistedState(stateFile)
 	if err != nil {
 		return fmt.Errorf("load state file %q: %w  -- nothing to tear down", stateFile, err)
+	}
+	if err := ps.ValidateRPCNetwork(cmd.Context(), rpcURL); err != nil {
+		return fmt.Errorf("validate state network: %w", err)
 	}
 	feePayerSeed := os.Getenv("TX_LOAD_TEST_FEE_PAYER_SEED")
 	if feePayerSeed == "" {
 		return fmt.Errorf(
 			"TX_LOAD_TEST_FEE_PAYER_SEED is required -- set it to the fee-payer secret key")
 	}
-	st, err := state.FromPersistedState(ps, feePayerSeed)
+	st, err := state.FromPersistedState(ps, feePayerSeed, rpcURL)
 	if err != nil {
 		return fmt.Errorf("reconstruct state: %w", err)
 	}
 
 	cfg := config.DefaultConfig()
-	cfg.RPCURL = ps.RPCURL
+	if rpcURL == "" {
+		rpcURL = ps.RPCURL
+	}
+	cfg.RPCURL = rpcURL
 	cfg.NetworkPassphrase = ps.NetworkPassphrase
 	cfg.NumberOfAccounts = len(ps.AccountIndices)
 
@@ -449,6 +475,7 @@ out of sync with the network (e.g. after a manual merge or a network reset).`,
 	}
 
 	cmd.Flags().String("log-level", "info", "Log verbosity: debug | info | warn | error")
+	cmd.Flags().String("rpc-url", "", "Override the RPC URL stored in the state JSON file")
 	cmd.Flags().String("state-file", state.DefaultStateFile, "Path to the state JSON file")
 	return cmd
 }
@@ -463,24 +490,34 @@ func runSync(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	rpcURL, err := cmd.Flags().GetString("rpc-url")
+	if err != nil {
+		return err
+	}
 
 	ps, err := state.NewPersistedState(stateFile)
 	if err != nil {
 		return fmt.Errorf("load state file %q: %w", stateFile, err)
+	}
+	if err := ps.ValidateRPCNetwork(cmd.Context(), rpcURL); err != nil {
+		return fmt.Errorf("validate state network: %w", err)
 	}
 	feePayerSeed := os.Getenv("TX_LOAD_TEST_FEE_PAYER_SEED")
 	if feePayerSeed == "" {
 		return fmt.Errorf(
 			"TX_LOAD_TEST_FEE_PAYER_SEED is required -- set it to the fee-payer secret key")
 	}
-	st, err := state.FromPersistedState(ps, feePayerSeed)
+	st, err := state.FromPersistedState(ps, feePayerSeed, rpcURL)
 	if err != nil {
 		return fmt.Errorf("reconstruct state: %w", err)
+	}
+	if rpcURL == "" {
+		rpcURL = ps.RPCURL
 	}
 
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
 	logger.Infof("loaded state from %s (%d accounts)", stateFile, len(ps.AccountIndices))
-	return syncstate.SyncState(ctx, logger, st, stateFile)
+	return syncstate.SyncState(ctx, logger, st, stateFile, rpcURL)
 }

@@ -15,7 +15,7 @@ import (
 // SyncState checks which participant accounts still exist on-chain
 // and rewrites the state file with only those that do. This reconciles the
 // local state file with the actual network state.
-func SyncState(ctx context.Context, logger *log.Entry, st *state.State, stateFile string) error {
+func SyncState(ctx context.Context, logger *log.Entry, st *state.State, stateFile, rpcURL string) error {
 	logger = logger.WithField("phase", "sync")
 
 	var surviving []*keypair.Full
@@ -43,12 +43,7 @@ func SyncState(ctx context.Context, logger *log.Entry, st *state.State, stateFil
 	logger.Infof("%d accounts removed, %d remain", removed, len(surviving))
 	st.AccountKPs = surviving
 
-	// Re-read RPCURL from the existing state file so ToPersistedState has it.
-	oldPS, err := state.NewPersistedState(stateFile)
-	if err != nil {
-		return fmt.Errorf("re-read state file: %w", err)
-	}
-	ps, err := st.ToPersistedState(oldPS.RPCURL)
+	ps, err := st.ToPersistedState(rpcURL)
 	if err != nil {
 		return fmt.Errorf("build updated state: %w", err)
 	}

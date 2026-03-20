@@ -52,11 +52,20 @@ func (accountsStep) Run(ctx context.Context, logger *log.Entry, cfg config.Confi
 		return nil
 	}
 
+	maxIdx := state.AccountSeedStartIndex - 1
+	for i, kp := range st.AccountKPs {
+		idx, err := state.RecoverIndex(kp)
+		if err != nil {
+			return fmt.Errorf("existing account %d: recover derivation index: %w", i, err)
+		}
+		maxIdx = max(maxIdx, idx)
+	}
+
 	// Derive only the new keypairs (deterministic from fee payer seed).
 	newCount := targetCount - existingCount
 	newKPs := make([]*keypair.Full, newCount)
 	for i := range newKPs {
-		idx := state.AccountSeedStartIndex + existingCount + i
+		idx := maxIdx + 1 + i
 		kp, err := state.DeriveKeypair(st.FeePayerKP, idx)
 		if err != nil {
 			return fmt.Errorf("account %d: derive keypair: %w", existingCount+i, err)

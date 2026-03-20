@@ -9,12 +9,6 @@ type BenchmarkMode string
 const (
 	// ModeSACTransfer runs random SAC transfers between random accounts.
 	ModeSACTransfer BenchmarkMode = "sac-transfer"
-
-	// ModeOZTransfer runs OZ-token transfers between random accounts.
-	ModeOZTransfer BenchmarkMode = "oz-transfer"
-
-	// ModeSoroswap runs Soroswap swaps split 50/50 between pool-1 and pool-2.
-	ModeSoroswap BenchmarkMode = "soroswap"
 )
 
 // Config holds all parameters for setting up and running the tx-load-test.
