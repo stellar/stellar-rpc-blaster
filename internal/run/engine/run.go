@@ -17,9 +17,10 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
-type endpointBlast struct {
-	EndpointBlastConfig EndpointBlastConfig
-	BlastPacer          RampToConstantPacer
+type EndpointBlastConfig struct {
+	EndpointKey string
+	Targeter    vegeta.Targeter
+	BlastPacer  RampToConstantPacer
 }
 
 // Entry/exit point from app.go
@@ -57,13 +58,15 @@ func RunVegeta(
 		}
 	}
 
-	// Construct endpoint blast configs
+	// Construct each endpoint's blast config
 	// 3... 2... 1...
-	var endpointBlasts []endpointBlast
+	var endpointBlasts []EndpointBlastConfig
 	for _, endpointKey := range cfg.GetActiveEndpoints() {
 		rps := cfg.GetEndpointRPS(endpointKey)
+		pacer := NewRampToConstantPacer(rps, cfg)
 
-		paramMaps, err := parameters.BuildEndpointParams(endpointKey, sharedParams)
+		maxNumBodies := pacer.Hits(cfg.Duration) // upper limit of how many request bodies we could possibly need
+		paramMaps, err := parameters.BuildEndpointParams(endpointKey, int(maxNumBodies), sharedParams)
 		if err != nil {
 			return fmt.Errorf("couldn't build params for endpoint %s: %w", endpointKey, err)
 		}
@@ -85,32 +88,24 @@ func RunVegeta(
 			logger.Infof("Endpoint %s: rotating through %d parameterized request bodies", endpointKey, len(bodies))
 		}
 
-		endpointBlasts = append(endpointBlasts, endpointBlast{
-			EndpointBlastConfig: EndpointBlastConfig{
-				EndpointKey: endpointKey,
-				RPS:         rps,
-				Targeter:    targeter,
-			},
-			BlastPacer: RampToConstantPacer{
-				TotalDuration: cfg.Duration,
-				RampDuration:  cfg.RampUp,
-				StartRPS:      1,
-				MaxRPS:        rps,
-			},
+		endpointBlasts = append(endpointBlasts, EndpointBlastConfig{
+			EndpointKey: endpointKey,
+			Targeter:    targeter,
+			BlastPacer:  pacer,
 		})
 	}
 
 	// Fire!
 	if cfg.Serial {
 		for _, blast := range endpointBlasts {
-			logger.Infof("Serial mode: starting endpoint %s", blast.EndpointBlastConfig.EndpointKey)
-			blastAtEndpoint(ctx, blast.EndpointBlastConfig, blast.BlastPacer, newBlaster, out)
+			logger.Infof("Serial mode: starting endpoint %s", blast.EndpointKey)
+			blastAtEndpoint(ctx, blast, newBlaster, out)
 		}
 	} else {
 		var wg sync.WaitGroup
 		for _, blast := range endpointBlasts {
 			wg.Go(func() {
-				blastAtEndpoint(ctx, blast.EndpointBlastConfig, blast.BlastPacer, newBlaster, out)
+				blastAtEndpoint(ctx, blast, newBlaster, out)
 			})
 		}
 		wg.Wait()

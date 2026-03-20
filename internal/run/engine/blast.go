@@ -10,12 +10,6 @@ import (
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 )
 
-type EndpointBlastConfig struct {
-	EndpointKey string // config key / JSON-RPC method
-	RPS         int
-	Targeter    vegeta.Targeter
-}
-
 type JrpcErrEnvelope struct {
 	Error *jrpc2.Error `json:"error,omitempty"`
 }
@@ -24,21 +18,23 @@ type JrpcErrEnvelope struct {
 func blastAtEndpoint(
 	ctx context.Context,
 	endpointCfg EndpointBlastConfig,
-	blastPacer RampToConstantPacer,
 	newBlaster func() *vegeta.Attacker,
 	out chan<- blasterMetrics.Sample,
 ) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	if blastPacer.TotalDuration <= 0 {
+	if endpointCfg.BlastPacer.TotalDuration <= 0 {
 		return
 	}
 
 	start := time.Now()
 	blaster := newBlaster()
-	results := blaster.Attack(endpointCfg.Targeter, blastPacer, blastPacer.TotalDuration, endpointCfg.EndpointKey)
-	flushBlastResults(ctx, endpointCfg.EndpointKey, blastPacer, start, results, out)
+	results := blaster.Attack(endpointCfg.Targeter,
+		endpointCfg.BlastPacer,
+		endpointCfg.BlastPacer.TotalDuration,
+		endpointCfg.EndpointKey)
+	flushBlastResults(ctx, endpointCfg.EndpointKey, endpointCfg.BlastPacer, start, results, out)
 }
 
 // Reads results from a Vegeta results channel and forwards them to the output channel as a blasterMetrics.Sample

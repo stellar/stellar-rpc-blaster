@@ -24,8 +24,8 @@ const (
 	WorkerMultiplier    = 2.5   // ratio for how many workers can share one connection
 	MaxWorkers          = uint64(float64(PortCount) * PortAllocationRatio * WorkerMultiplier)
 
-	// Number of request bodies to pre-generate for data-dependent endpoints
-	DefaultNumPrebuiltBodies = int(1000)
+	// Max number of request bodies to pre-generate for data-dependent endpoints
+	MaxNumPrebuiltBodies = int(100000)
 )
 
 // Data dependent endpoint limits and probabilities for run
