@@ -184,9 +184,6 @@ func FromPersistedState(ps *PersistedState, feePayerSeed string) (*State, error)
 		assets[i] = txnbuild.CreditAsset{Code: code, Issuer: feePayerKP.Address()}
 	}
 
-	indices := make([]int, len(ps.AccountIndices))
-	copy(indices, ps.AccountIndices)
-
 	return &State{
 		RPCClient:         rpcclient.NewClient(ps.RPCURL, nil),
 		FeePayerKP:        feePayerKP,

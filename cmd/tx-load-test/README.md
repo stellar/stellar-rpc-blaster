@@ -28,13 +28,14 @@ go build -o tx-load-test ./cmd/tx-load-test/
 export TX_LOAD_TEST_FEE_PAYER_SEED="S..."  # optional; omit to auto-generate via friendbot
 ./tx-load-test setup --rpc-url https://soroban-testnet.stellar.org --accounts 3000
 
-# 2. Run a benchmark
+# 2. Run a benchmark (requires the same fee-payer seed used for setup)
+export TX_LOAD_TEST_FEE_PAYER_SEED="S..."
 ./tx-load-test bench --mode sac-transfer --target-rps 300 --duration 60s
 
 # 3. Need more accounts? Just re-run setup with a higher target.
 ./tx-load-test setup --rpc-url https://soroban-testnet.stellar.org --accounts 5000
 
-# 4. Clean up
+# 4. Clean up (also requires TX_LOAD_TEST_FEE_PAYER_SEED)
 ./tx-load-test teardown
 ```
 
@@ -56,6 +57,8 @@ Creates all required ledger state and writes `state.json`. If a state file alrea
 
 The fee-payer seed is read from the `TX_LOAD_TEST_FEE_PAYER_SEED` environment variable. If unset, a temporary keypair is generated and funded via friendbot (testnet/futurenet only).
 
+If `setup` is re-run against an existing `state.json`, `TX_LOAD_TEST_FEE_PAYER_SEED` must be set and must match the hash recorded in the state file.
+
 **Setup steps (in order):**
 1. **Fee payer** -- verify/create/fund the fee-payer account. Auto-tops-up via friendbot if balance is insufficient.
 2. **Assets** -- register 3 benchmark classic assets (BLTA, BLTB, BLTC) with the fee payer as issuer.
@@ -76,6 +79,8 @@ If setup is interrupted, a best-effort cleanup merges whatever accounts exist an
 ### `bench`
 
 Runs a load-test workload against an already-initialized ledger.
+
+`bench` requires `TX_LOAD_TEST_FEE_PAYER_SEED` to be set. The supplied seed is not written to disk; it is hashed and checked against `fee_payer_hash` in `state.json` before participant accounts are re-derived from `account_indices`.
 
 | Flag | Default | Description |
 |---|---|---|
@@ -107,6 +112,8 @@ Runs a load-test workload against an already-initialized ledger.
 
 Merges all participant accounts back into the fee payer.
 
+`teardown` requires `TX_LOAD_TEST_FEE_PAYER_SEED` to be set so the fee payer and participant accounts can be re-derived from the state file.
+
 | Flag | Default | Description |
 |---|---|---|
 | `--state-file` | `state.json` | State file to consume |
@@ -122,6 +129,8 @@ On full success, deletes the state file. On partial failure, updates the state f
 
 Reconciles the state file with on-chain account existence.
 
+`sync` also requires `TX_LOAD_TEST_FEE_PAYER_SEED` to be set so participant accounts can be re-derived from the stored indices.
+
 ```bash
 ./tx-load-test sync --state-file state.json
 ```
@@ -136,15 +145,15 @@ Removes entries for accounts that no longer exist on-chain, useful after a netwo
 {
   "rpc_url": "https://soroban-testnet.stellar.org",
   "network_passphrase": "Test SDF Network ; September 2015",
-  "fee_payer_seed": "S...",
-  "account_seeds": ["S...", "S...", "..."],
+  "fee_payer_hash": "5d7a...hex-sha256...",
+  "account_indices": [1, 2, 3],
   "assets": ["BLTA", "BLTB", "BLTC"],
   "sacs": ["C...", "C...", "C..."],
   "cleaned_up": false
 }
 ```
 
-The file is written atomically (write to `.tmp`, then rename) to avoid corruption from interrupted writes.
+The file is written atomically (write to `.tmp`, then rename) to avoid corruption from interrupted writes. No raw seeds are stored on disk.
 
 ## Architecture
 
@@ -190,6 +199,8 @@ cmd/tx-load-test/
 
 **Deterministic keypair derivation.** Participant keypairs are derived from the fee-payer seed by overwriting the last 4 bytes with a big-endian index. This makes setup idempotent -- re-running with the same seed produces the same accounts.
 
+**Secret-free persisted state.** The state file stores `fee_payer_hash` plus `account_indices`, not raw Stellar seeds. Bench, teardown, and sync require `TX_LOAD_TEST_FEE_PAYER_SEED` so the fee payer and participant accounts can be re-derived in memory.
+
 **Fee-bump retry with escalation.** Setup and teardown transactions use `SubmitFeeBumpAndWait`, which retries on `TxInsufficientFee` with exponential fee escalation up to 2x the base inclusion fee (200 -> 400 stroops/op).
 
 **Presimulation for benchmarks.** The SAC transfer targeter presimulates one transfer per SAC contract at startup to capture the exact Soroban resource budget and ledger footprint. During the attack, only the two trustline keys in the footprint are substituted per request -- all other fields are reused from the template.
@@ -203,6 +214,8 @@ cmd/tx-load-test/
 **Vegeta metrics collection.** Every Vegeta result is fed into a `vegeta.Metrics` accumulator. After the attack, latency percentiles (p50/p95/p99/max), achieved rate, throughput, success ratio, byte counts, and HTTP status code distribution are logged.
 
 **Two-pass teardown batches.** Each batch first drains non-zero trustline balances (Payment), confirms on-chain, then removes trustlines and merges (ChangeTrust + AccountMerge). The drain must be confirmed before removal to avoid `ChangeTrustInvalidLimit` from in-flight SAC transfers.
+
+**Incremental teardown persistence.** After each successful teardown batch, the merged accounts are removed from in-memory state and `state.json` is rewritten immediately. This makes teardown crash-safe without needing an end-of-run reconciliation pass.
 
 ### Transaction Constants
 
