@@ -96,7 +96,10 @@ func Teardown(ctx context.Context, logger *log.Entry, cfg config.Config, st *sta
 			}
 		}
 		st.AccountKPs = remaining
-		ps := st.ToPersistedState(cfg.RPCURL)
+		ps, err := st.ToPersistedState(cfg.RPCURL)
+		if err != nil {
+			return fmt.Errorf("build state after batch %d/%d: %w", b+1, batches, err)
+		}
 		if err := ps.Save(stateFile); err != nil {
 			return fmt.Errorf("save state after batch %d/%d: %w", b+1, batches, err)
 		}
@@ -133,7 +136,11 @@ func BestEffortCleanup(logger *log.Entry, cfg config.Config, st *state.State, st
 	defer cancel()
 
 	// Write state first so teardown can pick up if cleanup fails.
-	ps := st.ToPersistedState(cfg.RPCURL)
+	ps, err := st.ToPersistedState(cfg.RPCURL)
+	if err != nil {
+		logger.WithError(err).Error("failed to build state file before cleanup")
+		return
+	}
 	if err := ps.Save(stateFile); err != nil {
 		logger.WithError(err).Error("failed to write state file before cleanup")
 		return
@@ -185,7 +192,11 @@ func BestEffortCleanup(logger *log.Entry, cfg config.Config, st *state.State, st
 			}
 		}
 		st.AccountKPs = remaining
-		ps = st.ToPersistedState(cfg.RPCURL)
+		ps, err = st.ToPersistedState(cfg.RPCURL)
+		if err != nil {
+			logger.WithError(err).Errorf("build state after batch %d/%d", b+1, batches)
+			return
+		}
 		if err := ps.Save(stateFile); err != nil {
 			logger.WithError(err).Errorf("save state after batch %d/%d", b+1, batches)
 			return

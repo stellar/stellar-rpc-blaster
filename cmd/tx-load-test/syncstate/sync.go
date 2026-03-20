@@ -48,7 +48,10 @@ func SyncState(ctx context.Context, logger *log.Entry, st *state.State, stateFil
 	if err != nil {
 		return fmt.Errorf("re-read state file: %w", err)
 	}
-	ps := st.ToPersistedState(oldPS.RPCURL)
+	ps, err := st.ToPersistedState(oldPS.RPCURL)
+	if err != nil {
+		return fmt.Errorf("build updated state: %w", err)
+	}
 	if err := ps.Save(stateFile); err != nil {
 		return fmt.Errorf("save updated state: %w", err)
 	}

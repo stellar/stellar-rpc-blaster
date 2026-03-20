@@ -255,7 +255,10 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Write state to disk for bench / teardown.
-	ps := st.ToPersistedState(cfg.RPCURL)
+	ps, err := st.ToPersistedState(cfg.RPCURL)
+	if err != nil {
+		return fmt.Errorf("build persisted state: %w", err)
+	}
 	if err := ps.Save(stateFile); err != nil {
 		return fmt.Errorf("save state: %w", err)
 	}

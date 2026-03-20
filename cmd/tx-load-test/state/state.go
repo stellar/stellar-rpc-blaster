@@ -124,6 +124,9 @@ func HashSeed(seed string) string {
 // keypair by reading the big-endian uint32 stored in bytes 28-31 of the raw
 // seed. This works because DeriveKeypair overwrites exactly those bytes.
 func RecoverIndex(kp *keypair.Full) (int, error) {
+	if kp == nil {
+		return 0, fmt.Errorf("nil keypair")
+	}
 	raw, err := strkey.Decode(strkey.VersionByteSeed, kp.Seed())
 	if err != nil {
 		return 0, fmt.Errorf("decode seed: %w", err)
@@ -134,7 +137,11 @@ func RecoverIndex(kp *keypair.Full) (int, error) {
 // ToPersistedState converts a live State into a PersistedState suitable for
 // JSON serialization. No secrets are written -- only the hash of the
 // fee-payer seed and the derivation indices recovered from each keypair.
-func (s *State) ToPersistedState(rpcURL string) *PersistedState {
+func (s *State) ToPersistedState(rpcURL string) (*PersistedState, error) {
+	if s == nil || s.FeePayerKP == nil {
+		return nil, fmt.Errorf("state missing fee payer keypair")
+	}
+
 	ps := &PersistedState{
 		RPCURL:            rpcURL,
 		NetworkPassphrase: s.NetworkPassphrase,
@@ -143,13 +150,16 @@ func (s *State) ToPersistedState(rpcURL string) *PersistedState {
 	}
 	ps.AccountIndices = make([]int, len(s.AccountKPs))
 	for i, kp := range s.AccountKPs {
-		idx, _ := RecoverIndex(kp)
+		idx, err := RecoverIndex(kp)
+		if err != nil {
+			return nil, fmt.Errorf("recover account index %d: %w", i, err)
+		}
 		ps.AccountIndices[i] = idx
 	}
 	for i, a := range s.Assets {
 		ps.Assets[i] = a.Code
 	}
-	return ps
+	return ps, nil
 }
 
 // FromPersistedState reconstructs a live State from a PersistedState.
