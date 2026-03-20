@@ -25,7 +25,7 @@ func writeResultsJSON(results *Results, path string) error {
 		return fmt.Errorf("failed to create output directories for path %s: %w", path, err)
 	}
 
-	data, err := json.Marshal(results)
+	data, err := json.MarshalIndent(results, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal results: %w", err)
 	}

@@ -48,7 +48,7 @@ func flushBlastResults(
 ) {
 	for result := range results {
 		elapsed := time.Since(start)
-		expectedRPS := pacer.Hits(elapsed) / elapsed.Seconds()
+		expectedRPS := pacer.Rate(elapsed)
 
 		ok := result.Error == "" && result.Code >= 200 && result.Code < 300
 		var rpcErr *jrpc2.Error
