@@ -122,13 +122,17 @@ func (a *App) runLoadTest(ctx context.Context) error {
 
 	aggregator := blasterMetrics.NewAggregator(a.logger, a.config)
 
+	be, err := engine.NewBlastEngine(ctx, a.logger, a.config, a.client, out)
+	if err != nil {
+		return fmt.Errorf("could not create blast engine: %w", err)
+	}
 	// Aggregator goroutine: consumes samples and prints every 5s
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		aggregator.Run(ctx, out)
 	})
 
-	err := engine.RunVegeta(ctx, a.logger, a.config, a.client, out)
+	be.Run(ctx, a.logger) // run blasts and block until done
 	close(out)
 	wg.Wait()
 
