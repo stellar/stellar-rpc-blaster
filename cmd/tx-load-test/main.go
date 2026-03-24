@@ -2,6 +2,7 @@
 // endpoint using the currently supported Soroban workload:
 //
 //   - sac-transfer   SAC token transfers between random participant accounts.
+//   - oz-transfer    OpenZeppelin token transfers between random participant accounts.
 //
 // Usage:
 //
@@ -281,7 +282,8 @@ func buildBenchCmd() *cobra.Command {
 		Long: `bench runs the supported Soroban workload against an already initialized
 ledger (created by 'setup'):
 
-  sac-transfer   -- SAC token transfers between random participant accounts.
+	sac-transfer   -- SAC token transfers between random participant accounts.
+	oz-transfer    -- OpenZeppelin token transfers between random participant accounts.
 
 The load ramps linearly from 1 RPS to --target-rps over --ramp-up, then
 holds constant for the remainder of --duration (~100 s / ~20 ledgers).
@@ -295,7 +297,7 @@ Run bench as many times as needed.`,
 	cmd.Flags().String("rpc-url", "", "Override the RPC URL stored in the state JSON file")
 	cmd.Flags().String("state-file", state.DefaultStateFile, "Path to the state JSON file")
 	cmd.Flags().String("mode", string(config.ModeSACTransfer),
-		fmt.Sprintf("Benchmark mode: %s", config.ModeSACTransfer))
+		fmt.Sprintf("Benchmark mode: %s | %s", config.ModeSACTransfer, config.ModeOZTransfer))
 	cmd.Flags().Duration("duration", 100*time.Second, "Total benchmark duration")
 	cmd.Flags().Duration("ramp-up", 20*time.Second, "Ramp-up period (RPS increases linearly from 1 to target-rps)")
 	cmd.Flags().Int("target-rps", 50, "Steady-state requests per second after ramp-up")
@@ -346,9 +348,6 @@ func runBench(cmd *cobra.Command, _ []string) error {
 	modeStr, err := cmd.Flags().GetString("mode")
 	if err != nil {
 		return err
-	}
-	if modeStr != string(config.ModeSACTransfer) {
-		return fmt.Errorf("unsupported benchmark mode %q: only %q is currently available", modeStr, config.ModeSACTransfer)
 	}
 	cfg.Mode = config.BenchmarkMode(modeStr)
 

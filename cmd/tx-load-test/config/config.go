@@ -9,6 +9,8 @@ type BenchmarkMode string
 const (
 	// ModeSACTransfer runs random SAC transfers between random accounts.
 	ModeSACTransfer BenchmarkMode = "sac-transfer"
+	// ModeOZTransfer runs random OpenZeppelin token transfers between accounts.
+	ModeOZTransfer BenchmarkMode = "oz-transfer"
 )
 
 // Config holds all parameters for setting up and running the tx-load-test.

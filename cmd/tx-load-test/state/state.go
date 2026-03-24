@@ -56,6 +56,10 @@ type PersistedState struct {
 	// SACs holds the strkey-encoded contract IDs (C...) for each deployed SAC.
 	SACs [3]string `json:"sacs"`
 
+	// OZTokenContract holds the strkey-encoded contract ID (C...) of the
+	// deployed OpenZeppelin benchmark token contract.
+	OZTokenContract string `json:"oz_token_contract,omitempty"`
+
 	// CleanedUp is set to true when teardown merges all accounts successfully.
 	// A partial cleanup sets this to false and logs a suggestion to re-run
 	// teardown.
@@ -173,6 +177,15 @@ type State struct {
 	// SACs holds the strkey-encoded contract ID (C...) of the deployed SAC for
 	// each benchmark asset, in the same order as Assets.
 	SACs [3]string
+
+	// OZTokenContract holds the strkey-encoded contract ID (C...) of the
+	// deployed OpenZeppelin benchmark token contract.
+	OZTokenContract string
+
+	// PendingOZMintKPs is the transient account delta created by the current
+	// setup run. ozTokenStep uses it to mint balances only to newly-created
+	// accounts on incremental setup re-runs.
+	PendingOZMintKPs []*keypair.Full
 }
 
 // HashSeed returns the hex-encoded SHA-256 hash of a Stellar secret seed.
@@ -208,6 +221,7 @@ func (s *State) ToPersistedState(rpcURL string) (*PersistedState, error) {
 		NetworkPassphrase: s.NetworkPassphrase,
 		FeePayerHash:      HashSeed(s.FeePayerKP.Seed()),
 		SACs:              s.SACs,
+		OZTokenContract:   s.OZTokenContract,
 	}
 	ps.AccountIndices = make([]int, len(s.AccountKPs))
 	for i, kp := range s.AccountKPs {
@@ -266,5 +280,6 @@ func FromPersistedState(ps *PersistedState, feePayerSeed, rpcURL string) (*State
 		Assets:            assets,
 		AccountKPs:        accountKPs,
 		SACs:              ps.SACs,
+		OZTokenContract:   ps.OZTokenContract,
 	}, nil
 }

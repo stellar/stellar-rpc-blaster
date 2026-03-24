@@ -21,13 +21,13 @@ type Step interface {
 }
 
 // steps is the ordered list of setup phases.
-// OZ-token and Soroswap steps are intentionally omitted until those workloads
-// are implemented; only the SAC-transfer workload is active.
+// Soroswap remains intentionally omitted until that workload is implemented.
 var steps = []Step{
 	feePayerStep{},
 	assetsStep{},
 	accountsStep{},
 	sacStep{},
+	ozTokenStep{},
 }
 
 // Setup orchestrates the full ledger-state setup before benchmarking begins.

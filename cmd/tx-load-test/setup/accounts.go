@@ -49,6 +49,7 @@ func (accountsStep) Run(ctx context.Context, logger *log.Entry, cfg config.Confi
 
 	if existingCount >= targetCount {
 		logger.Infof("already have %d accounts (target %d)  -- nothing to do", existingCount, targetCount)
+		st.PendingOZMintKPs = nil
 		return nil
 	}
 
@@ -91,6 +92,7 @@ func (accountsStep) Run(ctx context.Context, logger *log.Entry, cfg config.Confi
 	}
 
 	st.AccountKPs = append(st.AccountKPs, newKPs...)
+	st.PendingOZMintKPs = newKPs
 	return nil
 }
 

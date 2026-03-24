@@ -40,10 +40,10 @@ type Mode interface {
 }
 
 // modes maps each config.BenchmarkMode string to its Mode implementation.
-// OZ-transfer and Soroswap modes are intentionally omitted until those
-// workloads are implemented; only sac-transfer is active.
+// Soroswap remains intentionally omitted until that workload is implemented.
 var modes = map[config.BenchmarkMode]Mode{
 	config.ModeSACTransfer: sacTransferMode{},
+	config.ModeOZTransfer:  ozTransferMode{},
 }
 
 // ledgerCloseSeconds is the target ledger close time used when validating that

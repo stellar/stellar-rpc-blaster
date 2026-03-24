@@ -23,6 +23,15 @@ func TestValidateConfig(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "valid oz transfer config",
+			cfg: config.Config{
+				Mode:             config.ModeOZTransfer,
+				TargetRPS:        50,
+				NumberOfAccounts: 500,
+			},
+			wantErr: false,
+		},
+		{
 			name: "rejects unsupported mode",
 			cfg: config.Config{
 				Mode:             config.BenchmarkMode("unknown-mode"),

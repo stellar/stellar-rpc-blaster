@@ -11,7 +11,7 @@ setup  -->  state.json  -->  bench  (repeatable)
                         -->  teardown
 ```
 
-- **`setup`** -- one-time ledger initialization: creates accounts, assets, trustlines, SAC contracts. Re-running with a higher `--accounts` value adds accounts incrementally.
+- **`setup`** -- one-time ledger initialization: creates accounts, assets, trustlines, SAC contracts, and the OZ benchmark token. Re-running with a higher `--accounts` value adds accounts incrementally.
 - **`bench`** -- drives load against the RPC endpoint using pre-built state. Run as many times as needed.
 - **`teardown`** -- merges all participant accounts back into the fee payer, recovering XLM. Deletes the state file on success.
 - **`sync`** -- reconciles the state file with on-chain reality (removes accounts that no longer exist).
@@ -65,6 +65,7 @@ Re-running `setup` requires the resolved network passphrase to match the value a
 2. **Assets** -- register 3 benchmark classic assets (BLTA, BLTB, BLTC) with the fee payer as issuer.
 3. **Accounts** -- derive keypairs deterministically from the fee-payer seed. If a state file was loaded, only the delta accounts are created. Accounts are created in batches of 19 (CreateAccount + 3 ChangeTrust, capped at 20 signatures), then minted in batches of 33.
 4. **SAC** -- deploy a Stellar Asset Contract for each of the 3 assets (idempotent; skips if already deployed).
+5. **OZ token** -- upload and deploy the upgradeable OpenZeppelin benchmark token, then mint balances to participant accounts in batches.
 
 If setup is interrupted, a best-effort cleanup merges whatever accounts exist and writes partial state so `teardown` can finish later.
 
@@ -86,7 +87,7 @@ Before the benchmark starts, the tool queries the chosen RPC endpoint (either `-
 
 | Flag | Default | Description |
 |---|---|---|
-| `--mode` | `sac-transfer` | Workload: `sac-transfer` |
+| `--mode` | `sac-transfer` | Workload: `sac-transfer` or `oz-transfer` |
 | `--target-rps` | `50` | Steady-state requests per second |
 | `--duration` | `100s` | Total benchmark duration |
 | `--ramp-up` | `20s` | Linear ramp from 1 RPS to target |
@@ -100,6 +101,7 @@ Before the benchmark starts, the tool queries the chosen RPC endpoint (either `-
 
 **Available modes:**
 - **`sac-transfer`** -- SAC token transfers between random participant accounts via `InvokeHostFunction`.
+- **`oz-transfer`** -- transfers on the upgradeable OpenZeppelin benchmark token contract.
 
 **Benchmark output:** after the attack and poll drain, bench logs:
 - Submission counters: submitted, queued, httpErr, tryAgainLater, submitErrors (with per-ResultCode breakdown)
@@ -153,6 +155,7 @@ Removes entries for accounts that no longer exist on-chain, useful after a netwo
   "account_indices": [1, 2, 3],
   "assets": ["BLTA", "BLTB", "BLTC"],
   "sacs": ["C...", "C...", "C..."],
+  "oz_token_contract": "C...",
   "cleaned_up": false
 }
 ```
@@ -177,13 +180,13 @@ cmd/tx-load-test/
 |   |-- assets.go      #   Register BLTA/BLTB/BLTC
 |   |-- accounts.go    #   Batch account creation, trustlines, minting (delta-aware)
 |   |-- sac.go         #   SAC deployment (CreateContractV2)
-|   |-- oz_token.go    #   OZ token deployment (placeholder)
+|   |-- oz_token.go    #   OZ token deployment and minting
 |   +-- soroswap.go    #   Soroswap pool setup (placeholder)
 |-- benchmark/         # Benchmark harness and workload modes
 |   |-- benchmark.go   #   Mode interface, ValidateConfig, Run entry point
 |   |-- runner.go      #   Vegeta attack loop, poll workers, metrics collection
 |   |-- sac_transfer.go#   SAC transfer targeter with presimulation + sequence mgmt
-|   |-- oz_transfer.go #   OZ transfer targeter (placeholder)
+|   |-- oz_transfer.go #   OZ transfer targeter
 |   +-- soroswap.go    #   Soroswap targeter (placeholder)
 |-- teardown/          # Teardown and best-effort cleanup
 |   +-- teardown.go    #   Teardown, BestEffortCleanup, batch drain+merge
