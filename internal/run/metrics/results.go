@@ -20,7 +20,6 @@ type EndpointResult struct {
 	Success       uint64                 `json:"success"`
 	Errors        uint64                 `json:"errors"`
 	TargetRPS     float64                `json:"target_rps"`
-	AchievedRPS   float64                `json:"achieved_rps"`
 	Percentiles   map[string]float64     `json:"percentiles_ms"`
 	ErrorTypes    map[string]ErrorResult `json:"error_types,omitempty"`
 }
@@ -47,13 +46,9 @@ func (a *Aggregator) Results() *Results {
 		stats := a.stats[name]
 		stats.refreshPercentiles() // compute final percentiles from histogram
 		totalRequests := stats.success + stats.errors
-		// cumulative achieved RPS for final output: total requests / endpoint's own elapsed time
-		var cumulativeRPS float64
-		if !stats.startTime.IsZero() {
-			epElapsed := time.Since(stats.startTime).Seconds()
-			if epElapsed > 0 {
-				cumulativeRPS = float64(totalRequests) / epElapsed
-			}
+		var targetRPS float64
+		if epDuration := stats.duration.Seconds(); epDuration > 0 {
+			targetRPS = stats.expectedTotalHits / epDuration
 		}
 		errorTypesCopy := make(map[string]ErrorResult, len(stats.errorTypes))
 		maps.Copy(errorTypesCopy, stats.errorTypes)
@@ -62,8 +57,7 @@ func (a *Aggregator) Results() *Results {
 			Success:       stats.success,
 			Errors:        stats.errors,
 			ErrorTypes:    errorTypesCopy,
-			TargetRPS:     stats.targetRPS,
-			AchievedRPS:   cumulativeRPS,
+			TargetRPS:     targetRPS,
 			Percentiles:   make(map[string]float64),
 		}
 		for p, d := range stats.percentiles {

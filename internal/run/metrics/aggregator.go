@@ -34,20 +34,18 @@ type Aggregator struct {
 
 // EndpointStats collects stats for all vegeta workers of an endpoint
 type EndpointStats struct {
-	histogram   *hdrhistogram.Histogram
-	success     uint64
-	errors      uint64
-	errorTypes  map[string]ErrorResult
-	percentiles map[float64]time.Duration
-	targetRPS   float64
-	achievedRPS float64 // instantaneous (last window) for display
-
-	startTime   time.Time // set on first sample (fixes serial mode)
-	windowStart time.Time // start of current reporting window
-	windowTotal uint64    // total requests at start of window
+	histogram         *hdrhistogram.Histogram
+	success           uint64
+	errors            uint64
+	errorTypes        map[string]ErrorResult
+	percentiles       map[float64]time.Duration
+	targetRPS         float64
+	duration          time.Duration // configured run duration for this endpoint
+	expectedTotalHits float64       // pacer's expected cumulative hits over duration (includes ramp)
+	startTime         time.Time     // set on first sample (fixes serial mode)
 }
 
-// Main driver function; consumes samples from the channel and prints progress every 5 seconds
+// Main driver function; consumes samples from the channel and prints progress every 5 seconds.
 func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -56,14 +54,13 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 		select {
 		case sample, ok := <-in:
 			if !ok {
-				// channel closed
+				// channel closed — engine is done
 				if err := WriteOutput(a); err != nil {
 					a.logger.Error(err)
 				}
 				return
 			}
 			if a.done {
-				// drain remaining samples without processing if we're already done
 				continue
 			}
 			if err := a.Record(sample); err != nil {
@@ -76,7 +73,7 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 				a.logger.Error(fmt.Errorf("aggregator.Run terminating due to context error: %w", err))
 			}
 			if err := WriteOutput(a); err != nil {
-				a.logger.Error(fmt.Errorf("Failed to write output results: %w", err))
+				a.logger.Error(err)
 			}
 			return
 		}
@@ -104,6 +101,7 @@ func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
 			histogram:   hdrhistogram.New(1, 60000000, 3),
 			percentiles: make(map[float64]time.Duration),
 			errorTypes:  make(map[string]ErrorResult),
+			duration:    settings.Duration,
 		}
 	}
 
@@ -127,9 +125,7 @@ func (a *Aggregator) Record(sample Sample) error {
 
 	epStats := a.stats[sample.Endpoint]
 	if epStats.startTime.IsZero() {
-		now := time.Now()
-		epStats.startTime = now
-		epStats.windowStart = now
+		epStats.startTime = time.Now()
 	}
 	epStats.targetRPS = sample.CurrentRPS
 	if sample.OK {
@@ -173,37 +169,16 @@ func (a *Aggregator) String() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	isFinal := elapsed >= a.duration
-	now := time.Now()
 	for _, endpointName := range a.orderedEndpoints {
 		endpointStats := a.stats[endpointName]
 		if endpointStats.targetRPS == 0 {
-			// avoid showing 0% progress for endpoints that haven't started yet
 			continue
 		}
-		total := endpointStats.success + endpointStats.errors
-		if isFinal {
-			// cumulative RPS from endpoint's own start time
-			epElapsed := now.Sub(endpointStats.startTime).Seconds()
-			if epElapsed > 0 {
-				endpointStats.achievedRPS = float64(total) / epElapsed
-			}
-		} else {
-			// instantaneous RPS over the last reporting window
-			windowElapsed := now.Sub(endpointStats.windowStart).Seconds()
-			if windowElapsed > 0 {
-				endpointStats.achievedRPS = float64(total-endpointStats.windowTotal) / windowElapsed
-			}
-			endpointStats.windowStart = now
-			endpointStats.windowTotal = total
-		}
-
 		fmt.Fprintf(&line, "\n%-20s: %s", endpointName, endpointStats)
 	}
 
-	if isFinal {
+	if elapsed >= a.duration {
 		a.done = true
-		return "=== Final Cumulative Results ===" + line.String()
 	}
 
 	return line.String()
@@ -214,7 +189,7 @@ func (e *EndpointStats) String() string {
 	e.refreshPercentiles()
 	total := e.success + e.errors
 
-	out := fmt.Sprintf("%6d req (%6d ok, %4d err) | %6.1f target RPS vs. %6.1f achieved RPS | ", total, e.success, e.errors, e.targetRPS, e.achievedRPS)
+	out := fmt.Sprintf("%6d req (%6d ok, %4d err) | %6.1f target RPS | ", total, e.success, e.errors, e.targetRPS)
 	for _, p := range capturedPercentiles {
 		out += fmt.Sprintf("p%4.1f: %8s, ", p, fmtDuration(e.percentiles[p]))
 	}
