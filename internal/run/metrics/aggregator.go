@@ -189,7 +189,11 @@ func (e *EndpointStats) String() string {
 	e.refreshPercentiles()
 	total := e.success + e.errors
 
-	out := fmt.Sprintf("%6d req (%6d ok, %4d err) | %6.1f target RPS | ", total, e.success, e.errors, e.targetRPS)
+	var pctOK float64
+	if total > 0 {
+		pctOK = float64(e.success) / float64(total) * 100
+	}
+	out := fmt.Sprintf("%6d resp (%6d ok, %4d err) %5.1f%% ok | %6.1f target RPS | ", total, e.success, e.errors, pctOK, e.targetRPS)
 	for _, p := range capturedPercentiles {
 		out += fmt.Sprintf("p%4.1f: %8s, ", p, fmtDuration(e.percentiles[p]))
 	}
