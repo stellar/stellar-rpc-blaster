@@ -3,6 +3,7 @@ package blaster
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -41,6 +42,15 @@ func (a *App) RunApp(runtimeSettings config.RuntimeSettings) error {
 	// Handle OS signals and ctx cancellation to terminate the service
 	ctx, cancel := signal.NotifyContext(runtimeSettings.Ctx, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+	f, err := os.OpenFile("app.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		a.logger.Fatal(err)
+	}
+	defer f.Close()
+
+	// Write to both console (stderr) and file
+	multi := io.MultiWriter(os.Stdout, f)
+	a.logger.SetOutput(multi)
 
 	if err := a.init(ctx, runtimeSettings); err != nil {
 		return err
