@@ -140,14 +140,23 @@ func (a *Aggregator) Record(sample Sample) error {
 		} else {
 			errKey = strconv.Itoa(int(sample.Code))
 		}
+		now := time.Now()
 		if existing, ok := epStats.errorTypes[errKey]; ok {
 			existing.Count++
+			existing.TimeSeen.LastSeen = now
 			epStats.errorTypes[errKey] = existing
 		} else {
 			epStats.errorTypes[errKey] = ErrorResult{
 				ErrorMsg:  sample.Err,
 				ErrorCode: int(sample.Code),
 				Count:     1,
+				TimeSeen: struct {
+					FirstSeen time.Time `json:"time_first_seen"`
+					LastSeen  time.Time `json:"time_last_seen"`
+				}{
+					FirstSeen: now,
+					LastSeen:  now,
+				},
 			}
 		}
 	}

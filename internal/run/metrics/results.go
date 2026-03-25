@@ -28,6 +28,10 @@ type ErrorResult struct {
 	ErrorMsg  string `json:"error_msg"`
 	ErrorCode int    `json:"error_code"`
 	Count     uint64 `json:"count"`
+	TimeSeen  struct {
+		FirstSeen time.Time `json:"time_first_seen"`
+		LastSeen  time.Time `json:"time_last_seen"`
+	} `json:"times_seen"`
 }
 
 // Returns the final aggregated results
