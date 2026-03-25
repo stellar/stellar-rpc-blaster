@@ -112,10 +112,13 @@ func NewConfig(
 		if err := cfg.processToml(settings.ConfigPath); err != nil {
 			return Config{}, err
 		}
-		// CLI flag overrides TOML value if provided
-		if settings.InputDataPath != "" {
+		logger.Infof("Successfully loaded config from %s", settings.ConfigPath)
+		if settings.InputDataPath != "" && cfg.InputDataPath != "" {
+			return Config{}, fmt.Errorf("input-data-path provided in both CLI and config file; please provide in only one place")
+		} else if settings.InputDataPath != "" {
 			cfg.InputDataPath = settings.InputDataPath
 		}
+		logger.Infof("Successfully loaded seed data from %s", cfg.InputDataPath)
 	case Generate:
 		cfg.OutputPath = settings.OutputPath
 		cfg.LedgerWindow = settings.LedgerWindow
@@ -123,8 +126,6 @@ func NewConfig(
 	default:
 		return Config{}, fmt.Errorf("unknown mode: %s", cfg.Mode.Name())
 	}
-
-	logger.Infof("Successfully loaded config from %s", settings.ConfigPath)
 
 	return cfg, nil
 }
