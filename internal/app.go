@@ -96,10 +96,9 @@ func (a *App) RunApp(runtimeSettings config.RuntimeSettings) error {
 func (a *App) init(ctx context.Context, runtimeSettings config.RuntimeSettings) error {
 	var err error
 	start := time.Now()
-	if logFile, err := a.SaveLogsToFile("run-" + start.Format("2006-01-02T15-04-05") + ".log"); err != nil {
+	filename := fmt.Sprintf("%s-%s.log", runtimeSettings.Mode.Name(), start.Format("2006-01-02T15-04-05"))
+	if a.logFile, err = a.SaveLogsToFile(filename); err != nil {
 		return fmt.Errorf("could not save logs to file: %w", err)
-	} else {
-		a.logFile = logFile
 	}
 	a.logger.Info("Starting Blaster")
 
