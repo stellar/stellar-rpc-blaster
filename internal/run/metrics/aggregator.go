@@ -47,6 +47,8 @@ type EndpointStats struct {
 
 // Main driver function; consumes samples from the channel and prints progress every 5 seconds.
 func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
+	a.start = time.Now()
+
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -89,7 +91,6 @@ func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
 	a := Aggregator{
 		logger:          logger,
 		stats:           make(map[string]*EndpointStats),
-		start:           time.Now(),
 		duration:        duration,
 		writeOutputPath: settings.TestOutputPath,
 	}

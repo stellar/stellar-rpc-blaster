@@ -117,14 +117,14 @@ func (a *App) close() {
 }
 
 func (a *App) runLoadTest(ctx context.Context) error {
-	out := make(chan blasterMetrics.Sample, 1000)
-
-	aggregator := blasterMetrics.NewAggregator(a.logger, a.config)
+	out := make(chan blasterMetrics.Sample, 1000) // engine writes samples to this channel, aggregator reads from it
 
 	be, err := engine.NewBlastEngine(ctx, a.logger, a.config, a.client, out)
 	if err != nil {
 		return fmt.Errorf("could not create blast engine: %w", err)
 	}
+
+	aggregator := blasterMetrics.NewAggregator(a.logger, a.config)
 	// Aggregator goroutine: consumes samples and prints every 5s
 	var wg sync.WaitGroup
 	wg.Go(func() {
@@ -147,7 +147,7 @@ func (a *App) runGenerate(ctx context.Context) error {
 }
 
 func (a *App) SaveLogsToFile(filename string) (*os.File, error) {
-	dir := filepath.Join("output", "run_logs")
+	dir := filepath.Join("./output", "run_logs")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("could not create log directory: %w", err)
 	}
