@@ -107,6 +107,7 @@ func (b *BlastEngine) Run(ctx context.Context, logger *log.Entry) {
 		for _, blast := range b.BlastSpecs {
 			if ctx.Err() != nil {
 				logger.Errorf("Endpoint blasts terminating early due to context error: %s", ctx.Err().Error())
+				return
 			}
 			logger.Infof("Serial mode: starting endpoint %s", blast.EndpointKey)
 			epCtx, epCancel := context.WithTimeout(ctx, b.cfg.Duration)
