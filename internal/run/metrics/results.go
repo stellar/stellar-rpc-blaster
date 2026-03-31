@@ -50,10 +50,6 @@ func (a *Aggregator) Results() *Results {
 		stats := a.stats[name]
 		stats.refreshPercentiles() // compute final percentiles from histogram
 		totalRequests := stats.success + stats.errors
-		var targetRPS float64
-		if epDuration := stats.duration.Seconds(); epDuration > 0 {
-			targetRPS = stats.expectedTotalHits / epDuration
-		}
 		errorTypesCopy := make(map[string]ErrorResult, len(stats.errorTypes))
 		maps.Copy(errorTypesCopy, stats.errorTypes)
 		results.Endpoints[name] = &EndpointResult{
@@ -61,7 +57,7 @@ func (a *Aggregator) Results() *Results {
 			Success:       stats.success,
 			Errors:        stats.errors,
 			ErrorTypes:    errorTypesCopy,
-			TargetRPS:     targetRPS,
+			TargetRPS:     stats.targetRPS,
 			Percentiles:   make(map[string]float64),
 		}
 		for p, d := range stats.percentiles {

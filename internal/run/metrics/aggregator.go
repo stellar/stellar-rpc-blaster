@@ -41,8 +41,7 @@ type EndpointStats struct {
 	percentiles       map[float64]time.Duration
 	targetRPS         float64
 	duration          time.Duration // configured run duration for this endpoint
-	expectedTotalHits float64       // pacer's expected cumulative hits over duration (includes ramp)
-	startTime         time.Time     // set on first sample (fixes serial mode)
+	startTime time.Time // set on first sample (fixes serial mode)
 }
 
 // Main driver function; consumes samples from the channel and prints progress every 5 seconds.
