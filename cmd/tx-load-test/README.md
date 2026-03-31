@@ -63,7 +63,7 @@ Re-running `setup` requires the resolved network passphrase to match the value a
 **Setup steps (in order):**
 1. **Fee payer** -- verify/create/fund the fee-payer account. Auto-tops-up via friendbot if balance is insufficient.
 2. **Assets** -- register 3 benchmark classic assets (BLTA, BLTB, BLTC) with the fee payer as issuer.
-3. **Accounts** -- derive keypairs deterministically from the fee-payer seed. If a state file was loaded, only the delta accounts are created. Accounts are created in batches of 19 (CreateAccount + 3 ChangeTrust, capped at 20 signatures), then minted in batches of 33.
+3. **Accounts** -- derive keypairs deterministically from the fee-payer seed. If a state file was loaded, only the delta accounts are created. The first `min(accounts, 1000)` accounts form the SAC-active subset: they are created in batches of 19 (CreateAccount + 3 ChangeTrust, capped at 20 signatures) and minted in batches of 33. Remaining accounts are created as XLM-only participants.
 4. **SAC** -- deploy a Stellar Asset Contract for each of the 3 assets (idempotent; skips if already deployed).
 5. **OZ token** -- upload and deploy the upgradeable OpenZeppelin benchmark token, then mint balances to participant accounts in batches.
 
@@ -100,7 +100,7 @@ Before the benchmark starts, the tool queries the chosen RPC endpoint (either `-
 - **Recommended minimum:** `accounts >= target-rps * 10` (two full ledgers between account reuse). Logs a warning if not met. This margin prevents mempool evictions from cascading into sequence errors.
 
 **Available modes:**
-- **`sac-transfer`** -- SAC token transfers between random participant accounts via `InvokeHostFunction`.
+- **`sac-transfer`** -- SAC token transfers between random SAC-active participant accounts (the first `min(accounts, 1000)` accounts with trustlines) via `InvokeHostFunction`.
 - **`oz-transfer`** -- transfers on the upgradeable OpenZeppelin benchmark token contract.
 
 **Benchmark output:** after the attack and poll drain, bench logs:
@@ -153,6 +153,7 @@ Removes entries for accounts that no longer exist on-chain, useful after a netwo
   "network_passphrase": "Test SDF Network ; September 2015",
   "fee_payer_hash": "5d7a...hex-sha256...",
   "account_indices": [1, 2, 3],
+  "sac_holder_indices": [1, 2, 3],
   "assets": ["BLTA", "BLTB", "BLTC"],
   "sacs": ["C...", "C...", "C..."],
   "oz_token_contract": "C...",
@@ -196,7 +197,7 @@ cmd/tx-load-test/
 
 ### Key Design Decisions
 
-**Incremental setup.** If `state.json` already exists when `setup` runs, the existing state is loaded and only delta accounts are created. All steps are idempotent -- fee payer, assets, and SACs skip work if already done; accounts only creates indices beyond the existing count.
+**Incremental setup.** If `state.json` already exists when `setup` runs, the existing state is loaded and only delta accounts are created. All steps are idempotent -- fee payer, assets, and SACs skip work if already done; accounts only creates indices beyond the existing count. The SAC-active subset always remains the first `min(account count, 1000)` accounts, and its derivation indices are persisted in `sac_holder_indices`.
 
 **Per-account atomic sequence counters.** During benchmarks, each source account has its own `atomic.Int64` counter initialized to the on-ledger sequence number. The targeter increments the counter atomically to get the next sequence. This replaces a global slot-based formula that assumed every transaction succeeds.
 

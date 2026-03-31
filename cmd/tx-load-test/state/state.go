@@ -25,6 +25,11 @@ const DefaultStateFile = "state.json"
 // fee-payer seed).
 const AccountSeedStartIndex = 1
 
+// MaxSACHolderAccounts caps how many participant accounts receive classic
+// trustlines and initial SAC-transfer balances. The first N accounts are the
+// active SAC holder subset.
+const MaxSACHolderAccounts = 1000
+
 // PersistedState is the JSON-serializable representation of everything
 // produced by the setup phase and consumed by bench / teardown.
 //
@@ -49,6 +54,11 @@ type PersistedState struct {
 	// accounts. Typically contiguous (1..N), but may have gaps after sync
 	// or partial teardown.
 	AccountIndices []int `json:"account_indices"`
+
+	// SACHolderIndices are the derivation indices of the participant accounts
+	// that hold classic trustlines and participate in SAC transfer benchmarks.
+	// This is typically the first min(account count, 1000) accounts.
+	SACHolderIndices []int `json:"sac_holder_indices,omitempty"`
 
 	// Assets holds the 3 benchmark asset codes (issuer = fee payer).
 	Assets [3]string `json:"assets"`
@@ -174,6 +184,11 @@ type State struct {
 	// AccountKPs are the keypairs of the benchmark participant accounts.
 	AccountKPs []*keypair.Full
 
+	// SACHolderKPs are the subset of participant accounts that have classic
+	// trustlines and initial benchmark asset balances. SAC transfer benchmarks
+	// use only this subset.
+	SACHolderKPs []*keypair.Full
+
 	// SACs holds the strkey-encoded contract ID (C...) of the deployed SAC for
 	// each benchmark asset, in the same order as Assets.
 	SACs [3]string
@@ -183,9 +198,27 @@ type State struct {
 	OZTokenContract string
 
 	// PendingOZMintKPs is the transient account delta created by the current
-	// setup run. ozTokenStep uses it to mint balances only to newly-created
-	// accounts on incremental setup re-runs.
+	// setup run. It is retained only as a setup-time hint; OZ balance
+	// reconciliation always verifies on-ledger balances before minting.
 	PendingOZMintKPs []*keypair.Full
+}
+
+// SACHolderCount returns how many participant accounts should be active SAC
+// holders for a given total account count.
+func SACHolderCount(totalAccounts int) int {
+	return min(totalAccounts, MaxSACHolderAccounts)
+}
+
+// DefaultSACHolderKPs returns the default SAC-active subset: the first
+// min(len(accountKPs), 1000) participant accounts.
+func DefaultSACHolderKPs(accountKPs []*keypair.Full) []*keypair.Full {
+	n := SACHolderCount(len(accountKPs))
+	if n == 0 {
+		return nil
+	}
+	holders := make([]*keypair.Full, n)
+	copy(holders, accountKPs[:n])
+	return holders
 }
 
 // HashSeed returns the hex-encoded SHA-256 hash of a Stellar secret seed.
@@ -234,6 +267,19 @@ func (s *State) ToPersistedState(rpcURL string) (*PersistedState, error) {
 	for i, a := range s.Assets {
 		ps.Assets[i] = a.Code
 	}
+
+	holderKPs := s.SACHolderKPs
+	if len(holderKPs) == 0 && len(s.AccountKPs) > 0 {
+		holderKPs = DefaultSACHolderKPs(s.AccountKPs)
+	}
+	ps.SACHolderIndices = make([]int, len(holderKPs))
+	for i, kp := range holderKPs {
+		idx, err := RecoverIndex(kp)
+		if err != nil {
+			return nil, fmt.Errorf("recover SAC holder index %d: %w", i, err)
+		}
+		ps.SACHolderIndices[i] = idx
+	}
 	return ps, nil
 }
 
@@ -260,12 +306,26 @@ func FromPersistedState(ps *PersistedState, feePayerSeed, rpcURL string) (*State
 	}
 
 	accountKPs := make([]*keypair.Full, len(ps.AccountIndices))
+	accountByIndex := make(map[int]*keypair.Full, len(ps.AccountIndices))
 	for i, idx := range ps.AccountIndices {
 		kp, err := DeriveKeypair(feePayerKP, idx)
 		if err != nil {
 			return nil, fmt.Errorf("derive account %d (index %d): %w", i, idx, err)
 		}
 		accountKPs[i] = kp
+		accountByIndex[idx] = kp
+	}
+
+	holderKPs := DefaultSACHolderKPs(accountKPs)
+	if len(ps.SACHolderIndices) > 0 {
+		holderKPs = make([]*keypair.Full, len(ps.SACHolderIndices))
+		for i, idx := range ps.SACHolderIndices {
+			kp, ok := accountByIndex[idx]
+			if !ok {
+				return nil, fmt.Errorf("sac holder index %d not found in account_indices", idx)
+			}
+			holderKPs[i] = kp
+		}
 	}
 
 	var assets [3]txnbuild.CreditAsset
@@ -279,6 +339,7 @@ func FromPersistedState(ps *PersistedState, feePayerSeed, rpcURL string) (*State
 		NetworkPassphrase: ps.NetworkPassphrase,
 		Assets:            assets,
 		AccountKPs:        accountKPs,
+		SACHolderKPs:      holderKPs,
 		SACs:              ps.SACs,
 		OZTokenContract:   ps.OZTokenContract,
 	}, nil

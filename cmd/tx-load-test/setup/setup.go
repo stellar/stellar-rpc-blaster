@@ -37,7 +37,13 @@ var steps = []Step{
 // If existing is non-nil (loaded from a previous state.json), Setup reuses it
 // as the starting point so only the delta work is performed (e.g. creating
 // additional accounts to reach cfg.NumberOfAccounts).
-func Setup(ctx context.Context, logger *log.Entry, cfg config.Config, existing *state.State) (*state.State, error) {
+func Setup(
+	ctx context.Context,
+	logger *log.Entry,
+	cfg config.Config,
+	existing *state.State,
+	persist func(*state.State) error,
+) (*state.State, error) {
 	st := existing
 	if st == nil {
 		st = &state.State{}
@@ -47,8 +53,22 @@ func Setup(ctx context.Context, logger *log.Entry, cfg config.Config, existing *
 		scoped := logger.WithField("phase", step.Name())
 		scoped.Infof("step %d/%d", i+1, len(steps))
 		if err := step.Run(ctx, scoped, cfg, st); err != nil {
+			if persist != nil {
+				if saveErr := persist(st); saveErr != nil {
+					scoped.WithError(saveErr).Error("failed to save partial state after step error")
+					return st, fmt.Errorf("%s: %w (also failed to save partial state: %v)", step.Name(), err, saveErr)
+				}
+				scoped.Warn("partial state saved after step error")
+			}
 			scoped.WithError(err).Error("step failed")
-			return nil, fmt.Errorf("%s: %w", step.Name(), err)
+			return st, fmt.Errorf("%s: %w", step.Name(), err)
+		}
+		if persist != nil {
+			if err := persist(st); err != nil {
+				scoped.WithError(err).Error("failed to save state after step")
+				return st, fmt.Errorf("%s: save state: %w", step.Name(), err)
+			}
+			scoped.Debug("state snapshot saved")
 		}
 	}
 

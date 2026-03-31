@@ -163,9 +163,10 @@ a benchmark:
 
   1. Verifies / funds the fee-payer account.
   2. Creates 3 classic benchmark assets (BLTA, BLTB, BLTC).
-  3. Creates participant accounts with XLM balance and trustlines.
-  4. Mints asset balances to every participant account.
-  5. Deploys a SAC instance for each benchmark asset.
+	3. Creates participant accounts with XLM balance.
+	4. Adds trustlines and classic asset balances only to the first min(accounts, 1000).
+	5. Deploys a SAC instance for each benchmark asset.
+	6. Deploys the OZ token contract and reconciles OZ balances for all participant accounts.
 
 The resulting state is written to a JSON file (default: state.json) which
 bench and teardown consume. Run setup once; run bench as many times as needed;
@@ -173,13 +174,15 @@ run teardown to clean up.
 
 If a state.json already exists, setup will load it and only create the
 additional accounts needed to reach the --accounts target. This lets you
-expand an existing account pool without a full teardown/setup cycle.`,
+expand an existing account pool without a full teardown/setup cycle. Re-running
+setup also reconciles the OZ token so accounts missing benchmark balances are
+minted before the command exits.`,
 		RunE: runSetup,
 	}
 
 	addCommonFlags(cmd)
 	cmd.Flags().Int("accounts", 5_000, "Number of participant accounts to create")
-	cmd.Flags().Float64("base-reserve-xlm", 3.0, "XLM to fund each account (0.5 base + 3x0.5 trustlines + 1.0 margin)")
+	cmd.Flags().Float64("base-reserve-xlm", 3.0, "XLM to fund each account (covers SAC holder trustlines for the first min(accounts, 1000) plus margin)")
 	cmd.Flags().Int64("liquidity-per-pool", 1_000_000, "Token units to deposit into each Soroswap pool")
 	return cmd
 }
@@ -253,20 +256,26 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 		}
 	}()
 
-	st, err = setup.Setup(ctx, logger, cfg, st)
+	persistState := func(st *state.State) error {
+		if st == nil || st.FeePayerKP == nil {
+			return nil
+		}
+		ps, err := st.ToPersistedState(cfg.RPCURL)
+		if err != nil {
+			return fmt.Errorf("build persisted state: %w", err)
+		}
+		if err := ps.Save(stateFile); err != nil {
+			return fmt.Errorf("save state: %w", err)
+		}
+		return nil
+	}
+
+	st, err = setup.Setup(ctx, logger, cfg, st, persistState)
 	if err != nil {
 		logger.WithError(err).Error("setup failed")
 		return err
 	}
 
-	// Write state to disk for bench / teardown.
-	ps, err := st.ToPersistedState(cfg.RPCURL)
-	if err != nil {
-		return fmt.Errorf("build persisted state: %w", err)
-	}
-	if err := ps.Save(stateFile); err != nil {
-		return fmt.Errorf("save state: %w", err)
-	}
 	logger.Infof("state written to %s", stateFile)
 	return nil
 }

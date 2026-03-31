@@ -24,6 +24,57 @@ type ozTransferMode struct{}
 
 func (ozTransferMode) Label() string { return "oz-transfer" }
 
+func (ozTransferMode) VerifyReady(ctx context.Context, st *state.State) error {
+	if len(st.AccountKPs) < 2 {
+		return fmt.Errorf("need at least 2 accounts for OZ transfer benchmark, got %d", len(st.AccountKPs))
+	}
+	if st.OZTokenContract == "" {
+		return fmt.Errorf("OZ token contract ID is empty -- run setup first")
+	}
+
+	contractID, err := decodeContractID(st.OZTokenContract)
+	if err != nil {
+		return fmt.Errorf("decode OZ token contract ID: %w", err)
+	}
+	exists, err := contractInstanceExists(ctx, st.RPCClient, contractID)
+	if err != nil {
+		return fmt.Errorf("check OZ token contract instance: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("OZ token contract %s is missing on-ledger -- rerun setup", st.OZTokenContract)
+	}
+
+	balances, err := fetchOZBalances(ctx, st, contractID)
+	if err != nil {
+		return fmt.Errorf("fetch OZ balances: %w", err)
+	}
+
+	missingCount := 0
+	examples := make([]string, 0, 5)
+	for _, kp := range st.AccountKPs {
+		balance, ok := balances[kp.Address()]
+		if ok && hasPositiveBalance(balance) {
+			continue
+		}
+		missingCount++
+		if len(examples) < cap(examples) {
+			reason := "missing balance entry"
+			if ok {
+				reason = "zero balance"
+			}
+			examples = append(examples, fmt.Sprintf("%s (%s)", kp.Address(), reason))
+		}
+	}
+	if missingCount > 0 {
+		return fmt.Errorf(
+			"OZ benchmark state incomplete: %d accounts missing positive OZ balances; examples: %s -- rerun setup",
+			missingCount, formatExamples(examples),
+		)
+	}
+
+	return nil
+}
+
 func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *state.State) (vegeta.Targeter, SequenceResetFunc, error) {
 	if len(state.AccountKPs) < 2 {
 		return nil, nil, fmt.Errorf("need at least 2 accounts for OZ transfer benchmark, got %d", len(state.AccountKPs))
@@ -49,7 +100,7 @@ func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *sta
 	simResourceFee = xdr.Int64(float64(simResourceFee) * resourcePadFactor)
 
 	n := len(state.AccountKPs)
-	seqBase, err := loadAllSeqNums(ctx, state)
+	seqBase, err := loadSeqNums(ctx, state, state.AccountKPs)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load participant sequence numbers: %w", err)
 	}

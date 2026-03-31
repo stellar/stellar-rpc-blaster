@@ -148,6 +148,7 @@ func SubmitFeeBumpAndWait(
 				}
 				continue
 			}
+			logSendTransactionRejection(logger, resp)
 			code := decodeResultCode(resp.ErrorResultXDR)
 			return fmt.Errorf("fee-bump rejected: resultCode=%s", code)
 		}
@@ -219,6 +220,7 @@ func SubmitSorobanAndWait(
 	if err = xdr.SafeUnmarshalBase64(simResp.TransactionDataXDR, &sorobanData); err != nil {
 		return fmt.Errorf("parse simulation transaction data: %w", err)
 	}
+	logSorobanSimulation(logger, op, simResp, sorobanData)
 
 	// Reconstruct the envelope with the accurate Soroban data and total fee.
 	xdrEnv := tx.ToXDR()
@@ -402,6 +404,7 @@ func SubmitAllAndPoll(
 			continue
 		}
 		if resp.ErrorResultXDR != "" {
+			logSendTransactionRejection(logger, resp)
 			code := decodeResultCode(resp.ErrorResultXDR)
 			logger.WithError(fmt.Errorf("rejected: resultCode=%s", code)).Warnf("send transaction %d/%d", i+1, total)
 			submitFailed++
@@ -447,4 +450,70 @@ func SubmitAllAndPoll(
 	pollWG.Wait()
 
 	return submitFailed + int(pollFailed.Load())
+}
+
+// logSendTransactionRejection logs rich details returned directly by
+// sendTransaction for a rejected submission. This is especially useful for
+// Soroban pre-apply failures like TxSorobanInvalid.
+func logSendTransactionRejection(logger *log.Entry, resp protocol.SendTransactionResponse) {
+	l := logger.WithField("resultCode", decodeResultCode(resp.ErrorResultXDR))
+	if resp.Hash != "" {
+		l = l.WithField("hash", resp.Hash)
+	}
+	l.Error("transaction rejected during submission")
+	for i, s := range decodeOpResults(resp.ErrorResultXDR) {
+		l.WithField("opIndex", i).Errorf("submission op result: %s", s)
+	}
+	for i, ev := range resp.DiagnosticEventsXDR {
+		l.WithField("event", i).Errorf("submission diagnostic event: %s", ev)
+	}
+	for i, ev := range resp.DiagnosticEventsJSON {
+		l.WithField("event", i).Errorf("submission diagnostic event json: %s", string(ev))
+	}
+	if len(resp.ErrorResultJSON) > 0 {
+		l.Errorf("submission error result json: %s", string(resp.ErrorResultJSON))
+	}
+}
+
+// logSorobanSimulation emits a compact summary of a simulated Soroban
+// transaction so send-time failures can be correlated with the simulated
+// resource budget and footprint.
+func logSorobanSimulation(
+	logger *log.Entry,
+	op *txnbuild.InvokeHostFunction,
+	simResp protocol.SimulateTransactionResponse,
+	sorobanData xdr.SorobanTransactionData,
+) {
+	if op == nil {
+		return
+	}
+	entry := logger.WithFields(log.F{
+		"resourceFee":      simResp.MinResourceFee,
+		"readOnlyKeys":     len(sorobanData.Resources.Footprint.ReadOnly),
+		"readWriteKeys":    len(sorobanData.Resources.Footprint.ReadWrite),
+		"instructions":     sorobanData.Resources.Instructions,
+		"diskReadBytes":    sorobanData.Resources.DiskReadBytes,
+		"writeBytes":       sorobanData.Resources.WriteBytes,
+		"authEntries":      len(op.Auth),
+		"simResultCount":   len(simResp.Results),
+		"simEventCount":    len(simResp.EventsXDR),
+		"stateChangeCount": len(simResp.StateChanges),
+	})
+	if invoke := op.HostFunction.InvokeContract; invoke != nil {
+		entry = entry.WithField("contractFn", invoke.FunctionName)
+	}
+	if simResp.RestorePreamble != nil {
+		entry = entry.WithField("restoreRequired", true)
+	}
+	entry.Info("soroban simulation summary")
+
+	for i, ev := range simResp.EventsXDR {
+		entry.WithField("event", i).Debugf("simulation event: %s", ev)
+	}
+	for i, change := range simResp.StateChanges {
+		entry.WithFields(log.F{
+			"change": i,
+			"type":   change.Type.String(),
+		}).Debug("simulation state change")
+	}
 }

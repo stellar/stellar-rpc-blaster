@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/stellar/go-stellar-sdk/keypair"
+	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
@@ -26,10 +27,12 @@ const (
 	ozTokenInitialBalance int64 = 10_000_000_000_000
 
 	// ozTokenMintBatchSize controls how many participant accounts are funded by
-	// one owner-authorized `mint_batch` call. Keep it below the likely
-	// Soroban footprint ceiling because each recipient adds a balance entry and
-	// minting also updates total supply.
-	ozTokenMintBatchSize = 80
+	// one owner-authorized `mint_batch` call. On current testnet settings,
+	// `tx_max_write_ledger_entries` is 50. Each recipient adds one balance
+	// write and minting also updates total supply, so keep the batch below 49
+	// recipients to leave a little safety margin for contract-side writes.
+	ozTokenMintBatchSize    = 48
+	ozBalanceCheckBatchSize = 100
 )
 
 var ozTokenWasmPaths = []string{
@@ -42,9 +45,9 @@ type ozTokenStep struct{}
 
 func (ozTokenStep) Name() string { return "deploy OZ custom token" }
 
-// Run ensures the deterministic OZ benchmark token contract exists and mints
-// balances to the account delta produced by the current setup run. On the
-// first run, the contract is deployed and all participant accounts are funded.
+// Run ensures the deterministic OZ benchmark token contract exists and that
+// every participant account has its intended OZ balance. On re-runs, this
+// reconciles ledger state so partial mint failures are repaired.
 func (ozTokenStep) Run(ctx context.Context, logger *log.Entry, cfg config.Config, st *state.State) error {
 	logger = logger.WithField("phase", "oz token")
 
@@ -80,19 +83,24 @@ func (ozTokenStep) Run(ctx context.Context, logger *log.Entry, cfg config.Config
 
 	logger.Infof("deployed contract at %s (existed=%t)", contractIDStr, !deployedNow)
 	st.OZTokenContract = contractIDStr
-
-	mintTargets := st.PendingOZMintKPs
-	if deployedNow {
-		mintTargets = st.AccountKPs
-	}
 	defer func() {
 		st.PendingOZMintKPs = nil
 	}()
 
-	if len(mintTargets) == 0 {
-		logger.Info("no new accounts to mint")
+	if len(st.AccountKPs) == 0 {
+		logger.Info("no participant accounts to reconcile")
 		return nil
 	}
+
+	mintTargets, err := accountsMissingOZBalances(ctx, st, contractID, st.AccountKPs)
+	if err != nil {
+		return fmt.Errorf("reconcile OZ balances: %w", err)
+	}
+	if len(mintTargets) == 0 {
+		logger.Info("all participant accounts already have OZ balances")
+		return nil
+	}
+	logger.Infof("minting OZ balances to %d/%d participant accounts", len(mintTargets), len(st.AccountKPs))
 
 	if err := mintOZTokenBalances(ctx, logger, st, cfg.NetworkPassphrase, contractID, mintTargets); err != nil {
 		return fmt.Errorf("mint OZ token balances: %w", err)
@@ -284,6 +292,100 @@ func mintOZTokenBalances(
 		}
 	}
 	return nil
+}
+
+func accountsMissingOZBalances(
+	ctx context.Context,
+	st *state.State,
+	contractID xdr.ContractId,
+	accountKPs []*keypair.Full,
+) ([]*keypair.Full, error) {
+	keys := make([]string, 0, len(accountKPs))
+	keyToKP := make(map[string]*keypair.Full, len(accountKPs))
+	for _, kp := range accountKPs {
+		ledgerKey, err := ozBalanceLedgerKey(contractID, kp.Address())
+		if err != nil {
+			return nil, fmt.Errorf("build balance key for %s: %w", kp.Address(), err)
+		}
+		b64, err := xdr.MarshalBase64(ledgerKey)
+		if err != nil {
+			return nil, fmt.Errorf("marshal balance key for %s: %w", kp.Address(), err)
+		}
+		keys = append(keys, b64)
+		keyToKP[b64] = kp
+	}
+
+	entries := make(map[string]protocol.LedgerEntryResult, len(keys))
+	for start := 0; start < len(keys); start += ozBalanceCheckBatchSize {
+		end := min(start+ozBalanceCheckBatchSize, len(keys))
+		resp, err := st.RPCClient.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{Keys: keys[start:end]})
+		if err != nil {
+			return nil, fmt.Errorf("get OZ balance entries: %w", err)
+		}
+		for _, entry := range resp.Entries {
+			entries[entry.KeyXDR] = entry
+		}
+	}
+
+	missing := make([]*keypair.Full, 0)
+	for _, key := range keys {
+		kp := keyToKP[key]
+		entry, ok := entries[key]
+		if !ok {
+			missing = append(missing, kp)
+			continue
+		}
+
+		var data xdr.LedgerEntryData
+		if err := xdr.SafeUnmarshalBase64(entry.DataXDR, &data); err != nil {
+			return nil, fmt.Errorf("decode OZ balance entry for %s: %w", kp.Address(), err)
+		}
+		if data.ContractData == nil {
+			return nil, fmt.Errorf("OZ balance entry for %s is not contract data", kp.Address())
+		}
+		balance, ok := data.ContractData.Val.GetI128()
+		if !ok {
+			return nil, fmt.Errorf("OZ balance entry for %s is not i128", kp.Address())
+		}
+		if !hasPositiveI128(balance) {
+			missing = append(missing, kp)
+		}
+	}
+
+	return missing, nil
+}
+
+func ozBalanceLedgerKey(contractID xdr.ContractId, accountAddress string) (xdr.LedgerKey, error) {
+	accountID, err := xdr.AddressToAccountId(accountAddress)
+	if err != nil {
+		return xdr.LedgerKey{}, err
+	}
+
+	balanceVariant := xdr.ScSymbol("Balance")
+	balanceKeyVec := xdr.ScVec{
+		{Type: xdr.ScValTypeScvSymbol, Sym: &balanceVariant},
+		{Type: xdr.ScValTypeScvAddress, Address: &xdr.ScAddress{
+			Type:      xdr.ScAddressTypeScAddressTypeAccount,
+			AccountId: &accountID,
+		}},
+	}
+	balanceKeyRef := &balanceKeyVec
+
+	return xdr.LedgerKey{
+		Type: xdr.LedgerEntryTypeContractData,
+		ContractData: &xdr.LedgerKeyContractData{
+			Contract: xdr.ScAddress{
+				Type:       xdr.ScAddressTypeScAddressTypeContract,
+				ContractId: &contractID,
+			},
+			Key:        xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &balanceKeyRef},
+			Durability: xdr.ContractDataDurabilityPersistent,
+		},
+	}, nil
+}
+
+func hasPositiveI128(balance xdr.Int128Parts) bool {
+	return balance.Hi > 0 || (balance.Hi == 0 && balance.Lo > 0)
 }
 
 func sourceAccountContractAuth(invokeArgs xdr.InvokeContractArgs) []xdr.SorobanAuthorizationEntry {

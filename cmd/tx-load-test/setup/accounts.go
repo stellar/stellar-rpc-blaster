@@ -22,6 +22,11 @@ const (
 	// Op count: 19 * 4 = 76, well under the 100-op limit.
 	createAndTrustBatchSize = 19
 
+	// createOnlyBatchSize is the number of non-SAC-holder accounts created per
+	// batch. These accounts do not need trustlines, so a larger pure
+	// CreateAccount batch is safe under the 100-op limit.
+	createOnlyBatchSize = 100
+
 	// mintBatchSize is the number of accounts funded per Payment transaction.
 	// 3 assets * 33 accounts = 99 ops, just under the 100-op limit.
 	mintBatchSize = 33
@@ -35,10 +40,14 @@ type accountsStep struct{}
 
 func (accountsStep) Name() string { return "create participant accounts" }
 
-// Run creates cfg.NumberOfAccounts participant accounts. Each account is:
+// Run creates cfg.NumberOfAccounts participant accounts. The first
+// min(accounts, 1000) accounts form the SAC-active subset and are:
 //   - Funded with cfg.BaseReserveXLM (covers 2 base reserves + 3 trustlines).
 //   - Given a trustline for each of the 3 benchmark assets.
 //   - Minted an initial balance of each asset from the fee-payer/issuer.
+//
+// Remaining accounts are created and funded with XLM only. They are still
+// available for non-SAC workloads such as OZ transfers.
 //
 // Accounts are derived deterministically from the fee-payer seed so the setup
 // is idempotent across restarts. All transactions are submitted serially from
@@ -49,6 +58,7 @@ func (accountsStep) Run(ctx context.Context, logger *log.Entry, cfg config.Confi
 
 	if existingCount >= targetCount {
 		logger.Infof("already have %d accounts (target %d)  -- nothing to do", existingCount, targetCount)
+		st.SACHolderKPs = state.DefaultSACHolderKPs(st.AccountKPs)
 		st.PendingOZMintKPs = nil
 		return nil
 	}
@@ -80,26 +90,51 @@ func (accountsStep) Run(ctx context.Context, logger *log.Entry, cfg config.Confi
 		logger.Infof("derived %d keypairs", targetCount)
 	}
 
-	// --- CreateAccount + ChangeTrust for new accounts --------------------
+	existingSACHolders := state.SACHolderCount(existingCount)
+	targetSACHolders := state.SACHolderCount(targetCount)
+	newSACHolders := max(0, targetSACHolders-existingSACHolders)
+	newSACHolders = min(newSACHolders, len(newKPs))
+	holderNewKPs := newKPs[:newSACHolders]
+	passiveNewKPs := newKPs[newSACHolders:]
+
+	logger.Infof(
+		"SAC-active subset: %d existing -> %d target; new holders=%d passive=%d",
+		existingSACHolders, targetSACHolders, len(holderNewKPs), len(passiveNewKPs),
+	)
+
 	fundingAmount := fmt.Sprintf("%.7f", cfg.BaseReserveXLM)
-	if err := createAccounts(ctx, logger, cfg, st, newKPs, fundingAmount); err != nil {
-		return err
+
+	// --- CreateAccount + ChangeTrust for new SAC-active accounts ---------
+	if len(holderNewKPs) > 0 {
+		if err := createSACHolderAccounts(ctx, logger, cfg, st, holderNewKPs, fundingAmount); err != nil {
+			return err
+		}
 	}
 
-	// --- Mint initial token balances for new accounts --------------------
-	if err := mintBalances(ctx, logger, cfg, st, newKPs); err != nil {
-		return err
+	// --- Create passive accounts with XLM only ---------------------------
+	if len(passiveNewKPs) > 0 {
+		if err := createPassiveAccounts(ctx, logger, cfg, st, passiveNewKPs, fundingAmount); err != nil {
+			return err
+		}
+	}
+
+	// --- Mint initial token balances only to new SAC-active accounts -----
+	if len(holderNewKPs) > 0 {
+		if err := mintSACBalances(ctx, logger, cfg, st, holderNewKPs); err != nil {
+			return err
+		}
 	}
 
 	st.AccountKPs = append(st.AccountKPs, newKPs...)
+	st.SACHolderKPs = state.DefaultSACHolderKPs(st.AccountKPs)
 	st.PendingOZMintKPs = newKPs
 	return nil
 }
 
-// createAccounts provisions participant accounts serially via the fee payer.
-// Each batch combines CreateAccount + ChangeTrust for new accounts (or
-// trust-only for accounts that already exist from a previous partial run).
-func createAccounts(
+// createSACHolderAccounts provisions the SAC-active participant subset via the
+// fee payer. Each batch combines CreateAccount + ChangeTrust for new accounts
+// (or trust-only for accounts that already exist from a previous partial run).
+func createSACHolderAccounts(
 	ctx context.Context,
 	logger *log.Entry,
 	cfg config.Config,
@@ -222,9 +257,59 @@ func createAccounts(
 	return nil
 }
 
-// mintBalances sends each benchmark asset to every account from the fee payer
-// (who is also the issuer). Payments are batched to keep transactions small.
-func mintBalances(
+// createPassiveAccounts provisions non-SAC-holder participant accounts. These
+// accounts receive XLM only and skip trustline creation.
+func createPassiveAccounts(
+	ctx context.Context,
+	logger *log.Entry,
+	cfg config.Config,
+	st *state.State,
+	accountKPs []*keypair.Full,
+	fundingAmount string,
+) error {
+	n := len(accountKPs)
+	totalBatches := (n + createOnlyBatchSize - 1) / createOnlyBatchSize
+	for b := range totalBatches {
+		start := b * createOnlyBatchSize
+		end := min(start+createOnlyBatchSize, n)
+		batch := accountKPs[start:end]
+
+		newKPs := make([]*keypair.Full, 0, len(batch))
+		for _, kp := range batch {
+			exists, err := state.AccountExists(ctx, st.RPCClient, kp.Address())
+			if err != nil {
+				return fmt.Errorf("batch %d: check %s: %w", b+1, kp.Address(), err)
+			}
+			if !exists {
+				newKPs = append(newKPs, kp)
+			}
+		}
+
+		if len(newKPs) == 0 {
+			logger.Infof("batch %d/%d: passive accounts already exist, skipping", b+1, totalBatches)
+			continue
+		}
+
+		ops := make([]txnbuild.Operation, 0, len(newKPs))
+		for _, kp := range newKPs {
+			ops = append(ops, &txnbuild.CreateAccount{
+				Destination: kp.Address(),
+				Amount:      fundingAmount,
+			})
+		}
+
+		logger.Infof("batch %d/%d: creating %d passive accounts", b+1, totalBatches, len(newKPs))
+		if err := state.SubmitAndWait(ctx, logger, st.RPCClient, cfg.NetworkPassphrase, st.FeePayerKP, state.InclusionFee, ops); err != nil {
+			return fmt.Errorf("batch %d: create passive accounts: %w", b+1, err)
+		}
+	}
+	return nil
+}
+
+// mintSACBalances sends each benchmark asset to every SAC-active account from
+// the fee payer (who is also the issuer). Payments are batched to keep
+// transactions small.
+func mintSACBalances(
 	ctx context.Context,
 	logger *log.Entry,
 	cfg config.Config,

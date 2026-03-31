@@ -32,6 +32,9 @@ type SequenceResetFunc func(jsonRPCId int64)
 type Mode interface {
 	// Label returns a short, stable identifier (e.g. "sac-transfer").
 	Label() string
+	// VerifyReady performs runtime ledger/state checks specific to the mode and
+	// returns an actionable error if the persisted state is not benchmark-ready.
+	VerifyReady(ctx context.Context, state *state.State) error
 	// NewTargeter validates the required state and returns a Vegeta Targeter
 	// that emits one signed RPC request per call, plus an optional
 	// SequenceResetFunc for reverting sequence numbers on non-consuming
@@ -58,16 +61,19 @@ func ValidateConfig(cfg config.Config) error {
 		return fmt.Errorf("unknown benchmark mode: %q", cfg.Mode)
 	}
 
+	activeAccounts := cfg.NumberOfAccounts
+	poolLabel := "accounts"
+
 	// Each account can only be the source of one transaction per ledger.
 	// The hard minimum prevents within-ledger sequence collisions:
 	//   NumberOfAccounts >= TargetRPS * ledgerCloseSeconds
 	hardMin := cfg.TargetRPS * ledgerCloseSeconds
-	if cfg.NumberOfAccounts < hardMin {
+	if activeAccounts < hardMin {
 		return fmt.Errorf(
-			"account pool too small for target RPS: have %d accounts but need at least %d "+
+			"account pool too small for target RPS: have %d %s but need at least %d "+
 				"(%d RPS * %d s ledger) to avoid within-ledger sequence collisions  -- "+
 				"increase --accounts or reduce --target-rps",
-			cfg.NumberOfAccounts, hardMin, cfg.TargetRPS, ledgerCloseSeconds,
+			activeAccounts, poolLabel, hardMin, cfg.TargetRPS, ledgerCloseSeconds,
 		)
 	}
 
@@ -78,12 +84,12 @@ func ValidateConfig(cfg config.Config) error {
 	// because the poll workers cannot detect the eviction before the
 	// account is reused.
 	recommendedMin := hardMin * 2
-	if cfg.NumberOfAccounts < recommendedMin {
+	if activeAccounts < recommendedMin {
 		log.New().Warnf(
-			"account pool is below recommended size: have %d accounts, recommend at least %d "+
+			"account pool is below recommended size: have %d %s, recommend at least %d "+
 				"(%d RPS * %d s ledger * 2) to avoid sequence errors from mempool evictions  -- "+
 				"increase --accounts for cleaner runs",
-			cfg.NumberOfAccounts, recommendedMin, cfg.TargetRPS, ledgerCloseSeconds,
+			activeAccounts, poolLabel, recommendedMin, cfg.TargetRPS, ledgerCloseSeconds,
 		)
 	}
 	return nil
@@ -97,6 +103,9 @@ func Run(ctx context.Context, logger *log.Entry, cfg config.Config, state *state
 	}
 
 	m := modes[cfg.Mode]
+	if err := m.VerifyReady(ctx, state); err != nil {
+		return fmt.Errorf("%s: verify ready: %w", m.Label(), err)
+	}
 	targeter, resetSeq, err := m.NewTargeter(ctx, cfg.RPCURL, state)
 	if err != nil {
 		return fmt.Errorf("%s: build targeter: %w", m.Label(), err)

@@ -43,6 +43,20 @@ func SyncState(ctx context.Context, logger *log.Entry, st *state.State, stateFil
 	logger.Infof("%d accounts removed, %d remain", removed, len(surviving))
 	st.AccountKPs = surviving
 
+	if len(st.SACHolderKPs) > 0 {
+		survivingSet := make(map[string]struct{}, len(surviving))
+		for _, kp := range surviving {
+			survivingSet[kp.Address()] = struct{}{}
+		}
+		var survivingHolders []*keypair.Full
+		for _, kp := range st.SACHolderKPs {
+			if _, ok := survivingSet[kp.Address()]; ok {
+				survivingHolders = append(survivingHolders, kp)
+			}
+		}
+		st.SACHolderKPs = survivingHolders
+	}
+
 	ps, err := st.ToPersistedState(rpcURL)
 	if err != nil {
 		return fmt.Errorf("build updated state: %w", err)

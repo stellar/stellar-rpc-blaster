@@ -67,6 +67,24 @@ func TestValidateConfig(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "accepts sac transfer when total tx-source pool is large enough",
+			cfg: config.Config{
+				Mode:             config.ModeSACTransfer,
+				TargetRPS:        250,
+				NumberOfAccounts: 5_000,
+			},
+			wantErr: false,
+		},
+		{
+			name: "accepts oz transfer with same total account pool",
+			cfg: config.Config{
+				Mode:             config.ModeOZTransfer,
+				TargetRPS:        250,
+				NumberOfAccounts: 5_000,
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tc := range tests {

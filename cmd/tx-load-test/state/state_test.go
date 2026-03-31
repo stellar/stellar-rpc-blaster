@@ -136,6 +136,7 @@ func TestToPersistedStatePreservesSparseIndicesAndMetadata(t *testing.T) {
 			{Code: "BLTC", Issuer: base.Address()},
 		},
 		AccountKPs:      accountKPs,
+		SACHolderKPs:    accountKPs[:3],
 		SACs:            [3]string{"C1", "C2", "C3"},
 		OZTokenContract: "COZTOKEN",
 	}
@@ -146,6 +147,7 @@ func TestToPersistedStatePreservesSparseIndicesAndMetadata(t *testing.T) {
 	require.Equal(t, st.NetworkPassphrase, ps.NetworkPassphrase)
 	require.Equal(t, HashSeed(base.Seed()), ps.FeePayerHash)
 	require.Equal(t, []int{1, 2, 4, 9}, ps.AccountIndices)
+	require.Equal(t, []int{1, 2, 4}, ps.SACHolderIndices)
 	require.Equal(t, [3]string{"BLTA", "BLTB", "BLTC"}, ps.Assets)
 	require.Equal(t, st.SACs, ps.SACs)
 	require.Equal(t, st.OZTokenContract, ps.OZTokenContract)
@@ -176,6 +178,7 @@ func TestFromPersistedStateUsesOverrideRPCURL(t *testing.T) {
 		NetworkPassphrase: network.TestNetworkPassphrase,
 		FeePayerHash:      HashSeed(base.Seed()),
 		AccountIndices:    []int{1, 2},
+		SACHolderIndices:  []int{1, 2},
 		Assets:            [3]string{"BLTA", "BLTB", "BLTC"},
 		OZTokenContract:   "COZTOKEN",
 	}
@@ -183,9 +186,28 @@ func TestFromPersistedStateUsesOverrideRPCURL(t *testing.T) {
 	st, err := FromPersistedState(ps, base.Seed(), srv.URL)
 	require.NoError(t, err)
 	require.Equal(t, ps.OZTokenContract, st.OZTokenContract)
+	require.Len(t, st.SACHolderKPs, 2)
 	netInfo, err := st.RPCClient.GetNetwork(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, ps.NetworkPassphrase, netInfo.Passphrase)
+}
+
+func TestFromPersistedStateDefaultsSACHolderSubset(t *testing.T) {
+	base := mustRandomKeypair(t)
+	ps := &PersistedState{
+		RPCURL:            "https://rpc.example",
+		NetworkPassphrase: network.TestNetworkPassphrase,
+		FeePayerHash:      HashSeed(base.Seed()),
+		AccountIndices:    []int{1, 2, 3},
+		Assets:            [3]string{"BLTA", "BLTB", "BLTC"},
+	}
+
+	st, err := FromPersistedState(ps, base.Seed(), ps.RPCURL)
+	require.NoError(t, err)
+	require.Len(t, st.SACHolderKPs, 3)
+	for i, kp := range st.SACHolderKPs {
+		require.Equal(t, st.AccountKPs[i].Address(), kp.Address())
+	}
 }
 
 func TestValidateRPCNetwork(t *testing.T) {
