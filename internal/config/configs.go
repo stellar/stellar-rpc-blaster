@@ -187,5 +187,6 @@ func (c *Config) GetActiveEndpoints() []string {
 			activeEndpoints = append(activeEndpoints, endpointKey)
 		}
 	}
+	slices.Sort(activeEndpoints)
 	return activeEndpoints
 }

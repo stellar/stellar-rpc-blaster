@@ -5,11 +5,11 @@
 # Specify the seed data input path for data dependent endpoints with:
 # data_path = "PATH/TO/INPUTDATA.json"
 # Using the default seed data output path, this is "./output/seed.json" 
-input_data_path = "./output/seed.json"
+input_data_path = "./output/pubnet-seed.json"
 
 # No-parameter/run-only endpoints
 [endpoints.getHealth]
-rps = 1000
+rps = 20
 
 [endpoints.getNetwork]
 rps = 20
@@ -30,11 +30,11 @@ rps = 20
 [endpoints.getLedgerEntries]
 rps = 20
 
-[endpoints.getLedgers]
-rps = 20
+# [endpoints.getLedgers]
+# rps = 20
 
-[endpoints.getTransaction]
-rps = 20
+# [endpoints.getTransaction]
+# rps = 20
 
-[endpoints.getTransactions]
-rps = 20
+# [endpoints.getTransactions]
+# rps = 20
