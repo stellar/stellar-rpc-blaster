@@ -183,9 +183,7 @@ func runVegetaAttack(
 	logger.Infof("starting %d poll workers", numPollWorkers)
 	var pollWg sync.WaitGroup
 	for range numPollWorkers {
-		pollWg.Add(1)
-		go func() {
-			defer pollWg.Done()
+		pollWg.Go(func() {
 			for item := range hashes {
 				pollCtx, pollCancel := context.WithTimeout(ctx, pollTimeout)
 				resp, err := rpc.PollTransaction(pollCtx, item.hash)
@@ -217,7 +215,7 @@ func runVegetaAttack(
 					}
 				}
 			}
-		}()
+		})
 	}
 
 	// Vegeta metrics aggregator  -- collects latency percentiles, achieved

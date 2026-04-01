@@ -429,9 +429,8 @@ func SubmitAllAndPoll(
 		pollWG     sync.WaitGroup
 	)
 	for _, hash := range hashes {
-		pollWG.Add(1)
-		go func(hash string) {
-			defer pollWG.Done()
+		hash := hash
+		pollWG.Go(func() {
 			result, err := rpc.PollTransaction(pollCtx, hash)
 			if err != nil {
 				logger.WithError(err).WithField("hash", hash).Warn("poll transaction")
@@ -445,7 +444,7 @@ func SubmitAllAndPoll(
 			}
 			n := confirmed.Add(1)
 			logger.Infof("confirmed %d/%d hash=%s", n, pollTotal, hash)
-		}(hash)
+		})
 	}
 	pollWG.Wait()
 

@@ -164,7 +164,7 @@ a benchmark:
   1. Verifies / funds the fee-payer account.
   2. Creates 3 classic benchmark assets (BLTA, BLTB, BLTC).
 	3. Creates participant accounts with XLM balance.
-	4. Adds trustlines and classic asset balances only to the first min(accounts, 1000).
+	4. Adds trustlines and classic asset balances to the formula-derived holder subset needed for simple payments / SAC auth.
 	5. Deploys a SAC instance for each benchmark asset.
 	6. Deploys the OZ token contract and reconciles OZ balances for all participant accounts.
 
@@ -181,8 +181,13 @@ minted before the command exits.`,
 	}
 
 	addCommonFlags(cmd)
+	cmd.Flags().String("mode", string(config.ModeSACTransfer),
+		fmt.Sprintf("Planned Soroban benchmark mode for sizing holder accounts: %s | %s", config.ModeSACTransfer, config.ModeOZTransfer))
+	cmd.Flags().Duration("duration", 100*time.Second, "Planned benchmark duration used when sizing account partitions")
+	cmd.Flags().Int("target-rps", 50, "Planned Soroban steady-state requests per second used when sizing account partitions")
+	cmd.Flags().Int("classic-rps", config.DefaultClassicRPS, "Planned simple-payment steady-state operations per second used when sizing account partitions (must be a multiple of 100)")
 	cmd.Flags().Int("accounts", 5_000, "Number of participant accounts to create")
-	cmd.Flags().Float64("base-reserve-xlm", 3.0, "XLM to fund each account (covers SAC holder trustlines for the first min(accounts, 1000) plus margin)")
+	cmd.Flags().Float64("base-reserve-xlm", 3.0, "XLM to fund each account (covers reserves, holder trustlines, and fee headroom)")
 	cmd.Flags().Int64("liquidity-per-pool", 1_000_000, "Token units to deposit into each Soroswap pool")
 	return cmd
 }
@@ -210,6 +215,23 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 	}
 	if cfg.LiquidityPerPool, err = cmd.Flags().GetInt64("liquidity-per-pool"); err != nil {
 		return err
+	}
+	modeStr, err := cmd.Flags().GetString("mode")
+	if err != nil {
+		return err
+	}
+	cfg.Mode = config.BenchmarkMode(modeStr)
+	if cfg.Duration, err = cmd.Flags().GetDuration("duration"); err != nil {
+		return err
+	}
+	if cfg.TargetRPS, err = cmd.Flags().GetInt("target-rps"); err != nil {
+		return err
+	}
+	if cfg.ClassicRPS, err = cmd.Flags().GetInt("classic-rps"); err != nil {
+		return err
+	}
+	if err = benchmark.ValidateConfig(cfg); err != nil {
+		return fmt.Errorf("planned benchmark shape is invalid for setup: %w", err)
 	}
 
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
@@ -295,7 +317,10 @@ ledger (created by 'setup'):
 	oz-transfer    -- OpenZeppelin token transfers between random participant accounts.
 
 The load ramps linearly from 1 RPS to --target-rps over --ramp-up, then
-holds constant for the remainder of --duration (~100 s / ~20 ledgers).
+the selected Soroban workload and the parallel simple-payment stream hold
+constant for the remainder of --duration (~100 s / ~20 ledgers). The
+simple-payment stream uses native XLM payments batched at 100 operations per
+transaction, and --classic-rps is interpreted as operations/sec.
 
 bench reads the state file produced by setup and does not modify ledger state.
 Run bench as many times as needed.`,
@@ -310,6 +335,7 @@ Run bench as many times as needed.`,
 	cmd.Flags().Duration("duration", 100*time.Second, "Total benchmark duration")
 	cmd.Flags().Duration("ramp-up", 20*time.Second, "Ramp-up period (RPS increases linearly from 1 to target-rps)")
 	cmd.Flags().Int("target-rps", 50, "Steady-state requests per second after ramp-up")
+	cmd.Flags().Int("classic-rps", config.DefaultClassicRPS, "Steady-state simple-payment operations per second after ramp-up (must be a multiple of 100)")
 	return cmd
 }
 
@@ -369,6 +395,9 @@ func runBench(cmd *cobra.Command, _ []string) error {
 	if cfg.TargetRPS, err = cmd.Flags().GetInt("target-rps"); err != nil {
 		return err
 	}
+	if cfg.ClassicRPS, err = cmd.Flags().GetInt("classic-rps"); err != nil {
+		return err
+	}
 
 	// Fail fast on obvious misconfig before starting the attack.
 	if err = benchmark.ValidateConfig(cfg); err != nil {
@@ -385,9 +414,9 @@ func runBench(cmd *cobra.Command, _ []string) error {
 	httpClient := &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
-			MaxIdleConns:        cfg.TargetRPS * 4,
-			MaxIdleConnsPerHost: cfg.TargetRPS * 4,
-			MaxConnsPerHost:     cfg.TargetRPS * 4,
+			MaxIdleConns:        max(1, (cfg.TargetRPS+state.SimplePaymentTransactionRate(cfg))*4),
+			MaxIdleConnsPerHost: max(1, (cfg.TargetRPS+state.SimplePaymentTransactionRate(cfg))*4),
+			MaxConnsPerHost:     max(1, (cfg.TargetRPS+state.SimplePaymentTransactionRate(cfg))*4),
 		},
 	}
 	if err = benchmark.Run(ctx, logger, cfg, st, httpClient); err != nil {

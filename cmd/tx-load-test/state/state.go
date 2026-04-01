@@ -57,7 +57,7 @@ type PersistedState struct {
 
 	// SACHolderIndices are the derivation indices of the participant accounts
 	// that hold classic trustlines and participate in SAC transfer benchmarks.
-	// This is typically the first min(account count, 1000) accounts.
+	// This is typically the first formula-derived holder-count accounts.
 	SACHolderIndices []int `json:"sac_holder_indices,omitempty"`
 
 	// Assets holds the 3 benchmark asset codes (issuer = fee payer).
