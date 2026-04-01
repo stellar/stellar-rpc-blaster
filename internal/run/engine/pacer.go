@@ -1,6 +1,10 @@
 package engine
 
-import "time"
+import (
+	"time"
+
+	"github.com/stellar/stellar-rpc-blaster/internal/config"
+)
 
 // Ramps linearly from StartRPS to MaxRPS over RampDuration, then holds constant at MaxRPS
 // Satisfies vegeta.Pacer interface
@@ -9,6 +13,15 @@ type RampToConstantPacer struct {
 	MaxRPS        int
 	RampDuration  time.Duration
 	TotalDuration time.Duration
+}
+
+func NewRampToConstantPacer(maxRPS int, cfg config.Config) RampToConstantPacer {
+	return RampToConstantPacer{
+		StartRPS:      1,
+		MaxRPS:        maxRPS,
+		RampDuration:  cfg.RampUp,
+		TotalDuration: cfg.Duration,
+	}
 }
 
 // implements vegeta.Pacer, returns wait time until next hit and whether to stop

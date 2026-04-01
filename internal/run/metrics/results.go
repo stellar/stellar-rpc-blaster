@@ -20,7 +20,6 @@ type EndpointResult struct {
 	Success       uint64                 `json:"success"`
 	Errors        uint64                 `json:"errors"`
 	TargetRPS     float64                `json:"target_rps"`
-	AchievedRPS   float64                `json:"achieved_rps"`
 	Percentiles   map[string]float64     `json:"percentiles_ms"`
 	ErrorTypes    map[string]ErrorResult `json:"error_types,omitempty"`
 }
@@ -29,6 +28,10 @@ type ErrorResult struct {
 	ErrorMsg  string `json:"error_msg"`
 	ErrorCode int    `json:"error_code"`
 	Count     uint64 `json:"count"`
+	TimeSeen  struct {
+		FirstSeen time.Time `json:"time_first_seen"`
+		LastSeen  time.Time `json:"time_last_seen"`
+	} `json:"times_seen"`
 }
 
 // Returns the final aggregated results
@@ -55,7 +58,6 @@ func (a *Aggregator) Results() *Results {
 			Errors:        stats.errors,
 			ErrorTypes:    errorTypesCopy,
 			TargetRPS:     stats.targetRPS,
-			AchievedRPS:   stats.achievedRPS,
 			Percentiles:   make(map[string]float64),
 		}
 		for p, d := range stats.percentiles {

@@ -47,6 +47,8 @@ func makeCommands() *cobra.Command {
 				cmd.Flags().Lookup("duration"),
 				cmd.Flags().Lookup("ramp-up"),
 				cmd.Flags().Lookup("test-output-path"),
+				cmd.Flags().Lookup("input-data-path"),
+				cmd.Flags().Lookup("serial"),
 			)
 			settings.Mode = config.Run
 			settings.Ctx = cmd.Context()
@@ -84,9 +86,10 @@ func makeCommands() *cobra.Command {
 
 	runCmd.Flags().String("config-path", "", "Path to config TOML file")
 	runCmd.Flags().String("test-output-path", "./output/load-test-results.json", "Path to export metrics output file")
-	runCmd.Flags().String("input-data-path", "./output/seed.json", "Path to seed data file output by generate, required for data-dependent endpoints")
+	runCmd.Flags().String("input-data-path", "", "Path to seed data file output by generate, required for data-dependent endpoints")
 	runCmd.Flags().Duration("duration", time.Duration(0), "Duration to run the test (e.g., 5m)")
 	runCmd.Flags().Duration("ramp-up", time.Duration(0), "Ramp-up time before reaching target RPS (e.g., 30s)")
+	runCmd.Flags().Bool("serial", false, "Run endpoints one at a time sequentially instead of concurrently")
 
 	generateCmd.Flags().String("output", "./output/seed.json", "Path to seed data file output by generate")
 	generateCmd.Flags().String("ledger-window", "", "Ledger range as START[,END] for data generation")
@@ -108,6 +111,8 @@ func bindRunCliParameters(
 	duration *pflag.Flag,
 	rampUp *pflag.Flag,
 	testOutputPath *pflag.Flag,
+	inputDataPath *pflag.Flag,
+	serial *pflag.Flag,
 ) config.RuntimeSettings {
 	bindFlag := func(flag *pflag.Flag) {
 		viper.BindPFlag(flag.Name, flag)
@@ -118,6 +123,8 @@ func bindRunCliParameters(
 	bindFlag(duration)
 	bindFlag(rampUp)
 	bindFlag(testOutputPath)
+	bindFlag(inputDataPath)
+	bindFlag(serial)
 
 	settings := config.RuntimeSettings{}
 	settings.ConfigPath = viper.GetString(cfgPath.Name)
@@ -125,6 +132,8 @@ func bindRunCliParameters(
 	settings.Duration = viper.GetViper().GetDuration(duration.Name)
 	settings.RampUp = viper.GetViper().GetDuration(rampUp.Name)
 	settings.TestOutputPath = viper.GetString(testOutputPath.Name)
+	settings.InputDataPath = viper.GetString(inputDataPath.Name)
+	settings.Serial = viper.GetBool(serial.Name)
 
 	return settings
 }

@@ -17,24 +17,28 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
-type endpointBlast struct {
-	EndpointBlastConfig EndpointBlastConfig
-	BlastPacer          RampToConstantPacer
+type BlastEngine struct {
+	BlastSpecs []EndpointBlastConfig
+	blastFn    func() *vegeta.Attacker
+	outCh      chan<- blasterMetrics.Sample
+	cfg        config.Config
+}
+
+type EndpointBlastConfig struct {
+	EndpointKey string
+	Targeter    vegeta.Targeter
+	BlastPacer  RampToConstantPacer
 }
 
 // Entry/exit point from app.go
-// RunVegeta runs a load test using Vegeta using the config settings through the LoadTestSettings interface
-// Sets up shared HTTP client, constructs per-endpoint blast configs, and fires off the blasts asynchronously
-func RunVegeta(
+// NewBlastEngine creates a new BlastEngine instance with the given configuration and HTTP client
+func NewBlastEngine(
 	ctx context.Context,
 	logger *log.Entry,
 	cfg config.Config,
 	httpClient *http.Client,
 	out chan<- blasterMetrics.Sample,
-) error {
-	ctx, cancel := context.WithTimeout(ctx, cfg.Duration)
-	defer cancel()
-
+) (*BlastEngine, error) {
 	newBlaster := func() *vegeta.Attacker {
 		return NewBlasterWithClient(httpClient, util.MaxWorkers)
 	}
@@ -44,29 +48,26 @@ func RunVegeta(
 	if cfg.InputDataPath != "" {
 		p, err := parameters.GetParameters(cfg.InputDataPath)
 		if err != nil {
-			return fmt.Errorf("failed to load seed data: %w", err)
+			return nil, fmt.Errorf("failed to load seed data: %w", err)
 		}
 		sharedParams = p
 
 		// Run preflight validation to ensure seed data is fresh enough for the target RPC before blasting any endpoints
 		if err := sharedParams.ValidateConfiguredEndpoints(ctx, cfg.RpcClient, cfg.GetActiveEndpoints()); err != nil {
-			return fmt.Errorf("preflight seed validation failed (try rerunning `generate`): %w", err)
+			return nil, fmt.Errorf("preflight seed validation failed (try rerunning `generate`): %w", err)
 		}
 	}
 
-	// Construct endpoint blast configs
-	// 3... 2... 1...
-	var endpointBlasts []endpointBlast
-	for _, endpointKey := range cfg.GetEndpoints() {
+	// Construct each endpoint's blast config
+	var endpointBlasts []EndpointBlastConfig
+	for _, endpointKey := range cfg.GetActiveEndpoints() {
 		rps := cfg.GetEndpointRPS(endpointKey)
-		if rps <= 0 {
-			logger.Infof("Skipping endpoint: %s (RPS <= 0)", endpointKey)
-			continue
-		}
+		pacer := NewRampToConstantPacer(rps, cfg)
 
-		paramMaps, err := parameters.BuildEndpointParams(endpointKey, sharedParams)
+		maxNumBodies := pacer.Hits(cfg.Duration) // upper limit of how many request bodies we could possibly need
+		paramMaps, err := parameters.BuildEndpointParams(endpointKey, int(maxNumBodies), sharedParams)
 		if err != nil {
-			return fmt.Errorf("couldn't build params for endpoint %s: %w", endpointKey, err)
+			return nil, fmt.Errorf("couldn't build params for endpoint %s: %w", endpointKey, err)
 		}
 		bodies := make([][]byte, len(paramMaps))
 		for i, p := range paramMaps {
@@ -78,7 +79,7 @@ func RunVegeta(
 			}
 			bodies[i], err = json.Marshal(req)
 			if err != nil {
-				return fmt.Errorf("couldn't marshal request for endpoint %s: %w", endpointKey, err)
+				return nil, fmt.Errorf("couldn't marshal request for endpoint %s: %w", endpointKey, err)
 			}
 		}
 		targeter := NewJSONRPCTargeter(cfg.RpcUrl, bodies)
@@ -86,28 +87,42 @@ func RunVegeta(
 			logger.Infof("Endpoint %s: rotating through %d parameterized request bodies", endpointKey, len(bodies))
 		}
 
-		endpointBlasts = append(endpointBlasts, endpointBlast{
-			EndpointBlastConfig: EndpointBlastConfig{
-				EndpointKey: endpointKey,
-				RPS:         rps,
-				Targeter:    targeter,
-			},
-			BlastPacer: RampToConstantPacer{
-				TotalDuration: cfg.Duration,
-				RampDuration:  cfg.RampUp,
-				StartRPS:      1,
-				MaxRPS:        rps,
-			},
+		endpointBlasts = append(endpointBlasts, EndpointBlastConfig{
+			EndpointKey: endpointKey,
+			Targeter:    targeter,
+			BlastPacer:  pacer,
 		})
 	}
+	return &BlastEngine{
+		BlastSpecs: endpointBlasts,
+		blastFn:    newBlaster,
+		outCh:      out,
+		cfg:        cfg,
+	}, nil
+}
 
-	// Fire!
-	var wg sync.WaitGroup
-	for _, blast := range endpointBlasts {
-		wg.Go(func() {
-			blastAtEndpoint(ctx, blast.EndpointBlastConfig, blast.BlastPacer, newBlaster, out)
-		})
+// Run executes the blast according to the engine's configuration, sending results to the OutCh for aggregation
+func (b *BlastEngine) Run(ctx context.Context, logger *log.Entry) {
+	if b.cfg.Serial {
+		for _, blast := range b.BlastSpecs {
+			if ctx.Err() != nil {
+				logger.Errorf("Endpoint blasts terminating early due to context error: %s", ctx.Err().Error())
+				return
+			}
+			logger.Infof("Serial mode: starting endpoint %s", blast.EndpointKey)
+			epCtx, epCancel := context.WithTimeout(ctx, b.cfg.Duration)
+			blastAtEndpoint(epCtx, blast, b.blastFn, b.outCh)
+			epCancel()
+		}
+	} else {
+		ctx, cancel := context.WithTimeout(ctx, b.cfg.Duration)
+		defer cancel()
+		var wg sync.WaitGroup
+		for _, blast := range b.BlastSpecs {
+			wg.Go(func() {
+				blastAtEndpoint(ctx, blast, b.blastFn, b.outCh)
+			})
+		}
+		wg.Wait()
 	}
-	wg.Wait()
-	return nil
 }

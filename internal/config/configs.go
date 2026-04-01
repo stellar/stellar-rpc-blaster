@@ -28,6 +28,7 @@ type Config struct {
 	// Run mode settings
 	Duration       time.Duration
 	RampUp         time.Duration
+	Serial         bool   // run endpoints one at a time instead of concurrently
 	TestOutputPath string // path to write JSON results
 
 	// Generate mode settings
@@ -64,8 +65,10 @@ type RuntimeSettings struct {
 	// Run mode settings
 	ConfigPath     string
 	TestOutputPath string
+	InputDataPath  string
 	Duration       time.Duration
 	RampUp         time.Duration
+	Serial         bool
 
 	// Generate mode settings
 	OutputPath   string
@@ -104,10 +107,21 @@ func NewConfig(
 	case Run:
 		cfg.Duration = settings.Duration
 		cfg.RampUp = settings.RampUp
+		cfg.Serial = settings.Serial
 		cfg.TestOutputPath = settings.TestOutputPath
 		if err := cfg.processToml(settings.ConfigPath); err != nil {
 			return Config{}, err
 		}
+		logger.Infof("Successfully loaded config from %s", settings.ConfigPath)
+		if settings.InputDataPath != "" && cfg.InputDataPath != "" {
+			return Config{}, fmt.Errorf("input-data-path provided in both CLI and config file; please provide in only one place")
+		} else if settings.InputDataPath != "" {
+			cfg.InputDataPath = settings.InputDataPath
+		}
+		if err := cfg.validateEndpointConfig(); err != nil {
+			return Config{}, err
+		}
+		logger.Infof("Successfully loaded seed data from %s", cfg.InputDataPath)
 	case Generate:
 		cfg.OutputPath = settings.OutputPath
 		cfg.LedgerWindow = settings.LedgerWindow
@@ -115,8 +129,6 @@ func NewConfig(
 	default:
 		return Config{}, fmt.Errorf("unknown mode: %s", cfg.Mode.Name())
 	}
-
-	logger.Infof("Successfully loaded config from %s", settings.ConfigPath)
 
 	return cfg, nil
 }
@@ -133,22 +145,14 @@ func (c *Config) processToml(tomlPath string) error {
 		return fmt.Errorf("error unmarshalling TOML config: %w", err)
 	}
 
-	if c.Mode == Run {
-		if err = c.validateEndpointConfig(); err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 
 // Ensure at least one endpoint is configured if launching a load test and data-dependent endpoints have input data
 func (c *Config) validateEndpointConfig() error {
 	hasValidEndpoint := false
-	for endpoint, endpointData := range c.Endpoints {
-		if endpointData.RPS > 0 {
-			hasValidEndpoint = true
-		}
+	for _, endpoint := range c.GetActiveEndpoints() {
+		hasValidEndpoint = true
 		if needs, err := parameters.EndpointNeedsData(endpoint); err != nil {
 			return fmt.Errorf("failed to check if endpoint %s needs data: %w", endpoint, err)
 		} else if needs && c.InputDataPath == "" {
@@ -180,5 +184,6 @@ func (c *Config) GetActiveEndpoints() []string {
 			activeEndpoints = append(activeEndpoints, endpointKey)
 		}
 	}
+	slices.Sort(activeEndpoints)
 	return activeEndpoints
 }

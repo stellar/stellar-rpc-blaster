@@ -9,9 +9,8 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
-// Builds a list of params maps for a data-dependent endpoint,
-// one per seed item, so the targeter can rotate through distinct request payloads.
-func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]any, error) {
+// Builds a list of params maps for a data-dependent endpoint to vary request payloads.
+func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Parameters) ([]map[string]any, error) {
 	if needs, err := EndpointNeedsData(endpointKey); err != nil {
 		return nil, err
 	} else if !needs {
@@ -22,7 +21,7 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 	case "getTransaction":
 		txs := params.Output.TxHashes
 		var result []map[string]any
-		for _, hash := range txs {
+		for _, hash := range txs[:min(len(txs), maxNeededNumBodies, util.MaxNumPrebuiltBodies)] {
 			result = append(result, map[string]any{
 				"hash":      hash,
 				"xdrFormat": util.VaryFormat(),
@@ -32,7 +31,7 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 
 	case "getLedgerEntries":
 		keys := params.Output.LedgerKeys
-		count := min(len(keys), util.DefaultNumPrebuiltBodies)
+		count := min(len(keys), maxNeededNumBodies, util.MaxNumPrebuiltBodies)
 		result := make([]map[string]any, count)
 		for i := range count {
 			n := min(util.VaryKeyCount(), uint(len(keys)))
@@ -51,15 +50,16 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 		if span <= 0 {
 			return nil, fmt.Errorf("empty ledger range for %s", endpointKey)
 		}
-		count := min(span, util.DefaultNumPrebuiltBodies)
+		count := min(span, maxNeededNumBodies, util.MaxNumPrebuiltBodies)
 		result := make([]map[string]any, count)
 		for i := range count {
 			start := lr.First + uint32(rand.IntN(span))
+			remaining := lr.Last - start
 			entry := map[string]any{
 				"startLedger": start,
 				"xdrFormat":   util.VaryFormat(),
 			}
-			entry["pagination"] = setPaginationMap(start, entry, endpointKey)
+			entry["pagination"] = setPaginationMap(start, remaining, entry, endpointKey)
 			result[i] = entry
 		}
 		return result, nil
@@ -70,15 +70,16 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 		if span <= 0 {
 			return nil, fmt.Errorf("empty ledger range for %s", endpointKey)
 		}
-		count := min(span, util.DefaultNumPrebuiltBodies)
+		count := min(span, maxNeededNumBodies, util.MaxNumPrebuiltBodies)
 		result := make([]map[string]any, count)
 		for i := range count {
 			start := lr.First + uint32(rand.IntN(span))
+			remaining := lr.Last - start
 			entry := map[string]any{
 				"startLedger": start,
 				"xdrFormat":   util.VaryFormat(),
 			}
-			entry["pagination"] = setPaginationMap(start, entry, endpointKey)
+			entry["pagination"] = setPaginationMap(start, remaining, entry, endpointKey)
 			result[i] = entry
 		}
 		return result, nil
@@ -91,19 +92,20 @@ func BuildEndpointParams(endpointKey string, params *Parameters) ([]map[string]a
 		}
 
 		eventBodies := params.Output.ContractEventData
-		count := util.DefaultNumPrebuiltBodies
+		count := min(maxNeededNumBodies, util.MaxNumPrebuiltBodies)
 		result := make([]map[string]any, count)
 		for i := range count {
 			filters := eventBodies.BuildEventsFilters()
 			start := lr.First + uint32(rand.IntN(span))
 			end := start + uint32(rand.IntN(int(lr.Last-start))) + 1
+			remaining := lr.Last - start
 			entry := map[string]any{
 				"startLedger": start,
 				"endLedger":   end,
 				"xdrFormat":   util.VaryFormat(),
 				"filters":     []map[string]any{filters},
 			}
-			entry["pagination"] = setPaginationMap(start, entry, endpointKey)
+			entry["pagination"] = setPaginationMap(start, remaining, entry, endpointKey)
 			result[i] = entry
 		}
 		return result, nil
@@ -124,25 +126,25 @@ func EndpointNeedsData(endpointKey string) (bool, error) {
 	}
 }
 
-func setPaginationMap(start uint32, entry map[string]any, endpoint string) map[string]any {
+func setPaginationMap(start uint32, remaining uint32, entry map[string]any, endpoint string) map[string]any {
 	switch endpoint {
-	case "getTransactions", "getLedgers":
-		limit := util.VaryLimit(uint(util.TxPageLimit))
-		return setPaginationMapForTxAndLedgers(limit, entry)
+	case "getTransactions":
+		limit := util.VaryLimit(uint(min(util.TxPageLimit, remaining)))
+		cursor := toid.New(int32(start), 1, 1).String() // getTransactions cursor is a TOID
+		return setPaginationMapWithCursor(limit, cursor, entry)
+	case "getLedgers":
+		limit := util.VaryLimit(uint(min(util.TxPageLimit, remaining)))
+		cursor := fmt.Sprintf("%d", start) // getLedgers cursor is a ledger sequence number
+		return setPaginationMapWithCursor(limit, cursor, entry)
 	case "getEvents":
-		limit := util.VaryLimit(uint(util.EventsPageLimit))
+		limit := util.VaryLimit(uint(min(util.EventsPageLimit, remaining)))
 		return setPaginationMapForEvents(start, limit, entry)
 	default:
-		return map[string]any{"limit": util.VaryLimit(uint(util.TxPageLimit))}
+		return map[string]any{"limit": util.VaryLimit(uint(min(util.TxPageLimit, remaining)))}
 	}
 }
 
-func setPaginationMapForTxAndLedgers(limit uint, entry map[string]any) map[string]any {
-	cursor := ""
-	if sl, ok := entry["startLedger"].(uint32); ok {
-		tidVal := toid.New(int32(sl), 1, 1).ToInt64() // build valid TOID cursor from the startLedger already in the entry
-		cursor = fmt.Sprintf("%019d-%010d", tidVal, 1)
-	}
+func setPaginationMapWithCursor(limit uint, cursor string, entry map[string]any) map[string]any {
 	pagination := util.VaryCursorBasedPagination(limit, cursor)
 	paginationMap := map[string]any{"limit": pagination.Limit}
 	if pagination.Cursor != "" {

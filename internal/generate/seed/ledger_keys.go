@@ -5,27 +5,29 @@ import (
 	"fmt"
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
+	"github.com/stellar/go-stellar-sdk/support/collections/set"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
 // LedgerKeySeeder collects XDR-encoded ledger keys from transaction metadata.
+// Uses a set to deduplicate keys across the seeded range.
 type LedgerKeySeeder struct {
 	rpcClient *rpcclient.Client
-	entry     []string
+	keys      set.Set[string]
 }
 
 func NewLedgerKeySeeder(rpcClient *rpcclient.Client) Seeder {
 	return &LedgerKeySeeder{
 		rpcClient: rpcClient,
-		entry:     make([]string, 0, util.DefaultSeedSliceSize),
+		keys:      set.NewSet[string](int(util.DefaultSeedSliceSize)),
 	}
 }
 
-// WriteResults writes the accumulated ledger keys to the SeedWriter.
+// WriteResults writes the deduplicated ledger keys to the SeedWriter.
 func (s *LedgerKeySeeder) WriteResults(w *SeedWriter) {
-	w.LedgerKeys = s.entry
+	w.LedgerKeys = s.keys.Slice()
 }
 
 // SeedDataForRange implements Seeder for LedgerKeySeeder.
@@ -63,7 +65,6 @@ func (s *LedgerKeySeeder) SeedDataForRange(ctx context.Context, r Range) error {
 			}
 			for _, key := range keys {
 				switch key.Type {
-				// desired ledger entry types for which we want the keys
 				case xdr.LedgerEntryTypeAccount,
 					xdr.LedgerEntryTypeTrustline,
 					xdr.LedgerEntryTypeContractCode,
@@ -77,7 +78,7 @@ func (s *LedgerKeySeeder) SeedDataForRange(ctx context.Context, r Range) error {
 					return fmt.Errorf("failed to marshal ledger key to XDR for tx %s: %w",
 						tx.TransactionDetails.TransactionHash, err)
 				}
-				s.entry = append(s.entry, keyXDR)
+				s.keys.Add(keyXDR)
 			}
 		}
 	}
