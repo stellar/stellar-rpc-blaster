@@ -154,7 +154,7 @@ func (c *Config) processToml(tomlPath string) error {
 
 // Ensure at least one endpoint is configured if launching a load test and data-dependent endpoints have input data
 func (c *Config) validateEndpointConfig() error {
-	if c.StepInterval <= 0 || c.StepInterval%(5*time.Second) != 0 {
+	if c.StepInterval < 0 || c.StepInterval%(5*time.Second) != 0 {
 		return fmt.Errorf("step-interval must be a positive multiple of 5s")
 	}
 	if c.StepInterval > c.RampUp {
