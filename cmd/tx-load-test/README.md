@@ -26,14 +26,14 @@ go build -o tx-load-test ./cmd/tx-load-test/
 
 # 1. Set up ledger state (testnet, 3000 accounts)
 export TX_LOAD_TEST_FEE_PAYER_SEED="S..."  # optional; omit to auto-generate via friendbot
-./tx-load-test setup --rpc-url https://soroban-testnet.stellar.org --accounts 3000
+./tx-load-test setup --rpc-url https://soroban-testnet.stellar.org --network testnet --accounts 3000
 
 # 2. Run a benchmark (requires the same fee-payer seed used for setup)
 export TX_LOAD_TEST_FEE_PAYER_SEED="S..."
 ./tx-load-test bench --mode sac-transfer --target-rps 300 --duration 60s
 
 # 3. Need more accounts? Just re-run setup with a higher target.
-./tx-load-test setup --rpc-url https://soroban-testnet.stellar.org --accounts 5000
+./tx-load-test setup --rpc-url https://soroban-testnet.stellar.org --network testnet --accounts 5000
 
 # 4. Clean up (also requires TX_LOAD_TEST_FEE_PAYER_SEED)
 ./tx-load-test teardown
@@ -48,8 +48,7 @@ Creates all required ledger state and writes `state.json`. If a state file alrea
 | Flag | Default | Description |
 |---|---|---|
 | `--rpc-url` | *(required)* | Stellar RPC HTTP endpoint |
-| `--network` | `testnet` | Network shorthand: `testnet`, `futurenet`, `mainnet`, `standalone` |
-| `--network-passphrase` | *(from --network)* | Override passphrase directly |
+| `--network` | *(required)* | Network shorthand: `testnet`, `futurenet`, `mainnet`, `standalone` |
 | `--mode` | `sac-transfer` | Planned Soroban benchmark mode for setup-time sizing: `sac-transfer` or `oz-transfer` |
 | `--duration` | `100s` | Planned benchmark duration used when sizing account partitions |
 | `--target-rps` | `50` | Planned Soroban steady-state requests per second used when sizing account partitions |
@@ -76,10 +75,10 @@ If setup is interrupted, a best-effort cleanup merges whatever accounts exist an
 **Incremental setup example:**
 ```bash
 # Start with 2000 accounts
-./tx-load-test setup --rpc-url https://... --accounts 2000
+./tx-load-test setup --rpc-url https://... --network testnet --accounts 2000
 
 # Later, expand to 5000 -- only accounts 2001-5000 are created
-./tx-load-test setup --rpc-url https://... --accounts 5000
+./tx-load-test setup --rpc-url https://... --network testnet --accounts 5000
 ```
 
 ### `bench`

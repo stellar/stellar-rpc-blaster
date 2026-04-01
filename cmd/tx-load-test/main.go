@@ -96,11 +96,11 @@ var knownNetworks = map[string]string{
 // use the state file instead of these flags.
 func addCommonFlags(cmd *cobra.Command) {
 	cmd.Flags().String("rpc-url", "", "Stellar RPC HTTP endpoint (required)")
-	cmd.Flags().String("network", "testnet", `Network shorthand: testnet | futurenet | mainnet | standalone`)
-	cmd.Flags().String("network-passphrase", "", "Override the network passphrase directly (takes precedence over --network)")
+	cmd.Flags().String("network", "", `Network shorthand: testnet | futurenet | mainnet | standalone (required)`)
 	cmd.Flags().String("log-level", "info", "Log verbosity: debug | info | warn | error")
 	cmd.Flags().String("state-file", state.DefaultStateFile, "Path to the state JSON file")
 	_ = cmd.MarkFlagRequired("rpc-url")
+	_ = cmd.MarkFlagRequired("network")
 }
 
 // makeLogger constructs a logger for the given service name, applying the
@@ -129,24 +129,15 @@ func commonConfig(cmd *cobra.Command, cfg *config.Config) error {
 	// setup step will generate and friendbot-fund a temporary keypair.
 	cfg.FeePayerSeed = os.Getenv("TX_LOAD_TEST_FEE_PAYER_SEED")
 
-	// --network-passphrase takes explicit precedence; fall back to --network.
-	explicitPassphrase, err := cmd.Flags().GetString("network-passphrase")
+	networkName, err := cmd.Flags().GetString("network")
 	if err != nil {
 		return err
 	}
-	if explicitPassphrase != "" {
-		cfg.NetworkPassphrase = explicitPassphrase
-	} else {
-		networkName, nerr := cmd.Flags().GetString("network")
-		if nerr != nil {
-			return nerr
-		}
-		passphrase, ok := knownNetworks[networkName]
-		if !ok {
-			return fmt.Errorf("unknown network %q: must be one of testnet, futurenet, mainnet, standalone", networkName)
-		}
-		cfg.NetworkPassphrase = passphrase
+	passphrase, ok := knownNetworks[networkName]
+	if !ok {
+		return fmt.Errorf("unknown network %q: must be one of testnet, futurenet, mainnet, standalone", networkName)
 	}
+	cfg.NetworkPassphrase = passphrase
 	return nil
 }
 
