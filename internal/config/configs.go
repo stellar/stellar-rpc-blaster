@@ -118,6 +118,9 @@ func NewConfig(
 		} else if settings.InputDataPath != "" {
 			cfg.InputDataPath = settings.InputDataPath
 		}
+		if err := cfg.validateEndpointConfig(); err != nil {
+			return Config{}, err
+		}
 		logger.Infof("Successfully loaded seed data from %s", cfg.InputDataPath)
 	case Generate:
 		cfg.OutputPath = settings.OutputPath
@@ -140,12 +143,6 @@ func (c *Config) processToml(tomlPath string) error {
 	// Unmarshal TOML data into the Config struct
 	if err = cfg.Unmarshal(c); err != nil {
 		return fmt.Errorf("error unmarshalling TOML config: %w", err)
-	}
-
-	if c.Mode == Run {
-		if err = c.validateEndpointConfig(); err != nil {
-			return err
-		}
 	}
 
 	return nil
