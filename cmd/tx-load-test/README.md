@@ -171,10 +171,3 @@ Removes entries for accounts that no longer exist on-chain, useful after a netwo
 ```
 
 The file is written atomically (write to `.tmp`, then rename) to avoid corruption from interrupted writes. No raw seeds are stored on disk. The recorded `rpc_url` and `network_passphrase` are treated as part of the state identity and are validated before the state is reused.
-
-## Design Diagrams
-
-See the [design/](design/) directory for Mermaid flow diagrams:
-- [Setup flow](design/setup-flow.md)
-- [Benchmark flow](design/benchmark-flow.md)
-- [Teardown flow](design/teardown-flow.md)
