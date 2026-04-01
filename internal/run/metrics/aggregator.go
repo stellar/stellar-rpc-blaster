@@ -39,11 +39,10 @@ type EndpointStats struct {
 	errors      uint64
 	errorTypes  map[string]ErrorResult
 	percentiles map[float64]time.Duration
-	startRPS    float64
-	targetRPS   float64
-	duration    time.Duration // configured run duration for this endpoint
-	startTime   time.Time     // set on first sample (fixes serial mode)
-	isActive    bool          // for serial mode, indicates if endpoint has been activated yet
+	startRPS  float64
+	targetRPS float64
+	duration  time.Duration // configured run duration for this endpoint
+	startTime time.Time     // set on activation; zero means inactive
 }
 
 // Main driver function; consumes samples from the channel and prints progress every 5 seconds.
@@ -106,7 +105,7 @@ func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
 			startRPS:    float64(settings.GetEndpointStartRPS(endpointKey)),
 		}
 		if !settings.Serial {
-			a.stats[endpointKey].isActive = true // in non-serial mode, all endpoints are active from the start
+			a.stats[endpointKey].startTime = time.Now()
 		}
 	}
 
@@ -129,9 +128,6 @@ func (a *Aggregator) Record(sample Sample) error {
 	}
 
 	epStats := a.stats[sample.Endpoint]
-	if epStats.startTime.IsZero() {
-		epStats.startTime = time.Now()
-	}
 	epStats.targetRPS = sample.CurrentRPS
 	if sample.OK {
 		epStats.success++
@@ -172,7 +168,7 @@ func (a *Aggregator) Record(sample Sample) error {
 func (a *Aggregator) ActivateEndpoint(endpointKey string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.stats[endpointKey].isActive = true
+	a.stats[endpointKey].startTime = time.Now()
 }
 
 // constructs a logging string showing progress for all endpoints
@@ -191,7 +187,7 @@ func (a *Aggregator) String() string {
 
 	for _, endpointName := range a.orderedEndpoints {
 		endpointStats := a.stats[endpointName]
-		if endpointStats.isActive {
+		if !endpointStats.startTime.IsZero() {
 			fmt.Fprintf(&line, "\n%-20s: %s", endpointName, endpointStats)
 		}
 	}
