@@ -6,8 +6,6 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/internal/config"
 )
 
-const stepInterval = 5 * time.Second
-
 // Steps from StartRPS to MaxRPS over RampDuration in fixed 5-second steps, then holds constant at MaxRPS.
 // The last step may be shorter than 5s if RampDuration isn't a multiple of stepInterval.
 // Satisfies vegeta.Pacer interface.
@@ -15,22 +13,24 @@ type SteppedPacer struct {
 	StartRPS      int
 	MaxRPS        int
 	StepSize      float64 // RPS increase per step
+	StepInterval  time.Duration
 	RampDuration  time.Duration
 	TotalDuration time.Duration
 }
 
 func NewSteppedPacer(startRPS, maxRPS int, cfg config.Config) SteppedPacer {
 	rampDuration := cfg.RampUp
-	steps := float64(rampDuration) / float64(stepInterval)
+	steps := float64(rampDuration) / float64(cfg.StepInterval)
 	if steps < 1 {
 		steps = 1
 	}
-	stepSize := float64(maxRPS-startRPS) / steps
+	stepSize := float64(maxRPS-startRPS) / (steps + 1)
 
 	return SteppedPacer{
 		StartRPS:      startRPS,
 		MaxRPS:        maxRPS,
 		StepSize:      stepSize,
+		StepInterval:  cfg.StepInterval,
 		RampDuration:  rampDuration,
 		TotalDuration: cfg.Duration,
 	}
@@ -41,7 +41,7 @@ func (p SteppedPacer) Rate(elapsed time.Duration) float64 {
 	if elapsed >= p.RampDuration {
 		return float64(p.MaxRPS)
 	}
-	step := int(elapsed/stepInterval) + 1
+	step := int(elapsed/p.StepInterval) + 1
 	return float64(p.StartRPS) + float64(step)*p.StepSize
 }
 
@@ -56,15 +56,15 @@ func (p SteppedPacer) Hits(elapsed time.Duration) float64 {
 	rampElapsed := min(elapsed, p.RampDuration)
 
 	// Sum completed full steps + partial current step
-	completedSteps := int(rampElapsed / stepInterval)
+	completedSteps := int(rampElapsed / p.StepInterval)
 	var hits float64
 	for i := range completedSteps {
-		stepEnd := min(time.Duration(i+1)*stepInterval, p.RampDuration)
-		stepDur := (stepEnd - time.Duration(i)*stepInterval).Seconds()
+		stepEnd := min(time.Duration(i+1)*p.StepInterval, p.RampDuration)
+		stepDur := (stepEnd - time.Duration(i)*p.StepInterval).Seconds()
 		rate := float64(p.StartRPS) + float64(i+1)*p.StepSize
 		hits += rate * stepDur
 	}
-	remaining := (rampElapsed - time.Duration(completedSteps)*stepInterval).Seconds()
+	remaining := (rampElapsed - time.Duration(completedSteps)*p.StepInterval).Seconds()
 	currentRate := float64(p.StartRPS) + float64(completedSteps+1)*p.StepSize
 	hits += currentRate * remaining
 
@@ -79,6 +79,7 @@ func (p SteppedPacer) Hits(elapsed time.Duration) float64 {
 func (p SteppedPacer) Pace(elapsed time.Duration, hits uint64) (time.Duration, bool) {
 	expectedHits := p.Hits(elapsed)
 	if hits < uint64(expectedHits) {
+		// Running behind, send now
 		return 0, false
 	}
 

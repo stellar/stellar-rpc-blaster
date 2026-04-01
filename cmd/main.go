@@ -46,6 +46,7 @@ func makeCommands() *cobra.Command {
 				cmd.Flags().Lookup("rpc-url"),
 				cmd.Flags().Lookup("duration"),
 				cmd.Flags().Lookup("ramp-up"),
+				cmd.Flags().Lookup("step-interval"),
 				cmd.Flags().Lookup("test-output-path"),
 				cmd.Flags().Lookup("input-data-path"),
 				cmd.Flags().Lookup("serial"),
@@ -89,6 +90,7 @@ func makeCommands() *cobra.Command {
 	runCmd.Flags().String("input-data-path", "", "Path to seed data file output by generate, required for data-dependent endpoints")
 	runCmd.Flags().Duration("duration", time.Duration(0), "Duration to run the test (e.g., 5m)")
 	runCmd.Flags().Duration("ramp-up", time.Duration(0), "Ramp-up time before reaching target RPS (e.g., 30s)")
+	runCmd.Flags().Duration("step-interval", time.Second*5, "Interval between steps during the test (e.g., 5s)")
 	runCmd.Flags().Bool("serial", false, "Run endpoints one at a time sequentially instead of concurrently")
 
 	generateCmd.Flags().String("output", "./output/seed.json", "Path to seed data file output by generate")
@@ -110,6 +112,7 @@ func bindRunCliParameters(
 	rpcUrl *pflag.Flag,
 	duration *pflag.Flag,
 	rampUp *pflag.Flag,
+	stepInterval *pflag.Flag,
 	testOutputPath *pflag.Flag,
 	inputDataPath *pflag.Flag,
 	serial *pflag.Flag,
@@ -122,6 +125,7 @@ func bindRunCliParameters(
 	bindFlag(rpcUrl)
 	bindFlag(duration)
 	bindFlag(rampUp)
+	bindFlag(stepInterval)
 	bindFlag(testOutputPath)
 	bindFlag(inputDataPath)
 	bindFlag(serial)
@@ -131,6 +135,7 @@ func bindRunCliParameters(
 	settings.RpcUrl = viper.GetString(rpcUrl.Name)
 	settings.Duration = viper.GetViper().GetDuration(duration.Name)
 	settings.RampUp = viper.GetViper().GetDuration(rampUp.Name)
+	settings.StepInterval = viper.GetViper().GetDuration(stepInterval.Name)
 	settings.TestOutputPath = viper.GetString(testOutputPath.Name)
 	settings.InputDataPath = viper.GetString(inputDataPath.Name)
 	settings.Serial = viper.GetBool(serial.Name)

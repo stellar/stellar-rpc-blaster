@@ -28,6 +28,7 @@ type Config struct {
 	// Run mode settings
 	Duration       time.Duration
 	RampUp         time.Duration
+	StepInterval   time.Duration
 	Serial         bool   // run endpoints one at a time instead of concurrently
 	TestOutputPath string // path to write JSON results
 
@@ -68,6 +69,7 @@ type RuntimeSettings struct {
 	InputDataPath  string
 	Duration       time.Duration
 	RampUp         time.Duration
+	StepInterval   time.Duration
 	Serial         bool
 
 	// Generate mode settings
@@ -108,6 +110,7 @@ func NewConfig(
 	case Run:
 		cfg.Duration = settings.Duration
 		cfg.RampUp = settings.RampUp
+		cfg.StepInterval = settings.StepInterval
 		cfg.Serial = settings.Serial
 		cfg.TestOutputPath = settings.TestOutputPath
 		if err := cfg.processToml(settings.ConfigPath); err != nil {
@@ -151,6 +154,12 @@ func (c *Config) processToml(tomlPath string) error {
 
 // Ensure at least one endpoint is configured if launching a load test and data-dependent endpoints have input data
 func (c *Config) validateEndpointConfig() error {
+	if c.StepInterval <= 0 || c.StepInterval%(5*time.Second) != 0 {
+		return fmt.Errorf("step-interval must be a positive multiple of 5s")
+	}
+	if c.StepInterval > c.RampUp {
+		return fmt.Errorf("step-interval cannot be greater than ramp-up duration")
+	}
 	hasValidEndpoint := false
 	hasStartRPS := false
 	for _, endpoint := range c.GetActiveEndpoints() {
