@@ -170,6 +170,8 @@ func (a *Aggregator) Record(sample Sample) error {
 }
 
 func (a *Aggregator) ActivateEndpoint(endpointKey string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.stats[endpointKey].isActive = true
 }
 
