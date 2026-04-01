@@ -164,7 +164,7 @@ func (c *Config) validateEndpointConfig() error {
 		if c.GetEndpointTargetRPS(endpoint) < c.GetEndpointStartRPS(endpoint) {
 			return fmt.Errorf("could not parse endpoint %s, need start_rps <= rps", endpoint)
 		}
-		if c.GetEndpointStartRPS(endpoint) > 1 {
+		if c.GetEndpointStartRPS(endpoint) > 0 {
 			hasStartRPS = true
 		}
 	}
@@ -190,9 +190,9 @@ func (c *Config) GetEndpointTargetRPS(key string) int {
 
 func (c *Config) GetEndpointStartRPS(key string) int {
 	if ep, ok := c.Endpoints[key]; ok {
-		return max(ep.StartRPS, 1)
+		return ep.StartRPS
 	}
-	return 1
+	return 0
 }
 
 // GetActiveEndpoints returns the endpoints configured with RPS > 0.

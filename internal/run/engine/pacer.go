@@ -6,76 +6,85 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/internal/config"
 )
 
-// Ramps linearly from StartRPS to MaxRPS over RampDuration, then holds constant at MaxRPS
-// Satisfies vegeta.Pacer interface
-type RampToConstantPacer struct {
+const stepInterval = 5 * time.Second
+
+// Steps from StartRPS to MaxRPS over RampDuration in fixed 5-second steps, then holds constant at MaxRPS.
+// The last step may be shorter than 5s if RampDuration isn't a multiple of stepInterval.
+// Satisfies vegeta.Pacer interface.
+type SteppedPacer struct {
 	StartRPS      int
 	MaxRPS        int
+	StepSize      float64 // RPS increase per step
 	RampDuration  time.Duration
 	TotalDuration time.Duration
 }
 
-func NewRampToConstantPacer(startRPS, maxRPS int, cfg config.Config) RampToConstantPacer {
-	return RampToConstantPacer{
+func NewSteppedPacer(startRPS, maxRPS int, cfg config.Config) SteppedPacer {
+	rampDuration := cfg.RampUp
+	steps := float64(rampDuration) / float64(stepInterval)
+	if steps < 1 {
+		steps = 1
+	}
+	stepSize := float64(maxRPS-startRPS) / steps
+
+	return SteppedPacer{
 		StartRPS:      startRPS,
 		MaxRPS:        maxRPS,
-		RampDuration:  cfg.RampUp,
+		StepSize:      stepSize,
+		RampDuration:  rampDuration,
 		TotalDuration: cfg.Duration,
 	}
 }
 
-// implements vegeta.Pacer, returns wait time until next hit and whether to stop
-func (p RampToConstantPacer) Pace(elapsed time.Duration, hits uint64) (time.Duration, bool) {
-	expectedHits := p.Hits(elapsed)
-	if hits < uint64(expectedHits) {
-		// Running behind, fire blaster now
-		return 0, false
-	}
-
-	// Calculate wait time until next hit
-	rate := p.Rate(elapsed)
-	if rate <= 0 {
-		return 0, true // Stop if rate is invalid
-	}
-
-	interval := float64(time.Second) / rate
-	delta := float64(hits+1) - expectedHits
-	wait := time.Duration(interval * delta)
-	return wait, false
-}
-
-// Rate implements vegeta.Pacer - returns instantaneous hits per second
-func (p RampToConstantPacer) Rate(elapsed time.Duration) float64 {
+// Rate returns the current step's RPS at the given elapsed time.
+func (p SteppedPacer) Rate(elapsed time.Duration) float64 {
 	if elapsed >= p.RampDuration {
 		return float64(p.MaxRPS)
 	}
-	// Linear interpolation: StartRPS + (MaxRPS - StartRPS) * (elapsed / RampDuration)
-	progress := float64(elapsed) / float64(p.RampDuration)
-	return float64(p.StartRPS) + progress*float64(p.MaxRPS-p.StartRPS)
+	step := int(elapsed/stepInterval) + 1
+	return float64(p.StartRPS) + float64(step)*p.StepSize
 }
 
-// hits returns expected cumulative hits at elapsed time
-// During ramp: integral of rate(t) = startRate + slope*t -> startRate*t + (slope*t²)/2
-// After ramp: ramp hits + MaxRPS * (t - RampDuration)
-func (p RampToConstantPacer) Hits(elapsed time.Duration) float64 {
+// Hits returns expected cumulative hits at elapsed time.
+// Each step is a constant-rate rectangle, with the last ramp step potentially shorter than stepInterval.
+func (p SteppedPacer) Hits(elapsed time.Duration) float64 {
 	if elapsed <= 0 {
 		return 0
 	}
 
-	startRate := float64(p.StartRPS)
-	maxRate := float64(p.MaxRPS)
+	// Cap at ramp boundary, then add constant-rate hits after
+	rampElapsed := min(elapsed, p.RampDuration)
 
-	// Past ramp-up: all ramp hits + constant rate hits
-	if elapsed >= p.RampDuration {
-		// Hits during ramp is area of trapezoid since startRate >= 0
-		rampHits := (startRate + maxRate) / 2 * p.RampDuration.Seconds()
-		// Hits after ramp at constant MaxRPS
-		afterRampSecs := (elapsed - p.RampDuration).Seconds()
-		return rampHits + maxRate*afterRampSecs
+	// Sum completed full steps + partial current step
+	completedSteps := int(rampElapsed / stepInterval)
+	var hits float64
+	for i := range completedSteps {
+		stepEnd := min(time.Duration(i+1)*stepInterval, p.RampDuration)
+		stepDur := (stepEnd - time.Duration(i)*stepInterval).Seconds()
+		rate := float64(p.StartRPS) + float64(i+1)*p.StepSize
+		hits += rate * stepDur
+	}
+	remaining := (rampElapsed - time.Duration(completedSteps)*stepInterval).Seconds()
+	currentRate := float64(p.StartRPS) + float64(completedSteps+1)*p.StepSize
+	hits += currentRate * remaining
+
+	// Constant rate after ramp
+	if elapsed > p.RampDuration {
+		hits += float64(p.MaxRPS) * (elapsed - p.RampDuration).Seconds()
+	}
+	return hits
+}
+
+// Pace implements vegeta.Pacer — returns wait time until next hit and whether to stop.
+func (p SteppedPacer) Pace(elapsed time.Duration, hits uint64) (time.Duration, bool) {
+	expectedHits := p.Hits(elapsed)
+	if hits < uint64(expectedHits) {
+		return 0, false
 	}
 
-	// Hits during ramp-up
-	t := elapsed.Seconds()
-	slope := (maxRate - startRate) / p.RampDuration.Seconds()
-	return startRate*t + (slope*t*t)/2
+	rate := p.Rate(elapsed)
+	interval := float64(time.Second) / rate
+	delta := float64(hits+1) - expectedHits
+	wait := time.Duration(interval * delta)
+	return wait, false
 }
