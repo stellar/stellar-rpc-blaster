@@ -61,8 +61,8 @@ func NewBlastEngine(
 	// Construct each endpoint's blast config
 	var endpointBlasts []EndpointBlastConfig
 	for _, endpointKey := range cfg.GetActiveEndpoints() {
-		rps := cfg.GetEndpointRPS(endpointKey)
-		pacer := NewRampToConstantPacer(rps, cfg)
+		startRps, targetRps := cfg.GetEndpointStartRPS(endpointKey), cfg.GetEndpointTargetRPS(endpointKey)
+		pacer := NewRampToConstantPacer(startRps, targetRps, cfg)
 
 		maxNumBodies := pacer.Hits(cfg.Duration) // upper limit of how many request bodies we could possibly need
 		paramMaps, err := parameters.BuildEndpointParams(endpointKey, int(maxNumBodies), sharedParams)
@@ -102,19 +102,24 @@ func NewBlastEngine(
 }
 
 // Run executes the blast according to the engine's configuration, sending results to the OutCh for aggregation
-func (b *BlastEngine) Run(ctx context.Context, logger *log.Entry) {
+func (b *BlastEngine) Run(ctx context.Context, logger *log.Entry, aggregator *blasterMetrics.Aggregator) {
 	if b.cfg.Serial {
 		for _, blast := range b.BlastSpecs {
 			if ctx.Err() != nil {
 				logger.Errorf("Endpoint blasts terminating early due to context error: %s", ctx.Err().Error())
 				return
 			}
+			aggregator.ActivateEndpoint(blast.EndpointKey)
 			logger.Infof("Serial mode: starting endpoint %s", blast.EndpointKey)
+			logger.Infof("%s", aggregator) // print progress with new endpoint activated
+
 			epCtx, epCancel := context.WithTimeout(ctx, b.cfg.Duration)
 			blastAtEndpoint(epCtx, blast, b.blastFn, b.outCh)
 			epCancel()
 		}
 	} else {
+		logger.Infof("%s", aggregator) // print initial 0-sample stats
+
 		ctx, cancel := context.WithTimeout(ctx, b.cfg.Duration)
 		defer cancel()
 		var wg sync.WaitGroup

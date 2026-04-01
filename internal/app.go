@@ -131,7 +131,7 @@ func (a *App) runLoadTest(ctx context.Context) error {
 		aggregator.Run(ctx, out)
 	})
 
-	be.Run(ctx, a.logger) // run blasts and block until done
+	be.Run(ctx, a.logger, aggregator) // run blasts and block until done
 	close(out)
 	wg.Wait()
 

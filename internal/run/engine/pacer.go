@@ -15,9 +15,9 @@ type RampToConstantPacer struct {
 	TotalDuration time.Duration
 }
 
-func NewRampToConstantPacer(maxRPS int, cfg config.Config) RampToConstantPacer {
+func NewRampToConstantPacer(startRPS, maxRPS int, cfg config.Config) RampToConstantPacer {
 	return RampToConstantPacer{
-		StartRPS:      1,
+		StartRPS:      startRPS,
 		MaxRPS:        maxRPS,
 		RampDuration:  cfg.RampUp,
 		TotalDuration: cfg.Duration,
