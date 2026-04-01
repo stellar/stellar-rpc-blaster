@@ -50,6 +50,10 @@ Creates all required ledger state and writes `state.json`. If a state file alrea
 | `--rpc-url` | *(required)* | Stellar RPC HTTP endpoint |
 | `--network` | `testnet` | Network shorthand: `testnet`, `futurenet`, `mainnet`, `standalone` |
 | `--network-passphrase` | *(from --network)* | Override passphrase directly |
+| `--mode` | `sac-transfer` | Planned Soroban benchmark mode for setup-time sizing: `sac-transfer` or `oz-transfer` |
+| `--duration` | `100s` | Planned benchmark duration used when sizing account partitions |
+| `--target-rps` | `50` | Planned Soroban steady-state requests per second used when sizing account partitions |
+| `--classic-rps` | `200` | Planned simple-payment steady-state operations per second used when sizing account partitions; `0` disables the companion stream; must be a multiple of 100 |
 | `--accounts` | `5000` | Target number of participant accounts |
 | `--base-reserve-xlm` | `3.0` | XLM to fund each account |
 | `--state-file` | `state.json` | Output state file path |
@@ -63,7 +67,7 @@ Re-running `setup` requires the resolved network passphrase to match the value a
 **Setup steps (in order):**
 1. **Fee payer** -- verify/create/fund the fee-payer account. Auto-tops-up via friendbot if balance is insufficient.
 2. **Assets** -- register 3 benchmark classic assets (BLTA, BLTB, BLTC) with the fee payer as issuer.
-3. **Accounts** -- derive keypairs deterministically from the fee-payer seed. If a state file was loaded, only the delta accounts are created. The first `min(accounts, 1000)` accounts form the SAC-active subset: they are created in batches of 19 (CreateAccount + 3 ChangeTrust, capped at 20 signatures) and minted in batches of 33. Remaining accounts are created as XLM-only participants.
+3. **Accounts** -- derive keypairs deterministically from the fee-payer seed. If a state file was loaded, only the delta accounts are created. A formula-derived prefix of the participant set is provisioned as the SAC-active subset when the planned benchmark shape needs it (currently 2 holders for `sac-transfer`): those accounts are created in batches of 19 (CreateAccount + 3 ChangeTrust, capped at 20 signatures) and minted in batches of 33. Remaining accounts are created as XLM-only participants.
 4. **SAC** -- deploy a Stellar Asset Contract for each of the 3 assets (idempotent; skips if already deployed).
 5. **OZ token** -- upload and deploy the upgradeable OpenZeppelin benchmark token, then mint balances to participant accounts in batches.
 
@@ -89,6 +93,7 @@ Before the benchmark starts, the tool queries the chosen RPC endpoint (either `-
 |---|---|---|
 | `--mode` | `sac-transfer` | Workload: `sac-transfer` or `oz-transfer` |
 | `--target-rps` | `50` | Steady-state requests per second |
+| `--classic-rps` | `200` | Steady-state simple-payment operations per second; `0` disables the companion stream; must be a multiple of 100 |
 | `--duration` | `100s` | Total benchmark duration |
 | `--ramp-up` | `20s` | Linear ramp from 1 RPS to target |
 | `--rpc-url` | *(from state file)* | Override the RPC URL stored in `state.json` |
@@ -96,12 +101,16 @@ Before the benchmark starts, the tool queries the chosen RPC endpoint (either `-
 | `--log-level` | `info` | `debug`, `info`, `warn`, `error` |
 
 **Validation:** before starting, bench checks:
-- **Hard minimum:** `accounts >= target-rps * 5` (one tx per account per ledger). Fails with an error if not met.
-- **Recommended minimum:** `accounts >= target-rps * 10` (two full ledgers between account reuse). Logs a warning if not met. This margin prevents mempool evictions from cascading into sequence errors.
+- `--mode` is supported and `--target-rps > 0`.
+- `--classic-rps >= 0`; if non-zero, it must be a multiple of 100 because simple payments are batched at 100 ops/tx.
+- The participant account pool is large enough for the derived Soroban and simple-payment source-account partitions for the requested rates and duration.
+- For `sac-transfer`, the persisted state still contains the required SAC holder accounts and trustlines.
 
 **Available modes:**
-- **`sac-transfer`** -- SAC token transfers between random SAC-active participant accounts (the first `min(accounts, 1000)` accounts with trustlines) via `InvokeHostFunction`.
+- **`sac-transfer`** -- SAC token transfers between random SAC-active participant accounts via `InvokeHostFunction`.
 - **`oz-transfer`** -- transfers on the upgradeable OpenZeppelin benchmark token contract.
+
+When `--classic-rps > 0`, bench also runs a parallel simple-payment companion stream that submits native XLM payments batched at 100 operations per transaction. `--classic-rps` is interpreted as operations/sec, not transactions/sec.
 
 **Benchmark output:** after the attack and poll drain, bench logs:
 - Submission counters: submitted, queued, httpErr, tryAgainLater, submitErrors (with per-ResultCode breakdown)
@@ -162,83 +171,6 @@ Removes entries for accounts that no longer exist on-chain, useful after a netwo
 ```
 
 The file is written atomically (write to `.tmp`, then rename) to avoid corruption from interrupted writes. No raw seeds are stored on disk. The recorded `rpc_url` and `network_passphrase` are treated as part of the state identity and are validated before the state is reused.
-
-## Architecture
-
-### Package Layout
-
-```
-cmd/tx-load-test/
-|-- main.go            # Cobra CLI: setup, bench, teardown, sync subcommands
-|-- config/            # Config struct and defaults
-|-- state/             # Shared types (State, PersistedState) and transaction helpers
-|   |-- state.go       #   State / PersistedState types, Save / Load / conversion
-|   |-- tx.go          #   SubmitAndWait, SubmitFeeBumpAndWait, SubmitAllAndPoll, etc.
-|   +-- account.go     #   AccountExists helper
-|-- setup/             # Setup orchestrator and step implementations
-|   |-- setup.go       #   Step interface, ordered execution, incremental support
-|   |-- fee_payer.go   #   Fee payer initialization, friendbot top-up loop
-|   |-- assets.go      #   Register BLTA/BLTB/BLTC
-|   |-- accounts.go    #   Batch account creation, trustlines, minting (delta-aware)
-|   |-- sac.go         #   SAC deployment (CreateContractV2)
-|   |-- oz_token.go    #   OZ token deployment and minting
-|   +-- soroswap.go    #   Soroswap pool setup (placeholder)
-|-- benchmark/         # Benchmark harness and workload modes
-|   |-- benchmark.go   #   Mode interface, ValidateConfig, Run entry point
-|   |-- runner.go      #   Vegeta attack loop, poll workers, metrics collection
-|   |-- sac_transfer.go#   SAC transfer targeter with presimulation + sequence mgmt
-|   |-- oz_transfer.go #   OZ transfer targeter
-|   +-- soroswap.go    #   Soroswap targeter (placeholder)
-|-- teardown/          # Teardown and best-effort cleanup
-|   +-- teardown.go    #   Teardown, BestEffortCleanup, batch drain+merge
-+-- syncstate/         # State file reconciliation
-    +-- sync.go        #   SyncState
-```
-
-### Key Design Decisions
-
-**Incremental setup.** If `state.json` already exists when `setup` runs, the existing state is loaded and only delta accounts are created. All steps are idempotent -- fee payer, assets, and SACs skip work if already done; accounts only creates indices beyond the existing count. The SAC-active subset always remains the first `min(account count, 1000)` accounts, and its derivation indices are persisted in `sac_holder_indices`.
-
-**Per-account atomic sequence counters.** During benchmarks, each source account has its own `atomic.Int64` counter initialized to the on-ledger sequence number. The targeter increments the counter atomically to get the next sequence. This replaces a global slot-based formula that assumed every transaction succeeds.
-
-**Sequence reset on non-consuming failures.** When a transaction is rejected without consuming its sequence number (TRY_AGAIN_LATER, ERROR, or mempool eviction detected by poll timeout), the runner calls `resetSeq` to decrement the account's counter. This prevents BadSeq cascades where one failed tx permanently poisons all subsequent txs for that account.
-
-**Scaled poll workers.** The number of getTransaction poll workers scales with target RPS as `max(20, min(targetRPS/5, 200))`. At 300 RPS this gives 60 workers instead of a fixed 20, cutting post-attack drain time by ~3x.
-
-**Deterministic keypair derivation.** Participant keypairs are derived from the fee-payer seed by overwriting the last 4 bytes with a big-endian index. This makes setup idempotent -- re-running with the same seed produces the same accounts.
-
-**Secret-free persisted state.** The state file stores `fee_payer_hash` plus `account_indices`, not raw Stellar seeds. Bench, teardown, and sync require `TX_LOAD_TEST_FEE_PAYER_SEED` so the fee payer and participant accounts can be re-derived in memory.
-
-**State is network-bound.** The state file stores both `rpc_url` and `network_passphrase`. Re-running setup requires the same network passphrase, and bench / teardown / sync verify that the chosen RPC endpoint (stored or overridden) reports that same network before doing any work.
-
-**Fee-bump retry with escalation.** Setup and teardown transactions use `SubmitFeeBumpAndWait`, which retries on `TxInsufficientFee` with exponential fee escalation up to 2x the base inclusion fee (200 -> 400 stroops/op).
-
-**Presimulation for benchmarks.** The SAC transfer targeter presimulates one transfer per SAC contract at startup to capture the exact Soroban resource budget and ledger footprint. During the attack, only the two trustline keys in the footprint are substituted per request -- all other fields are reused from the template.
-
-**Round-robin slot assignment.** Each benchmark request claims a monotonic slot. Source account = `slot % N`. This guarantees each account appears at most once per N consecutive requests, preventing within-ledger sequence number collisions at a given RPS.
-
-**Account pool sizing.** The hard minimum is `RPS * 5` (one tx per account per 5s ledger). The recommended minimum is `RPS * 10` (two full ledgers between reuse), ensuring the previous tx is confirmed before the account is reused. Without this margin, mempool evictions cascade into BadSeq errors.
-
-**Ramp-to-constant pacer.** RPS increases linearly from 1 to `target-rps` over the ramp-up window, then holds constant. This avoids overwhelming the RPC at startup.
-
-**Vegeta metrics collection.** Every Vegeta result is fed into a `vegeta.Metrics` accumulator. After the attack, latency percentiles (p50/p95/p99/max), achieved rate, throughput, success ratio, byte counts, and HTTP status code distribution are logged.
-
-**Two-pass teardown batches.** Each batch first drains non-zero trustline balances (Payment), confirms on-chain, then removes trustlines and merges (ChangeTrust + AccountMerge). The drain must be confirmed before removal to avoid `ChangeTrustInvalidLimit` from in-flight SAC transfers.
-
-**Incremental teardown persistence.** After each successful teardown batch, the merged accounts are removed from in-memory state and `state.json` is rewritten immediately. This makes teardown crash-safe without needing an end-of-run reconciliation pass.
-
-### Transaction Constants
-
-| Constant | Value | Rationale |
-|---|---|---|
-| Inclusion fee | 200 stroops/op | Headroom above 100 minimum without waste |
-| Time bound | 300 s | ~60 ledgers; prevents stale tx inclusion |
-| Benchmark tx timeout | 60 s | Tighter window for load-test transactions |
-| Poll timeout | 30 s | Per-tx deadline for getTransaction polling |
-| Poll workers | max(20, RPS/5) | Scales with load; capped at 200 |
-| Create+trust batch | 19 accounts | 19 + 1 fee payer = 20 sigs (XDR hard cap) |
-| Mint batch | 33 accounts | 33 * 3 assets = 99 ops (under 100-op limit) |
-| Merge batch | 12 accounts | 12 * 4 = 48 ops merge; 12 * 3 = 36 ops drain |
 
 ## Design Diagrams
 
