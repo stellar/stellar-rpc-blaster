@@ -95,13 +95,14 @@ func (a *App) RunApp(runtimeSettings config.RuntimeSettings) error {
 
 func (a *App) init(ctx context.Context, runtimeSettings config.RuntimeSettings) error {
 	var err error
-	start := time.Now()
-	filename := fmt.Sprintf("%s-%s.log", runtimeSettings.Mode.Name(), start.Format("2006-01-02T15-04-05"))
-	if a.logFile, err = a.SaveLogsToFile(filename); err != nil {
-		return fmt.Errorf("could not save logs to file: %w", err)
-	}
 	a.logger.Info("Starting Blaster")
 
+	// Set up output directory + saved log files alongside console output
+	if err := a.setOutput(runtimeSettings); err != nil {
+		return err
+	}
+
+	// Initialize client and load config
 	a.client = util.SharedHTTPClient()
 	if a.config, err = config.NewConfig(ctx, runtimeSettings, a.logger, a.client); err != nil {
 		return fmt.Errorf("Could not load configuration: %w", err)
@@ -146,12 +147,33 @@ func (a *App) runGenerate(ctx context.Context) error {
 	return g.Generate(ctx, a.logger, a.config)
 }
 
-func (a *App) SaveLogsToFile(filename string) (*os.File, error) {
-	dir := filepath.Join("./output", "run_logs")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+func (a *App) setOutput(runtimeSettings config.RuntimeSettings) error {
+	var err error
+	start := time.Now()
+	if runtimeSettings.Mode == config.Run {
+		// Create a timestamped output directory for this run
+		runDir := filepath.Join(runtimeSettings.TestOutputPath, fmt.Sprintf("run-%s", start.Format("2006-01-02T15-04-05")))
+		if err := os.MkdirAll(runDir, 0o755); err != nil {
+			return fmt.Errorf("could not create run output directory: %w", err)
+		}
+		runtimeSettings.TestOutputPath = filepath.Join(runDir, "test-results.json")
+		if a.logFile, err = a.saveLogsToFile(filepath.Join(runDir, "run.log")); err != nil {
+			return fmt.Errorf("could not save logs to file: %w", err)
+		}
+	} else {
+		logFile := fmt.Sprintf("./output/%s-%s.log", runtimeSettings.Mode.Name(), start.Format("2006-01-02T15-04-05"))
+		if a.logFile, err = a.saveLogsToFile(logFile); err != nil {
+			return fmt.Errorf("could not save logs to file: %w", err)
+		}
+	}
+	return nil
+}
+
+func (a *App) saveLogsToFile(path string) (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("could not create log directory: %w", err)
 	}
-	f, err := os.OpenFile(filepath.Join(dir, filename), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("could not open log file: %w", err)
 	}
