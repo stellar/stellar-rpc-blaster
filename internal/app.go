@@ -98,7 +98,7 @@ func (a *App) init(ctx context.Context, runtimeSettings config.RuntimeSettings) 
 	a.logger.Info("Starting Blaster")
 
 	// Set up output directory + saved log files alongside console output
-	if err := a.setOutput(runtimeSettings); err != nil {
+	if err := a.setOutput(&runtimeSettings); err != nil {
 		return err
 	}
 
@@ -147,7 +147,7 @@ func (a *App) runGenerate(ctx context.Context) error {
 	return g.Generate(ctx, a.logger, a.config)
 }
 
-func (a *App) setOutput(runtimeSettings config.RuntimeSettings) error {
+func (a *App) setOutput(runtimeSettings *config.RuntimeSettings) error {
 	var err error
 	start := time.Now()
 	if runtimeSettings.Mode == config.Run {

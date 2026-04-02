@@ -34,15 +34,23 @@ type Aggregator struct {
 
 // EndpointStats collects stats for all vegeta workers of an endpoint
 type EndpointStats struct {
-	histogram   *hdrhistogram.Histogram
-	success     uint64
-	errors      uint64
-	errorTypes  map[string]ErrorResult
-	percentiles map[float64]time.Duration
-	startRPS  float64
+	success      uint64
+	errors       uint64
+	errorTypes   map[string]ErrorResult
+	percentiles  map[float64]time.Duration
+	startRPS     float64
+	targetRPS    float64
+	startTime    time.Time     // set on activation; zero means inactive
+	stepInterval time.Duration // window size for timeline snapshots
+	windows      []windowStats // per-step-interval accumulators
+}
+
+// windowStats tracks metrics for a single step-interval window
+type windowStats struct {
+	histogram *hdrhistogram.Histogram
+	success   uint64
+	errors    uint64
 	targetRPS float64
-	duration  time.Duration // configured run duration for this endpoint
-	startTime time.Time     // set on activation; zero means inactive
 }
 
 // Main driver function; consumes samples from the channel and prints progress every 5 seconds.
@@ -96,13 +104,17 @@ func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
 	sort.Strings(endpoints)
 	a.orderedEndpoints = endpoints // maintain order for consistent output
 
+	stepInterval := settings.StepInterval
+	if stepInterval <= 0 {
+		stepInterval = 5 * time.Second
+	}
+
 	for _, endpointKey := range endpoints {
 		a.stats[endpointKey] = &EndpointStats{
-			histogram:   hdrhistogram.New(1, 60000000, 3),
-			percentiles: make(map[float64]time.Duration),
-			errorTypes:  make(map[string]ErrorResult),
-			duration:    settings.Duration,
-			startRPS:    float64(settings.GetEndpointStartRPS(endpointKey)),
+			percentiles:  make(map[float64]time.Duration),
+			errorTypes:   make(map[string]ErrorResult),
+			startRPS:     float64(settings.GetEndpointStartRPS(endpointKey)),
+			stepInterval: stepInterval,
 		}
 		if !settings.Serial {
 			a.stats[endpointKey].startTime = time.Now()
@@ -112,10 +124,20 @@ func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
 	return &a
 }
 
-// computes and stores percentiles from the histogram
+// mergedHistogram builds a combined histogram from all windows.
+func (e *EndpointStats) mergedHistogram() *hdrhistogram.Histogram {
+	merged := hdrhistogram.New(1, 60000000, 3)
+	for i := range e.windows {
+		merged.Merge(e.windows[i].histogram)
+	}
+	return merged
+}
+
+// computes and stores percentiles from the merged window histograms
 func (e *EndpointStats) refreshPercentiles() {
+	merged := e.mergedHistogram()
 	for _, p := range capturedPercentiles {
-		e.percentiles[p] = time.Duration(e.histogram.ValueAtPercentile(p)) * time.Microsecond
+		e.percentiles[p] = time.Duration(merged.ValueAtPercentile(p)) * time.Microsecond
 	}
 }
 
@@ -128,6 +150,9 @@ func (a *Aggregator) Record(sample Sample) error {
 	}
 
 	epStats := a.stats[sample.Endpoint]
+	if epStats.startTime.IsZero() {
+		return nil
+	}
 	epStats.targetRPS = sample.CurrentRPS
 	if sample.OK {
 		epStats.success++
@@ -141,27 +166,33 @@ func (a *Aggregator) Record(sample Sample) error {
 		} else {
 			errKey = strconv.Itoa(int(sample.Code))
 		}
-		now := time.Now()
+
 		if existing, ok := epStats.errorTypes[errKey]; ok {
 			existing.Count++
-			existing.TimeSeen.LastSeen = now
+			existing.LastSeen = time.Now()
 			epStats.errorTypes[errKey] = existing
 		} else {
-			epStats.errorTypes[errKey] = ErrorResult{
-				ErrorMsg:  sample.Err,
-				ErrorCode: int(sample.Code),
-				Count:     1,
-				TimeSeen: struct {
-					FirstSeen time.Time `json:"time_first_seen"`
-					LastSeen  time.Time `json:"time_last_seen"`
-				}{
-					FirstSeen: now,
-					LastSeen:  now,
-				},
-			}
+			epStats.errorTypes[errKey] = newErrorResult(sample)
 		}
 	}
-	epStats.histogram.RecordValue(int64(sample.Latency / time.Microsecond))
+	// Bucket into per-step-interval window (windows are the source of truth for histograms)
+	latencyMicros := int64(sample.Latency / time.Microsecond)
+	elapsed := time.Since(epStats.startTime)
+	idx := int(elapsed / epStats.stepInterval)
+	for len(epStats.windows) <= idx {
+		epStats.windows = append(epStats.windows, windowStats{
+			histogram: hdrhistogram.New(1, 60000000, 3),
+		})
+	}
+	w := &epStats.windows[idx]
+	w.targetRPS = sample.CurrentRPS
+	w.histogram.RecordValue(latencyMicros)
+	if sample.OK {
+		w.success++
+	} else {
+		w.errors++
+	}
+
 	return nil
 }
 
@@ -218,6 +249,17 @@ func (e *EndpointStats) String() string {
 	}
 
 	return out[:len(out)-2] // trim trailing ", "
+}
+
+func newErrorResult(sample Sample) ErrorResult {
+	now := time.Now()
+	return ErrorResult{
+		ErrorMsg:  sample.Err,
+		ErrorCode: int(sample.Code),
+		Count:     1,
+		FirstSeen: now,
+		LastSeen:  now,
+	}
 }
 
 // Formats duration into microseconds, milliseconds or seconds

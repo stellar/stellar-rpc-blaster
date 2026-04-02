@@ -1,8 +1,11 @@
 package blasterMetrics
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
+	"math"
+	"regexp"
 	"time"
 )
 
@@ -22,16 +25,27 @@ type EndpointResult struct {
 	TargetRPS     float64                `json:"target_rps"`
 	Percentiles   map[string]float64     `json:"percentiles_ms"`
 	ErrorTypes    map[string]ErrorResult `json:"error_types,omitempty"`
+	Timeline      []StepSnapshot         `json:"timeline,omitempty"`
+}
+
+// StepSnapshot captures metrics for a single step-interval window
+type StepSnapshot struct {
+	TargetRPS float64 `json:"target_rps"`
+	Success   uint64  `json:"success"`
+	Errors    uint64  `json:"errors"`
+	ErrorRate float64 `json:"error_rate_pct"`
+	P50Ms     float64 `json:"p50_ms"`
+	P95Ms     float64 `json:"p95_ms"`
+	P99Ms     float64 `json:"p99_ms"`
+	P999Ms    float64 `json:"p99.9_ms"`
 }
 
 type ErrorResult struct {
-	ErrorMsg  string `json:"error_msg"`
-	ErrorCode int    `json:"error_code"`
-	Count     uint64 `json:"count"`
-	TimeSeen  struct {
-		FirstSeen time.Time `json:"time_first_seen"`
-		LastSeen  time.Time `json:"time_last_seen"`
-	} `json:"times_seen"`
+	ErrorMsg  string    `json:"error_msg"`
+	ErrorCode int       `json:"error_code"`
+	Count     uint64    `json:"count"`
+	FirstSeen time.Time `json:"time_first_seen"`
+	LastSeen  time.Time `json:"time_last_seen"`
 }
 
 // Returns the final aggregated results
@@ -52,6 +66,25 @@ func (a *Aggregator) Results() *Results {
 		totalRequests := stats.success + stats.errors
 		errorTypesCopy := make(map[string]ErrorResult, len(stats.errorTypes))
 		maps.Copy(errorTypesCopy, stats.errorTypes)
+		var timeline []StepSnapshot
+		for _, w := range stats.windows {
+			total := w.success + w.errors
+			var errorRatePct float64
+			if total > 0 {
+				errorRatePct = math.Round(float64(w.errors)/float64(total)*10000) / 100 // e.g. 4.52%
+			}
+			timeline = append(timeline, StepSnapshot{
+				TargetRPS: math.Round(w.targetRPS*100) / 100,
+				Success:   w.success,
+				Errors:    w.errors,
+				ErrorRate: errorRatePct,
+				P50Ms:     float64(w.histogram.ValueAtPercentile(50)) / 1e3,
+				P95Ms:     float64(w.histogram.ValueAtPercentile(95)) / 1e3,
+				P99Ms:     float64(w.histogram.ValueAtPercentile(99)) / 1e3,
+				P999Ms:    float64(w.histogram.ValueAtPercentile(99.9)) / 1e3,
+			})
+		}
+
 		results.Endpoints[name] = &EndpointResult{
 			TotalRequests: totalRequests,
 			Success:       stats.success,
@@ -59,6 +92,7 @@ func (a *Aggregator) Results() *Results {
 			ErrorTypes:    errorTypesCopy,
 			TargetRPS:     stats.targetRPS,
 			Percentiles:   make(map[string]float64),
+			Timeline:      timeline,
 		}
 		for p, d := range stats.percentiles {
 			key := fmt.Sprintf("p%.1f", p)
@@ -67,4 +101,38 @@ func (a *Aggregator) Results() *Results {
 	}
 
 	return results
+}
+
+// snapshotRe matches expanded StepSnapshot objects produced by json.MarshalIndent.
+var snapshotRe = regexp.MustCompile(
+	`\{\s+` +
+		`"target_rps": ([^,]+),\s+` +
+		`"success": (\d+),\s+` +
+		`"errors": (\d+),\s+` +
+		`"error_rate_pct": ([^,]+),\s+` +
+		`"p50_ms": ([^,]+),\s+` +
+		`"p95_ms": ([^,]+),\s+` +
+		`"p99_ms": ([^,]+),\s+` +
+		`"p99\.9_ms": ([^\s}]+)\s+` +
+		`\}`)
+
+// MarshalIndented returns indented JSON with compact timeline entries.
+// json.MarshalIndent re-parses custom MarshalJSON output, so a post-process pass
+// is the only way to control snapshot formatting.
+func (r *Results) MarshalIndented() ([]byte, error) {
+	data, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return snapshotRe.ReplaceAllFunc(data, func(match []byte) []byte {
+		groups := snapshotRe.FindSubmatch(match)
+		return fmt.Appendf(nil,
+			"{\n"+
+				`          "target_rps": %s, "success": %s, "errors": %s, "error_rate_pct": %s,`+"\n"+
+				`          "p50_ms": %s, "p95_ms": %s, "p99_ms": %s, "p99.9_ms": %s`+"\n"+
+				`        }`,
+			groups[1], groups[2], groups[3], groups[4],
+			groups[5], groups[6], groups[7], groups[8],
+		)
+	}), nil
 }
