@@ -20,10 +20,7 @@ type SteppedPacer struct {
 
 func NewSteppedPacer(startRPS, maxRPS int, cfg config.Config) SteppedPacer {
 	rampDuration := cfg.RampUp
-	steps := float64(rampDuration) / float64(cfg.StepInterval)
-	if steps < 1 {
-		steps = 1
-	}
+	steps := max(float64(rampDuration)/float64(cfg.StepInterval), 1)
 	stepSize := float64(maxRPS-startRPS) / (steps + 1)
 
 	return SteppedPacer{
