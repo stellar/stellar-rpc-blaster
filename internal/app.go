@@ -12,7 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"github.com/stellar/go-stellar-sdk/support/log"
 
 	"github.com/stellar/stellar-rpc-blaster/internal/config"
@@ -29,10 +28,9 @@ const (
 var logger = log.New().WithField("service", nameSpace)
 
 type App struct {
-	logger  *log.Entry
-	config  config.Config
-	client  *http.Client
-	logFile *os.File
+	logger *log.Entry
+	config config.Config
+	client *http.Client
 }
 
 func NewApp() *App {
@@ -112,9 +110,6 @@ func (a *App) init(ctx context.Context, runtimeSettings config.RuntimeSettings) 
 
 func (a *App) close() {
 	a.logger.Info("Shutting down Blaster")
-	if a.logFile != nil {
-		a.logFile.Close()
-	}
 }
 
 func (a *App) runLoadTest(ctx context.Context) error {
@@ -148,63 +143,12 @@ func (a *App) runGenerate(ctx context.Context) error {
 }
 
 func (a *App) setOutput(runtimeSettings *config.RuntimeSettings) error {
-	var err error
-	start := time.Now()
 	if runtimeSettings.Mode == config.Run {
-		// Create a timestamped output directory for this run
-		runDir := filepath.Join(runtimeSettings.TestOutputPath, fmt.Sprintf("run-%s", start.Format("2006-01-02T15-04-05")))
-		if err := os.MkdirAll(runDir, 0o755); err != nil {
-			return fmt.Errorf("could not create run output directory: %w", err)
+		if err := os.MkdirAll(runtimeSettings.TestOutputPath, 0o755); err != nil {
+			return fmt.Errorf("could not create output directory: %w", err)
 		}
-		runtimeSettings.TestOutputPath = filepath.Join(runDir, "test-results.json")
-		if a.logFile, err = a.saveLogsToFile(filepath.Join(runDir, "run.log")); err != nil {
-			return fmt.Errorf("could not save logs to file: %w", err)
-		}
-	} else {
-		logFile := fmt.Sprintf("./output/%s-%s.log", runtimeSettings.Mode.Name(), start.Format("2006-01-02T15-04-05"))
-		if a.logFile, err = a.saveLogsToFile(logFile); err != nil {
-			return fmt.Errorf("could not save logs to file: %w", err)
-		}
+		filename := fmt.Sprintf("test-results-%s.json", time.Now().Format("2006-01-02T15-04-05"))
+		runtimeSettings.TestOutputPath = filepath.Join(runtimeSettings.TestOutputPath, filename)
 	}
 	return nil
-}
-
-func (a *App) saveLogsToFile(path string) (*os.File, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, fmt.Errorf("could not create log directory: %w", err)
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return nil, fmt.Errorf("could not open log file: %w", err)
-	}
-
-	// Keep stdout as the logger output (preserves TTY color detection).
-	// Mirror all log entries to the file via a logrus hook.
-	a.logger.AddHook(&fileWriterHook{file: f, formatter: &logrus.TextFormatter{
-		DisableColors:   true,
-		DisableQuote:    true,
-		FullTimestamp:   true,
-		TimestampFormat: "2006-01-02T15:04:05.000Z07:00",
-	}})
-	return f, nil
-}
-
-// fileWriterHook is a logrus hook that writes log entries to a file with colors stripped.
-// This lets the primary logger output to stdout with TTY colors while mirroring to a file.
-type fileWriterHook struct {
-	file      *os.File
-	formatter logrus.Formatter
-}
-
-func (h *fileWriterHook) Levels() []logrus.Level {
-	return logrus.AllLevels
-}
-
-func (h *fileWriterHook) Fire(entry *logrus.Entry) error {
-	b, err := h.formatter.Format(entry)
-	if err != nil {
-		return err
-	}
-	_, err = h.file.Write(b)
-	return err
 }
