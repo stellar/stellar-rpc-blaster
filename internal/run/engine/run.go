@@ -61,8 +61,7 @@ func NewBlastEngine(
 	// Construct each endpoint's blast config
 	var endpointBlasts []EndpointBlastConfig
 	for _, endpointKey := range cfg.GetActiveEndpoints() {
-		startRps, targetRps := cfg.GetEndpointStartRPS(endpointKey), cfg.GetEndpointTargetRPS(endpointKey)
-		pacer := NewSteppedPacer(startRps, targetRps, cfg)
+		pacer := NewSteppedPacer(endpointKey, cfg)
 
 		maxNumBodies := pacer.Hits(cfg.Duration) // upper limit of how many request bodies we could possibly need
 		paramMaps, err := parameters.BuildEndpointParams(endpointKey, int(maxNumBodies), sharedParams)

@@ -18,7 +18,8 @@ type SteppedPacer struct {
 	TotalDuration time.Duration
 }
 
-func NewSteppedPacer(startRPS, maxRPS int, cfg config.Config) SteppedPacer {
+func NewSteppedPacer(endpointKey string, cfg config.Config) SteppedPacer {
+	startRPS, maxRPS := cfg.GetEndpointStartRPS(endpointKey), cfg.GetEndpointTargetRPS(endpointKey)
 	rampDuration := cfg.RampUp
 	steps := max(float64(rampDuration)/float64(cfg.StepInterval), 1)
 	stepSize := float64(maxRPS-startRPS) / (steps + 1)
