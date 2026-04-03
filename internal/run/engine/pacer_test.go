@@ -10,10 +10,16 @@ import (
 )
 
 func newTestPacer(startRPS, maxRPS int, rampUp, duration, stepInterval time.Duration) SteppedPacer {
-	return NewSteppedPacer(startRPS, maxRPS, config.Config{
+	return NewSteppedPacer("test", config.Config{
 		RampUp:       rampUp,
 		Duration:     duration,
 		StepInterval: stepInterval,
+		Endpoints: map[string]config.EndpointConfig{
+			"test": {
+				StartRPS: startRPS,
+				RPS:      maxRPS,
+			},
+		},
 	})
 }
 

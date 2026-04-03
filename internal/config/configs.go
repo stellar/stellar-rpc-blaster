@@ -183,6 +183,9 @@ func (c *Config) validateEndpointConfig() error {
 	if hasStartRPS && c.RampUp == 0 {
 		return fmt.Errorf("at least one endpoint is configured with start_rps > 0, but ramp-up duration is not set")
 	}
+	if hasStartRPS && c.RampUp == 0 {
+		return fmt.Errorf("at least one endpoint is configured with start_rps > 0, but ramp-up duration is not set")
+	}
 	return nil
 }
 

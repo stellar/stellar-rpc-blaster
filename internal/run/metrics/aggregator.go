@@ -39,10 +39,10 @@ type EndpointStats struct {
 	errors      uint64
 	errorTypes  map[string]ErrorResult
 	percentiles map[float64]time.Duration
-	startRPS  float64
-	targetRPS float64
-	duration  time.Duration // configured run duration for this endpoint
-	startTime time.Time     // set on activation; zero means inactive
+	startRPS    float64
+	targetRPS   float64
+	duration    time.Duration // configured run duration for this endpoint
+	startTime   time.Time     // set on first sample (fixes serial mode)
 }
 
 // Main driver function; consumes samples from the channel and prints progress every 5 seconds.
