@@ -81,7 +81,8 @@ type RuntimeSettings struct {
 
 // Per-endpoint configuration
 type EndpointConfig struct {
-	RPS int `toml:"rps"` // requests per second
+	RPS      int `toml:"rps"`                 // requests per second
+	StartRPS int `toml:"start_rps,omitempty"` // initial RPS to start at, must be <= RPS
 }
 
 func NewConfig(
@@ -151,6 +152,7 @@ func (c *Config) processToml(tomlPath string) error {
 // Ensure at least one endpoint is configured if launching a load test and data-dependent endpoints have input data
 func (c *Config) validateEndpointConfig() error {
 	hasValidEndpoint := false
+	hasStartRPS := false
 	for _, endpoint := range c.GetActiveEndpoints() {
 		hasValidEndpoint = true
 		if needs, err := parameters.EndpointNeedsData(endpoint); err != nil {
@@ -158,9 +160,19 @@ func (c *Config) validateEndpointConfig() error {
 		} else if needs && c.InputDataPath == "" {
 			return fmt.Errorf("endpoint %s requires input data, but no input-data-path was provided", endpoint)
 		}
+
+		if c.GetEndpointTargetRPS(endpoint) < c.GetEndpointStartRPS(endpoint) {
+			return fmt.Errorf("could not parse endpoint %s, need start_rps <= rps", endpoint)
+		}
+		if c.GetEndpointStartRPS(endpoint) > 1 {
+			hasStartRPS = true
+		}
 	}
 	if !hasValidEndpoint {
 		return fmt.Errorf("at least one endpoint must be configured with RPS > 0")
+	}
+	if hasStartRPS && c.RampUp == 0 {
+		return fmt.Errorf("at least one endpoint is configured with start_rps > 0, but ramp-up duration is not set")
 	}
 	return nil
 }
@@ -169,18 +181,25 @@ func (c *Config) GetEndpoints() []string {
 	return slices.Collect(maps.Keys(c.Endpoints))
 }
 
-func (c *Config) GetEndpointRPS(key string) int {
+func (c *Config) GetEndpointTargetRPS(key string) int {
 	if ep, ok := c.Endpoints[key]; ok {
 		return ep.RPS
 	}
 	return 0
 }
 
+func (c *Config) GetEndpointStartRPS(key string) int {
+	if ep, ok := c.Endpoints[key]; ok {
+		return max(ep.StartRPS, 1)
+	}
+	return 1
+}
+
 // GetActiveEndpoints returns the endpoints configured with RPS > 0.
 func (c *Config) GetActiveEndpoints() []string {
 	activeEndpoints := make([]string, 0, len(c.Endpoints))
 	for _, endpointKey := range c.GetEndpoints() {
-		if c.GetEndpointRPS(endpointKey) > 0 {
+		if c.GetEndpointTargetRPS(endpointKey) > 0 {
 			activeEndpoints = append(activeEndpoints, endpointKey)
 		}
 	}

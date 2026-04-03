@@ -34,20 +34,20 @@ type Aggregator struct {
 
 // EndpointStats collects stats for all vegeta workers of an endpoint
 type EndpointStats struct {
-	histogram         *hdrhistogram.Histogram
-	success           uint64
-	errors            uint64
-	errorTypes        map[string]ErrorResult
-	percentiles       map[float64]time.Duration
-	targetRPS         float64
-	duration          time.Duration // configured run duration for this endpoint
-	startTime time.Time // set on first sample (fixes serial mode)
+	histogram   *hdrhistogram.Histogram
+	success     uint64
+	errors      uint64
+	errorTypes  map[string]ErrorResult
+	percentiles map[float64]time.Duration
+	startRPS    float64
+	targetRPS   float64
+	duration    time.Duration // configured run duration for this endpoint
+	startTime   time.Time     // set on first sample (fixes serial mode)
+	isActive    bool          // for serial mode, indicates if endpoint has been activated yet
 }
 
 // Main driver function; consumes samples from the channel and prints progress every 5 seconds.
 func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
-	a.start = time.Now()
-
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -90,6 +90,7 @@ func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
 	a := Aggregator{
 		logger:          logger,
 		stats:           make(map[string]*EndpointStats),
+		start:           time.Now(),
 		duration:        duration,
 		writeOutputPath: settings.TestOutputPath,
 	}
@@ -102,6 +103,10 @@ func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
 			percentiles: make(map[float64]time.Duration),
 			errorTypes:  make(map[string]ErrorResult),
 			duration:    settings.Duration,
+			startRPS:    float64(settings.GetEndpointStartRPS(endpointKey)),
+		}
+		if !settings.Serial {
+			a.stats[endpointKey].isActive = true // in non-serial mode, all endpoints are active from the start
 		}
 	}
 
@@ -164,6 +169,12 @@ func (a *Aggregator) Record(sample Sample) error {
 	return nil
 }
 
+func (a *Aggregator) ActivateEndpoint(endpointKey string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.stats[endpointKey].isActive = true
+}
+
 // constructs a logging string showing progress for all endpoints
 func (a *Aggregator) String() string {
 	if a.done {
@@ -180,12 +191,11 @@ func (a *Aggregator) String() string {
 
 	for _, endpointName := range a.orderedEndpoints {
 		endpointStats := a.stats[endpointName]
-		if endpointStats.targetRPS == 0 {
-			continue
+		if endpointStats.isActive {
+			fmt.Fprintf(&line, "\n%-20s: %s", endpointName, endpointStats)
 		}
-		fmt.Fprintf(&line, "\n%-20s: %s", endpointName, endpointStats)
 	}
-
+	line.WriteString("\n")
 	if elapsed >= a.duration {
 		a.done = true
 	}
@@ -197,12 +207,16 @@ func (a *Aggregator) String() string {
 func (e *EndpointStats) String() string {
 	e.refreshPercentiles()
 	total := e.success + e.errors
+	rps := e.targetRPS
 
 	var pctOK float64
 	if total > 0 {
 		pctOK = float64(e.success) / float64(total) * 100
+	} else {
+		// if no samples yet, show start RPS to indicate starting point
+		rps = e.startRPS
 	}
-	out := fmt.Sprintf("%6d resp (%6d ok, %4d err) %5.1f%% ok | %6.1f target RPS | ", total, e.success, e.errors, pctOK, e.targetRPS)
+	out := fmt.Sprintf("%6d resp (%6d ok, %4d err) %5.1f%% ok | %6.1f target RPS | ", total, e.success, e.errors, pctOK, rps)
 	for _, p := range capturedPercentiles {
 		out += fmt.Sprintf("p%4.1f: %8s, ", p, fmtDuration(e.percentiles[p]))
 	}
