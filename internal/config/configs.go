@@ -83,8 +83,8 @@ type RuntimeSettings struct {
 
 // Per-endpoint configuration
 type EndpointConfig struct {
-	RPS      int `toml:"rps"`                 // requests per second
-	StartRPS int `toml:"start_rps,omitempty"` // initial RPS to start at, must be <= RPS
+	RPS      int  `toml:"rps"`                 // requests per second
+	StartRPS *int `toml:"start_rps,omitempty"` // initial RPS to start at, must be <= RPS; nil means omitted
 }
 
 func NewConfig(
@@ -170,21 +170,19 @@ func (c *Config) validateEndpointConfig() error {
 			return fmt.Errorf("endpoint %s requires input data, but no input-data-path was provided", endpoint)
 		}
 
-		if c.GetEndpointTargetRPS(endpoint) < c.GetEndpointStartRPS(endpoint) {
-			return fmt.Errorf("could not parse endpoint %s, need start_rps <= rps", endpoint)
-		}
-		if c.GetEndpointStartRPS(endpoint) > 0 {
+		startRPS := c.GetEndpointStartRPS(endpoint)
+		if startRPS >= 0 {
 			hasStartRPS = true
+			if c.GetEndpointTargetRPS(endpoint) < startRPS {
+				return fmt.Errorf("could not parse endpoint %s, need start_rps <= rps", endpoint)
+			}
 		}
 	}
 	if !hasValidEndpoint {
 		return fmt.Errorf("at least one endpoint must be configured with RPS > 0")
 	}
 	if hasStartRPS && c.RampUp == 0 {
-		return fmt.Errorf("at least one endpoint is configured with start_rps > 0, but ramp-up duration is not set")
-	}
-	if hasStartRPS && c.RampUp == 0 {
-		return fmt.Errorf("at least one endpoint is configured with start_rps > 0, but ramp-up duration is not set")
+		return fmt.Errorf("at least one endpoint is configured with start_rps, but ramp-up duration is not set")
 	}
 	return nil
 }
@@ -200,11 +198,12 @@ func (c *Config) GetEndpointTargetRPS(key string) int {
 	return 0
 }
 
+// GetEndpointStartRPS returns the configured start RPS, or -1 if omitted.
 func (c *Config) GetEndpointStartRPS(key string) int {
-	if ep, ok := c.Endpoints[key]; ok {
-		return ep.StartRPS
+	if ep, ok := c.Endpoints[key]; ok && ep.StartRPS != nil {
+		return *ep.StartRPS
 	}
-	return 0
+	return -1
 }
 
 // GetActiveEndpoints returns the endpoints configured with RPS > 0.
