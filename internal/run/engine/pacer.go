@@ -22,7 +22,14 @@ func NewSteppedPacer(endpointKey string, cfg config.Config) SteppedPacer {
 	startRPS, maxRPS := cfg.GetEndpointStartRPS(endpointKey), cfg.GetEndpointTargetRPS(endpointKey)
 	rampDuration := cfg.RampUp
 	steps := max(float64(rampDuration)/float64(cfg.StepInterval), 1)
-	stepSize := float64(maxRPS-startRPS) / (steps + 1)
+
+	// When startRPS is omitted (-1), bump it to the first step so we don't waste a step at 0 RPS.
+	// When startRPS is explicitly set (including 0), honor it.
+	if startRPS < 0 {
+		stepSize := float64(maxRPS) / (steps + 1)
+		startRPS = int(stepSize)
+	}
+	stepSize := float64(maxRPS-startRPS) / steps
 
 	return SteppedPacer{
 		StartRPS:      startRPS,
@@ -39,7 +46,7 @@ func (p SteppedPacer) Rate(elapsed time.Duration) float64 {
 	if elapsed >= p.RampDuration {
 		return float64(p.MaxRPS)
 	}
-	step := int(elapsed/p.StepInterval) + 1
+	step := int(elapsed / p.StepInterval)
 	return float64(p.StartRPS) + float64(step)*p.StepSize
 }
 
@@ -53,23 +60,19 @@ func (p SteppedPacer) Hits(elapsed time.Duration) float64 {
 	// Cap at ramp boundary, then add constant-rate hits after
 	rampElapsed := min(elapsed, p.RampDuration)
 
-	// Sum completed full steps + partial current step
+	// Count requests from completed full steps (arithmetic series, 0-indexed)
 	completedSteps := int(rampElapsed / p.StepInterval)
-	var hits float64
-	for i := range completedSteps {
-		stepEnd := min(time.Duration(i+1)*p.StepInterval, p.RampDuration)
-		stepDur := (stepEnd - time.Duration(i)*p.StepInterval).Seconds()
-		rate := float64(p.StartRPS) + float64(i+1)*p.StepSize
-		hits += rate * stepDur
-	}
+	stepSecs := p.StepInterval.Seconds()
+	hits := stepSecs * (float64(completedSteps)*float64(p.StartRPS) + p.StepSize*float64(completedSteps)*float64(completedSteps-1)/2)
+	// Add partial hits from current step
 	remaining := (rampElapsed - time.Duration(completedSteps)*p.StepInterval).Seconds()
-	currentRate := float64(p.StartRPS) + float64(completedSteps+1)*p.StepSize
+	currentRate := float64(p.StartRPS) + float64(completedSteps)*p.StepSize
 	hits += currentRate * remaining
 
-	// Constant rate after ramp
-	if elapsed > p.RampDuration {
-		hits += float64(p.MaxRPS) * (elapsed - p.RampDuration).Seconds()
-	}
+	// Add remaining hits from post-ramp constant rate
+	remaining = max(0, (elapsed - p.RampDuration).Seconds())
+	hits += float64(p.MaxRPS) * remaining
+
 	return hits
 }
 

@@ -102,7 +102,7 @@ func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
 			percentiles: make(map[float64]time.Duration),
 			errorTypes:  make(map[string]ErrorResult),
 			duration:    settings.Duration,
-			startRPS:    float64(settings.GetEndpointStartRPS(endpointKey)),
+			startRPS:    float64(max(settings.GetEndpointStartRPS(endpointKey), 0)),
 		}
 		if !settings.Serial {
 			a.stats[endpointKey].startTime = time.Now()

@@ -9,7 +9,7 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/internal/config"
 )
 
-func newTestPacer(startRPS, maxRPS int, rampUp, duration, stepInterval time.Duration) SteppedPacer {
+func newTestPacer(startRPS *int, maxRPS int, rampUp, duration, stepInterval time.Duration) SteppedPacer {
 	return NewSteppedPacer("test", config.Config{
 		RampUp:       rampUp,
 		Duration:     duration,
@@ -23,24 +23,40 @@ func newTestPacer(startRPS, maxRPS int, rampUp, duration, stepInterval time.Dura
 	})
 }
 
-func TestRateStepsUpThenConstantAfter(t *testing.T) {
-	// 30 second ramp with 10s steps -> steps at 0, 10, 20s, 30s
-	p := newTestPacer(0, 20, 30*time.Second, 60*time.Second, 10*time.Second)
-	// 3 steps, stepSize = 20/(3+1) = 5.  Rates: step0=5, step1=10, step2=15, post-ramp=20.
 
-	// Ensure rates step up with same change at each step
-	prevRate := 0.0
-	for _, elapsed := range []time.Duration{0 * time.Second, 10 * time.Second, 20 * time.Second, 30 * time.Second} {
-		rate := p.Rate(elapsed)
-		require.Equal(t, prevRate+5, rate, "Rate(%s)", elapsed)
-		prevRate = rate
-	}
-	require.Equal(t, 20.0, p.Rate(30*time.Second), "Rate at ramp end")
-	require.Equal(t, prevRate, p.Rate(40*time.Second), "Rate after ramp should stay constant")
+func TestRateStepsUpThenConstantAfter(t *testing.T) {
+	var (
+		// 30s ramp with 10s steps -> 3 steps, stepSize = (40-10)/3 = 10
+		startRps, maxRps    = 10, 40
+		rampUpDur, totalDur = 30 * time.Second, 60 * time.Second
+		stepInterval        = 10 * time.Second
+	)
+	p := newTestPacer(&startRps, maxRps, rampUpDur, totalDur, stepInterval)
+
+	require.Equal(t, float64(startRps), p.Rate(0*time.Second), "Rate(0s) should be startRPS")
+	require.Equal(t, 20.0, p.Rate(10*time.Second), "Rate(10s)")
+	require.Equal(t, 30.0, p.Rate(20*time.Second), "Rate(20s)")
+	require.Equal(t, float64(maxRps), p.Rate(rampUpDur), "Rate at ramp end")
+	require.Equal(t, float64(maxRps), p.Rate(rampUpDur+10*time.Second), "Rate after ramp should stay constant")
+}
+
+func TestRateFromZeroStartRPS(t *testing.T) {
+	var (
+		// 20s ramp with 10s steps -> 2 steps, stepSize = (20-0)/2 = 10
+		startRps, maxRps    = 0, 20
+		rampUpDur, totalDur = 20 * time.Second, 60 * time.Second
+		stepInterval        = 10 * time.Second
+	)
+	p := newTestPacer(&startRps, maxRps, rampUpDur, totalDur, stepInterval)
+
+	require.Equal(t, 0.0, p.Rate(0), "Rate(0s) should be 0 when explicitly set")
+	require.Equal(t, float64(maxRps), p.Rate(rampUpDur), "Rate at ramp end")
+	require.Equal(t, float64(maxRps), p.Rate(rampUpDur+10*time.Second), "Rate after ramp should stay constant")
 }
 
 func TestHitsMonotonicallyIncreasing(t *testing.T) {
-	p := newTestPacer(5, 50, 30*time.Second, 60*time.Second, 5*time.Second)
+	startRPS := 5
+	p := newTestPacer(&startRPS, 50, 30*time.Second, 60*time.Second, 5*time.Second)
 
 	prev := 0.0
 	for s := 0; s <= 60; s++ {
@@ -52,7 +68,7 @@ func TestHitsMonotonicallyIncreasing(t *testing.T) {
 }
 
 func TestHitsContinuousAtRampBoundary(t *testing.T) {
-	p := newTestPacer(0, 20, 30*time.Second, 60*time.Second, 10*time.Second)
+	p := newTestPacer(nil, 20, 30*time.Second, 60*time.Second, 10*time.Second)
 
 	justBefore := p.Hits(30*time.Second - time.Millisecond)
 	atBoundary := p.Hits(30 * time.Second)
@@ -63,7 +79,7 @@ func TestHitsContinuousAtRampBoundary(t *testing.T) {
 }
 
 func TestHitsAfterRampGrowsAtMaxRate(t *testing.T) {
-	p := newTestPacer(0, 20, 10*time.Second, 60*time.Second, 5*time.Second)
+	p := newTestPacer(nil, 20, 10*time.Second, 60*time.Second, 5*time.Second)
 
 	hitsAtRamp := p.Hits(10 * time.Second)
 	hitsAt20 := p.Hits(20 * time.Second)
@@ -73,7 +89,7 @@ func TestHitsAfterRampGrowsAtMaxRate(t *testing.T) {
 }
 
 func TestPaceCatchesUpWhenBehind(t *testing.T) {
-	p := newTestPacer(0, 20, 10*time.Second, 60*time.Second, 5*time.Second)
+	p := newTestPacer(nil, 20, 10*time.Second, 60*time.Second, 5*time.Second)
 
 	// At 15s post-ramp, expected hits is substantial; 0 actual hits means we're behind
 	wait, stop := p.Pace(15*time.Second, 0)
@@ -83,7 +99,7 @@ func TestPaceCatchesUpWhenBehind(t *testing.T) {
 
 func TestPartialLastStep(t *testing.T) {
 	// 12s ramp with 5s steps: steps 0-5s, 5-10s are full; 10-12s is partial
-	p := newTestPacer(0, 30, 12*time.Second, 60*time.Second, 5*time.Second)
+	p := newTestPacer(nil, 30, 12*time.Second, 60*time.Second, 5*time.Second)
 
 	// Rate in the partial step (10-12s) should still be valid and > rate at step 1
 	require.Greater(t, p.Rate(11*time.Second), p.Rate(5*time.Second), "partial step rate should exceed step1 rate")
