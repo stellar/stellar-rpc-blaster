@@ -3,10 +3,10 @@ package benchmark
 import (
 	"context"
 	"fmt"
-	"math/rand/v2"
-	"net/http"
 
 	vegeta "github.com/tsenart/vegeta/v12/lib"
+
+	"github.com/stellar/go-stellar-sdk/keypair"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
@@ -21,38 +21,10 @@ type soroswapMode struct{}
 
 func (soroswapMode) Label() string { return "soroswap" }
 
-func (soroswapMode) NewTargeter(ctx context.Context, rpcURL string, state *state.State) (vegeta.Targeter, SequenceResetFunc, error) {
-	if len(state.AccountKPs) == 0 {
-		return nil, nil, fmt.Errorf("need at least 1 account for Soroswap benchmark, got 0")
-	}
-	// TODO: validate Soroswap pool contract IDs once setup populates them.
+func (soroswapMode) VerifyReady(_ context.Context, _ *state.State) error {
+	return fmt.Errorf("soroswap benchmark is not implemented yet")
+}
 
-	numAccounts := len(state.AccountKPs)
-
-	return func(t *vegeta.Target) error {
-		// 50/50 pool selection.
-		poolIdx := rand.IntN(2)
-
-		// Choose a random swapper account.
-		swapperIdx := rand.IntN(numAccounts)
-		swapper := state.AccountKPs[swapperIdx]
-		_ = poolIdx
-		_ = swapper
-
-		// TODO: decide swap direction (A->B or B->A) and amount based on current
-		//       pool reserves (or use a fixed small amount to avoid excessive slippage).
-		// TODO: fetch / cache sequence number for swapper.
-		// TODO: build InvokeContractOp: router.swap_exact_tokens_for_tokens(...)
-		//       or pair.swap(amount0Out, amount1Out, to, data).
-		// TODO: simulate, obtain resource fee + footprint, sign, XDR-encode.
-		// TODO: wrap in soroban_sendTransaction JSON-RPC body.
-
-		body := []byte(`{}`) // placeholder
-
-		t.Method = http.MethodPost
-		t.URL = rpcURL
-		t.Body = body
-		t.Header = http.Header{"Content-Type": {"application/json"}}
-		return nil
-	}, nil, nil
+func (soroswapMode) NewTargeter(_ context.Context, _ string, _ *state.State, _ []*keypair.Full) (vegeta.Targeter, SequenceResetFunc, error) {
+	return nil, nil, fmt.Errorf("soroswap benchmark is not implemented yet")
 }
