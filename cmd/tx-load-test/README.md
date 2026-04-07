@@ -65,14 +65,15 @@ The fee-payer seed is read from the `TX_LOAD_TEST_FEE_PAYER_SEED` environment va
 If `setup` is re-run against an existing `state.json`, `TX_LOAD_TEST_FEE_PAYER_SEED` must be set and must match the hash recorded in the state file.
 Re-running `setup` requires the resolved network passphrase to match the value already recorded in `state.json`. The `--rpc-url` may change, but the chosen endpoint must report that same passphrase via `getNetwork`.
 
-If `--mode=soroswap`, `--soroswap-factory` and `--soroswap-router` are required. The Soroswap mode is exposed in the CLI now for configuration/state plumbing, but setup itself is not implemented yet and will fail fast with a clear error.
+If `--mode=soroswap`, `--soroswap-factory` and `--soroswap-router` are required. Setup validates that both contracts exist, checks that the router points at the supplied factory, and creates or reuses the benchmark pair contracts for the benchmark SAC assets.
 
 **Setup steps (in order):**
 1. **Fee payer** -- verify/create/fund the fee-payer account. Auto-tops-up via friendbot if balance is insufficient.
 2. **Assets** -- register 3 benchmark classic assets (BLTA, BLTB, BLTC) with the fee payer as issuer.
 3. **Accounts** -- derive keypairs deterministically from the fee-payer seed. If a state file was loaded, only the delta accounts are created. A formula-derived prefix of the participant set is provisioned as the SAC-active subset when the planned benchmark shape needs it (currently 2 holders for `sac-transfer`): those accounts are created in batches of 19 (CreateAccount + 3 ChangeTrust, capped at 20 signatures) and minted in batches of 33. Remaining accounts are created as XLM-only participants.
 4. **SAC** -- deploy a Stellar Asset Contract for each of the 3 assets (idempotent; skips if already deployed).
-5. **OZ token** -- upload and deploy the upgradeable OpenZeppelin benchmark token, then mint balances to participant accounts in batches.
+5. **Soroswap pairs** -- when `--mode=soroswap`, validate the supplied factory/router contracts and create or reuse the benchmark pair contracts.
+6. **OZ token** -- upload and deploy the upgradeable OpenZeppelin benchmark token, then mint balances to participant accounts in batches.
 
 If setup is interrupted, a best-effort cleanup merges whatever accounts exist and writes partial state so `teardown` can finish later.
 

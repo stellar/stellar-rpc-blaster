@@ -248,9 +248,6 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 	if err = benchmark.ValidateConfig(cfg); err != nil {
 		return fmt.Errorf("planned benchmark shape is invalid for setup: %w", err)
 	}
-	if cfg.Mode == config.ModeSoroswap {
-		return fmt.Errorf("setup mode %q is not implemented yet", cfg.Mode)
-	}
 
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
