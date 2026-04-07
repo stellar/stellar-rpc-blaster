@@ -220,6 +220,9 @@ func SubmitSorobanAndWait(
 	if err = xdr.SafeUnmarshalBase64(simResp.TransactionDataXDR, &sorobanData); err != nil {
 		return fmt.Errorf("parse simulation transaction data: %w", err)
 	}
+	if err := applySimulatedAuthEntries(op, simResp); err != nil {
+		return fmt.Errorf("parse simulation auth entries: %w", err)
+	}
 	logSorobanSimulation(logger, op, simResp, sorobanData)
 
 	// Reconstruct the envelope with the accurate Soroban data and total fee.
@@ -255,6 +258,22 @@ func SubmitSorobanAndWait(
 	if SubmitAllAndPoll(ctx, logger, rpc, []string{b64Final}) > 0 {
 		return fmt.Errorf("soroban transaction failed")
 	}
+	return nil
+}
+
+func applySimulatedAuthEntries(op *txnbuild.InvokeHostFunction, simResp protocol.SimulateTransactionResponse) error {
+	if op == nil || len(simResp.Results) == 0 || simResp.Results[0].AuthXDR == nil {
+		return nil
+	}
+
+	authXDR := *simResp.Results[0].AuthXDR
+	authEntries := make([]xdr.SorobanAuthorizationEntry, len(authXDR))
+	for i, encoded := range authXDR {
+		if err := xdr.SafeUnmarshalBase64(encoded, &authEntries[i]); err != nil {
+			return fmt.Errorf("auth[%d]: %w", i, err)
+		}
+	}
+	op.Auth = authEntries
 	return nil
 }
 

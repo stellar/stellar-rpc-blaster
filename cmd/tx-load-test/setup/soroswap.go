@@ -15,6 +15,8 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
 
+const soroswapLiquidityDeadlineWindow = 5 * time.Minute
+
 // soroswapPairDefs enumerates the SAC index pairs that make up each pool.
 // Pool 0: BLTA / BLTB   (SAC indices 0 and 1)
 // Pool 1: BLTB / BLTC   (SAC indices 1 and 2)
@@ -304,21 +306,128 @@ type liquidityStep struct{}
 
 func (liquidityStep) Name() string { return "inject Soroswap liquidity" }
 
-// Run deposits cfg.LiquidityPerPool units of each token into both
-// Soroswap pools.  The fee payer acts as the liquidity provider.
-//
-// Exact deposit amounts and slippage bounds are TBD - the assumption is that
-// no additional per-account state needs to be set up beyond what already
-// exists in the SAC trustlines.
-func (liquidityStep) Run(_ context.Context, logger *log.Entry, cfg config.Config, st *state.State) error {
-	_ = st
-	logger.Infof("liquidity injection: not yet implemented (cfg.LiquidityPerPool=%d)", cfg.LiquidityPerPool)
+// Run seeds each benchmark Soroswap pair with the configured amount of both
+// SAC assets. The fee payer is the initial LP. Re-running setup is idempotent:
+// empty pools are seeded, while already-seeded pools are left untouched.
+func (liquidityStep) Run(ctx context.Context, logger *log.Entry, cfg config.Config, st *state.State) error {
+	if cfg.Mode != config.ModeSoroswap {
+		return nil
+	}
+	if cfg.LiquidityPerPool <= 0 {
+		return fmt.Errorf("liquidity-per-pool must be > 0 for soroswap setup")
+	}
+	if len(st.SoroswapPairContracts) != len(soroswapPairDefs) {
+		return fmt.Errorf("expected %d soroswap pair contracts, found %d", len(soroswapPairDefs), len(st.SoroswapPairContracts))
+	}
 
-	// TODO: iterate over deployed pool contracts and inject liquidity.
-	// TODO: approve cfg.LiquidityPerPool for each pool contract on both SAC
-	//       contracts (SAC.approve is required before the pool can pull tokens).
-	// TODO: invoke pool.add_liquidity(amount_a_desired, amount_b_desired,
-	//       amount_a_min, amount_b_min, to, deadline) on each pool contract.
+	for i, pair := range soroswapPairDefs {
+		tokenA := st.SACs[pair[0]]
+		tokenB := st.SACs[pair[1]]
+		pairContract := st.SoroswapPairContracts[i]
+		if tokenA == "" || tokenB == "" || pairContract == "" {
+			return fmt.Errorf("soroswap pool %d is missing token or pair contract state", i)
+		}
 
-	return fmt.Errorf("liquidity setup: not yet implemented") //nolint:staticcheck // placeholder
+		reserveA, err := soroswapTokenBalance(ctx, st, tokenA, pairContract)
+		if err != nil {
+			return fmt.Errorf("pool %d reserve A: %w", i, err)
+		}
+		reserveB, err := soroswapTokenBalance(ctx, st, tokenB, pairContract)
+		if err != nil {
+			return fmt.Errorf("pool %d reserve B: %w", i, err)
+		}
+
+		switch {
+		case i128IsZero(reserveA) && i128IsZero(reserveB):
+			logger.Infof("soroswap pool %d: seeding %d units per token into %s", i, cfg.LiquidityPerPool, pairContract)
+			if err := addSoroswapLiquidity(ctx, logger, st, cfg.NetworkPassphrase, cfg.SoroswapRouterContract, tokenA, tokenB, cfg.LiquidityPerPool); err != nil {
+				return fmt.Errorf("pool %d seed liquidity: %w", i, err)
+			}
+		case !i128IsZero(reserveA) && !i128IsZero(reserveB):
+			logger.Infof("soroswap pool %d: already seeded, skipping (reserveA=%d reserveB=%d)", i, reserveA.Lo, reserveB.Lo)
+		default:
+			return fmt.Errorf("pool %d has inconsistent reserves (reserveA=%d reserveB=%d)", i, reserveA.Lo, reserveB.Lo)
+		}
+	}
+
+	return nil
+}
+
+func addSoroswapLiquidity(
+	ctx context.Context,
+	logger *log.Entry,
+	st *state.State,
+	networkPassphrase string,
+	routerContract string,
+	tokenA string,
+	tokenB string,
+	amount int64,
+) error {
+	routerID, err := decodeContractID(routerContract)
+	if err != nil {
+		return fmt.Errorf("decode router contract ID: %w", err)
+	}
+	provider, err := addressScVal(st.FeePayerKP.Address())
+	if err != nil {
+		return fmt.Errorf("encode LP address: %w", err)
+	}
+	tokenArgs, err := contractAddressArgs(tokenA, tokenB)
+	if err != nil {
+		return fmt.Errorf("encode token addresses: %w", err)
+	}
+	deadline := time.Now().Add(soroswapLiquidityDeadlineWindow).Unix()
+	if deadline <= 0 {
+		return fmt.Errorf("invalid liquidity deadline")
+	}
+
+	args := append(tokenArgs,
+		i128ScVal(amount),
+		i128ScVal(amount),
+		i128ScVal(amount),
+		i128ScVal(amount),
+		provider,
+		u64ScVal(uint64(deadline)),
+	)
+	invokeArgs := xdr.InvokeContractArgs{
+		ContractAddress: xdr.ScAddress{
+			Type:       xdr.ScAddressTypeScAddressTypeContract,
+			ContractId: &routerID,
+		},
+		FunctionName: "add_liquidity",
+		Args:         args,
+	}
+	op := &txnbuild.InvokeHostFunction{
+		HostFunction: xdr.HostFunction{
+			Type:           xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+			InvokeContract: &invokeArgs,
+		},
+		Auth:          sourceAccountContractAuth(invokeArgs),
+		SourceAccount: st.FeePayerKP.Address(),
+	}
+	return state.SubmitSorobanAndWait(ctx, logger, st.RPCClient, networkPassphrase, st.FeePayerKP, op)
+}
+
+func soroswapTokenBalance(ctx context.Context, st *state.State, tokenContract, ownerAddress string) (xdr.Int128Parts, error) {
+	ownerVal, err := addressScVal(ownerAddress)
+	if err != nil {
+		return xdr.Int128Parts{}, fmt.Errorf("encode owner address %s: %w", ownerAddress, err)
+	}
+	result, err := simulateReadonlyContractCall(ctx, st, tokenContract, "balance", xdr.ScVec{ownerVal})
+	if err != nil {
+		return xdr.Int128Parts{}, err
+	}
+	balance, ok := result.GetI128()
+	if !ok {
+		return xdr.Int128Parts{}, fmt.Errorf("balance returned %s, want i128", result.Type.String())
+	}
+	return balance, nil
+}
+
+func i128IsZero(value xdr.Int128Parts) bool {
+	return value.Hi == 0 && value.Lo == 0
+}
+
+func u64ScVal(value uint64) xdr.ScVal {
+	v := xdr.Uint64(value)
+	return xdr.ScVal{Type: xdr.ScValTypeScvU64, U64: &v}
 }

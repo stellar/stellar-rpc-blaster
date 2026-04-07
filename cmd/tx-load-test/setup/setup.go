@@ -29,6 +29,7 @@ func setupSteps(cfg config.Config) []Step {
 	}
 	if cfg.Mode == config.ModeSoroswap { // before OZ to fail-fast
 		steps = append(steps, soroswapPoolsStep{})
+		steps = append(steps, liquidityStep{})
 	}
 	return append(steps, ozTokenStep{})
 }
