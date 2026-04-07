@@ -35,6 +35,16 @@ func TestValidateConfig(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "valid soroswap config shape",
+			cfg: config.Config{
+				Mode:             config.ModeSoroswap,
+				TargetRPS:        50,
+				ClassicRPS:       0,
+				NumberOfAccounts: 500,
+			},
+			wantErr: false,
+		},
+		{
 			name: "rejects unsupported mode",
 			cfg: config.Config{
 				Mode:             config.BenchmarkMode("unknown-mode"),

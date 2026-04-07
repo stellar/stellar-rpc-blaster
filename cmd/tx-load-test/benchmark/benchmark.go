@@ -45,18 +45,18 @@ type Mode interface {
 }
 
 // modes maps each config.BenchmarkMode string to its Mode implementation.
-// Soroswap remains intentionally omitted until that workload is implemented.
 var modes = map[config.BenchmarkMode]Mode{
 	config.ModeSACTransfer: sacTransferMode{},
 	config.ModeOZTransfer:  ozTransferMode{},
+	config.ModeSoroswap:    soroswapMode{},
 }
 
 type workload struct {
-	label        string
-	targetRPS    int
-	rateSummary  string
-	targeter     vegeta.Targeter
-	resetSeq     SequenceResetFunc
+	label       string
+	targetRPS   int
+	rateSummary string
+	targeter    vegeta.Targeter
+	resetSeq    SequenceResetFunc
 }
 
 // ValidateConfig checks that the benchmark configuration is internally

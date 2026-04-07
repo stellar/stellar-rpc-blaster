@@ -49,10 +49,12 @@ Creates all required ledger state and writes `state.json`. If a state file alrea
 |---|---|---|
 | `--rpc-url` | *(required)* | Stellar RPC HTTP endpoint |
 | `--network` | *(required)* | Network shorthand: `testnet`, `futurenet`, `mainnet`, `standalone` |
-| `--mode` | `sac-transfer` | Planned Soroban benchmark mode for setup-time sizing: `sac-transfer` or `oz-transfer` |
+| `--mode` | `sac-transfer` | Planned Soroban benchmark mode for setup-time sizing: `sac-transfer`, `oz-transfer`, or `soroswap` |
 | `--duration` | `100s` | Planned benchmark duration used when sizing account partitions |
 | `--target-rps` | `50` | Planned Soroban steady-state requests per second used when sizing account partitions |
 | `--classic-rps` | `200` | Planned simple-payment steady-state operations per second used when sizing account partitions; `0` disables the companion stream; must be a multiple of 100 |
+| `--soroswap-factory` | *(required for `soroswap`)* | Soroswap factory contract ID |
+| `--soroswap-router` | *(required for `soroswap`)* | Soroswap router contract ID |
 | `--accounts` | `5000` | Target number of participant accounts |
 | `--base-reserve-xlm` | `3.0` | XLM to fund each account |
 | `--state-file` | `state.json` | Output state file path |
@@ -62,6 +64,8 @@ The fee-payer seed is read from the `TX_LOAD_TEST_FEE_PAYER_SEED` environment va
 
 If `setup` is re-run against an existing `state.json`, `TX_LOAD_TEST_FEE_PAYER_SEED` must be set and must match the hash recorded in the state file.
 Re-running `setup` requires the resolved network passphrase to match the value already recorded in `state.json`. The `--rpc-url` may change, but the chosen endpoint must report that same passphrase via `getNetwork`.
+
+If `--mode=soroswap`, `--soroswap-factory` and `--soroswap-router` are required. The Soroswap mode is exposed in the CLI now for configuration/state plumbing, but setup itself is not implemented yet and will fail fast with a clear error.
 
 **Setup steps (in order):**
 1. **Fee payer** -- verify/create/fund the fee-payer account. Auto-tops-up via friendbot if balance is insufficient.
@@ -90,7 +94,7 @@ Before the benchmark starts, the tool queries the chosen RPC endpoint (either `-
 
 | Flag | Default | Description |
 |---|---|---|
-| `--mode` | `sac-transfer` | Workload: `sac-transfer` or `oz-transfer` |
+| `--mode` | `sac-transfer` | Workload: `sac-transfer`, `oz-transfer`, or `soroswap` |
 | `--target-rps` | `50` | Steady-state requests per second |
 | `--classic-rps` | `200` | Steady-state simple-payment operations per second; `0` disables the companion stream; must be a multiple of 100 |
 | `--duration` | `100s` | Total benchmark duration |
@@ -108,6 +112,7 @@ Before the benchmark starts, the tool queries the chosen RPC endpoint (either `-
 **Available modes:**
 - **`sac-transfer`** -- SAC token transfers between random SAC-active participant accounts via `InvokeHostFunction`.
 - **`oz-transfer`** -- transfers on the upgradeable OpenZeppelin benchmark token contract.
+- **`soroswap`** -- reserved for upcoming Soroswap swap benchmarking; currently returns a not-yet-implemented error.
 
 When `--classic-rps > 0`, bench also runs a parallel simple-payment companion stream that submits native XLM payments batched at 100 operations per transaction. `--classic-rps` is interpreted as operations/sec, not transactions/sec.
 

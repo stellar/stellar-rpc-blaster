@@ -70,6 +70,18 @@ type PersistedState struct {
 	// deployed OpenZeppelin benchmark token contract.
 	OZTokenContract string `json:"oz_token_contract,omitempty"`
 
+	// SoroswapFactoryContract holds the strkey-encoded contract ID (C...) of the
+	// Soroswap factory contract used for benchmark pool management.
+	SoroswapFactoryContract string `json:"soroswap_factory_contract,omitempty"`
+
+	// SoroswapRouterContract holds the strkey-encoded contract ID (C...) of the
+	// Soroswap router contract used for benchmark swap traffic.
+	SoroswapRouterContract string `json:"soroswap_router_contract,omitempty"`
+
+	// SoroswapPairContracts holds the pair contract IDs created or reused for the
+	// benchmark Soroswap pools.
+	SoroswapPairContracts []string `json:"soroswap_pair_contracts,omitempty"`
+
 	// CleanedUp is set to true when teardown merges all accounts successfully.
 	// A partial cleanup sets this to false and logs a suggestion to re-run
 	// teardown.
@@ -197,6 +209,18 @@ type State struct {
 	// deployed OpenZeppelin benchmark token contract.
 	OZTokenContract string
 
+	// SoroswapFactoryContract holds the strkey-encoded contract ID (C...) of the
+	// Soroswap factory contract used for benchmark pool management.
+	SoroswapFactoryContract string
+
+	// SoroswapRouterContract holds the strkey-encoded contract ID (C...) of the
+	// Soroswap router contract used for benchmark swap traffic.
+	SoroswapRouterContract string
+
+	// SoroswapPairContracts holds the pair contract IDs created or reused for the
+	// benchmark Soroswap pools.
+	SoroswapPairContracts []string
+
 	// PendingOZMintKPs is the transient account delta created by the current
 	// setup run. It is retained only as a setup-time hint; OZ balance
 	// reconciliation always verifies on-ledger balances before minting.
@@ -250,12 +274,15 @@ func (s *State) ToPersistedState(rpcURL string) (*PersistedState, error) {
 	}
 
 	ps := &PersistedState{
-		RPCURL:            rpcURL,
-		NetworkPassphrase: s.NetworkPassphrase,
-		FeePayerHash:      HashSeed(s.FeePayerKP.Seed()),
-		SACs:              s.SACs,
-		OZTokenContract:   s.OZTokenContract,
+		RPCURL:                  rpcURL,
+		NetworkPassphrase:       s.NetworkPassphrase,
+		FeePayerHash:            HashSeed(s.FeePayerKP.Seed()),
+		SACs:                    s.SACs,
+		OZTokenContract:         s.OZTokenContract,
+		SoroswapFactoryContract: s.SoroswapFactoryContract,
+		SoroswapRouterContract:  s.SoroswapRouterContract,
 	}
+	ps.SoroswapPairContracts = append([]string(nil), s.SoroswapPairContracts...)
 	ps.AccountIndices = make([]int, len(s.AccountKPs))
 	for i, kp := range s.AccountKPs {
 		idx, err := RecoverIndex(kp)
@@ -334,13 +361,16 @@ func FromPersistedState(ps *PersistedState, feePayerSeed, rpcURL string) (*State
 	}
 
 	return &State{
-		RPCClient:         rpcclient.NewClient(rpcURL, nil),
-		FeePayerKP:        feePayerKP,
-		NetworkPassphrase: ps.NetworkPassphrase,
-		Assets:            assets,
-		AccountKPs:        accountKPs,
-		SACHolderKPs:      holderKPs,
-		SACs:              ps.SACs,
-		OZTokenContract:   ps.OZTokenContract,
+		RPCClient:               rpcclient.NewClient(rpcURL, nil),
+		FeePayerKP:              feePayerKP,
+		NetworkPassphrase:       ps.NetworkPassphrase,
+		Assets:                  assets,
+		AccountKPs:              accountKPs,
+		SACHolderKPs:            holderKPs,
+		SACs:                    ps.SACs,
+		OZTokenContract:         ps.OZTokenContract,
+		SoroswapFactoryContract: ps.SoroswapFactoryContract,
+		SoroswapRouterContract:  ps.SoroswapRouterContract,
+		SoroswapPairContracts:   append([]string(nil), ps.SoroswapPairContracts...),
 	}, nil
 }

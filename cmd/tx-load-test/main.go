@@ -141,6 +141,19 @@ func commonConfig(cmd *cobra.Command, cfg *config.Config) error {
 	return nil
 }
 
+func validateSoroswapSetupConfig(cfg config.Config) error {
+	if cfg.Mode != config.ModeSoroswap {
+		return nil
+	}
+	if cfg.SoroswapFactoryContract == "" {
+		return fmt.Errorf("--soroswap-factory is required when --mode=%s", config.ModeSoroswap)
+	}
+	if cfg.SoroswapRouterContract == "" {
+		return fmt.Errorf("--soroswap-router is required when --mode=%s", config.ModeSoroswap)
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // setup command
 // ---------------------------------------------------------------------------
@@ -173,10 +186,12 @@ minted before the command exits.`,
 
 	addCommonFlags(cmd)
 	cmd.Flags().String("mode", string(config.ModeSACTransfer),
-		fmt.Sprintf("Planned Soroban benchmark mode for sizing holder accounts: %s | %s", config.ModeSACTransfer, config.ModeOZTransfer))
+		fmt.Sprintf("Planned Soroban benchmark mode for sizing holder accounts: %s | %s | %s", config.ModeSACTransfer, config.ModeOZTransfer, config.ModeSoroswap))
 	cmd.Flags().Duration("duration", 100*time.Second, "Planned benchmark duration used when sizing account partitions")
 	cmd.Flags().Int("target-rps", 50, "Planned Soroban steady-state requests per second used when sizing account partitions")
 	cmd.Flags().Int("classic-rps", config.DefaultClassicRPS, "Planned simple-payment steady-state operations per second used when sizing account partitions (must be a multiple of 100)")
+	cmd.Flags().String("soroswap-factory", "", "Soroswap factory contract ID (required when --mode=soroswap)")
+	cmd.Flags().String("soroswap-router", "", "Soroswap router contract ID (required when --mode=soroswap)")
 	cmd.Flags().Int("accounts", 5_000, "Number of participant accounts to create")
 	cmd.Flags().Float64("base-reserve-xlm", 3.0, "XLM to fund each account (covers reserves, holder trustlines, and fee headroom)")
 	cmd.Flags().Int64("liquidity-per-pool", 1_000_000, "Token units to deposit into each Soroswap pool")
@@ -207,6 +222,12 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 	if cfg.LiquidityPerPool, err = cmd.Flags().GetInt64("liquidity-per-pool"); err != nil {
 		return err
 	}
+	if cfg.SoroswapFactoryContract, err = cmd.Flags().GetString("soroswap-factory"); err != nil {
+		return err
+	}
+	if cfg.SoroswapRouterContract, err = cmd.Flags().GetString("soroswap-router"); err != nil {
+		return err
+	}
 	modeStr, err := cmd.Flags().GetString("mode")
 	if err != nil {
 		return err
@@ -221,8 +242,14 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 	if cfg.ClassicRPS, err = cmd.Flags().GetInt("classic-rps"); err != nil {
 		return err
 	}
+	if err = validateSoroswapSetupConfig(cfg); err != nil {
+		return err
+	}
 	if err = benchmark.ValidateConfig(cfg); err != nil {
 		return fmt.Errorf("planned benchmark shape is invalid for setup: %w", err)
+	}
+	if cfg.Mode == config.ModeSoroswap {
+		return fmt.Errorf("setup mode %q is not implemented yet", cfg.Mode)
 	}
 
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
@@ -322,7 +349,7 @@ Run bench as many times as needed.`,
 	cmd.Flags().String("rpc-url", "", "Override the RPC URL stored in the state JSON file")
 	cmd.Flags().String("state-file", state.DefaultStateFile, "Path to the state JSON file")
 	cmd.Flags().String("mode", string(config.ModeSACTransfer),
-		fmt.Sprintf("Benchmark mode: %s | %s", config.ModeSACTransfer, config.ModeOZTransfer))
+		fmt.Sprintf("Benchmark mode: %s | %s | %s", config.ModeSACTransfer, config.ModeOZTransfer, config.ModeSoroswap))
 	cmd.Flags().Duration("duration", 100*time.Second, "Total benchmark duration")
 	cmd.Flags().Duration("ramp-up", 20*time.Second, "Ramp-up period (RPS increases linearly from 1 to target-rps)")
 	cmd.Flags().Int("target-rps", 50, "Steady-state requests per second after ramp-up")
@@ -393,6 +420,9 @@ func runBench(cmd *cobra.Command, _ []string) error {
 	// Fail fast on obvious misconfig before starting the attack.
 	if err = benchmark.ValidateConfig(cfg); err != nil {
 		return err
+	}
+	if cfg.Mode == config.ModeSoroswap {
+		return fmt.Errorf("benchmark mode %q is not implemented yet", cfg.Mode)
 	}
 
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)

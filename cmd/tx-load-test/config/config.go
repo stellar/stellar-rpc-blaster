@@ -11,6 +11,8 @@ const (
 	ModeSACTransfer BenchmarkMode = "sac-transfer"
 	// ModeOZTransfer runs random OpenZeppelin token transfers between accounts.
 	ModeOZTransfer BenchmarkMode = "oz-transfer"
+	// ModeSoroswap runs swaps against benchmark Soroswap pools.
+	ModeSoroswap BenchmarkMode = "soroswap"
 	// DefaultClassicRPS is the default steady-state operation rate for the
 	// parallel simple-payment stream that accompanies the selected Soroban
 	// benchmark mode.
@@ -39,6 +41,14 @@ type Config struct {
 
 	// LiquidityPerPool is the amount of each asset to deposit into each Soroswap pool.
 	LiquidityPerPool int64
+
+	// SoroswapFactoryContract is the strkey-encoded Soroswap factory contract ID
+	// used when setting up benchmark pools.
+	SoroswapFactoryContract string
+
+	// SoroswapRouterContract is the strkey-encoded Soroswap router contract ID
+	// used for benchmark swap traffic.
+	SoroswapRouterContract string
 
 	// Benchmark settings -------------------------------------------------------
 
