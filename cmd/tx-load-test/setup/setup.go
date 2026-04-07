@@ -20,14 +20,17 @@ type Step interface {
 	Run(ctx context.Context, logger *log.Entry, cfg config.Config, st *state.State) error
 }
 
-// steps is the ordered list of setup phases.
-// Soroswap remains intentionally omitted until that workload is implemented.
-var steps = []Step{
-	feePayerStep{},
-	assetsStep{},
-	accountsStep{},
-	sacStep{},
-	ozTokenStep{},
+func setupSteps(cfg config.Config) []Step {
+	steps := []Step{
+		feePayerStep{},
+		assetsStep{},
+		accountsStep{},
+		sacStep{},
+	}
+	if cfg.Mode == config.ModeSoroswap { // before OZ to fail-fast
+		steps = append(steps, soroswapPoolsStep{})
+	}
+	return append(steps, ozTokenStep{})
 }
 
 // Setup orchestrates the full ledger-state setup before benchmarking begins.
@@ -49,6 +52,7 @@ func Setup(
 		st = &state.State{}
 	}
 
+	steps := setupSteps(cfg)
 	for i, step := range steps {
 		scoped := logger.WithField("phase", step.Name())
 		scoped.Infof("step %d/%d", i+1, len(steps))
