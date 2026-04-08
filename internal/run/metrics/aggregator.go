@@ -22,14 +22,16 @@ var capturedPercentiles = []float64{50, 95, 99, 99.9} // treat as const
 type Aggregator struct {
 	logger          *log.Entry
 	writeOutputPath string
+	cancel          context.CancelFunc
 
 	stats            map[string]*EndpointStats
 	orderedEndpoints []string
 
-	done     bool
-	start    time.Time
-	duration time.Duration
-	mu       sync.RWMutex
+	done         bool
+	start        time.Time
+	duration     time.Duration
+	errorPercent int
+	mu           sync.RWMutex
 }
 
 // EndpointStats collects stats for all vegeta workers of an endpoint
@@ -76,6 +78,15 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 			}
 		case <-ticker.C:
 			a.logger.Info(a)
+			if a.checkErrorPercent() > a.errorPercent {
+				a.logger.Warnf("Error percentage exceeded threshold of %d%%. Ending test early.", a.errorPercent)
+				a.done = true
+				if err := WriteOutput(a); err != nil {
+					a.logger.Error(err)
+				}
+				a.cancel()
+				return
+			}
 		case <-ctx.Done():
 			if err := ctx.Err(); err != nil {
 				a.logger.Error(fmt.Errorf("aggregator.Run terminating due to context error: %w", err))
@@ -88,7 +99,7 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 	}
 }
 
-func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
+func NewAggregator(logger *log.Entry, settings config.Config, cancel context.CancelFunc) *Aggregator {
 	endpoints := settings.GetActiveEndpoints()
 	duration := settings.Duration
 	if settings.Serial {
@@ -96,9 +107,11 @@ func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
 	}
 	a := Aggregator{
 		logger:          logger,
+		cancel:          cancel,
 		stats:           make(map[string]*EndpointStats),
 		start:           time.Now(),
 		duration:        duration,
+		errorPercent:    settings.ErrorPercent,
 		writeOutputPath: settings.TestOutputPath,
 	}
 	sort.Strings(endpoints)
@@ -200,6 +213,26 @@ func (a *Aggregator) ActivateEndpoint(endpointKey string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.stats[endpointKey].startTime = time.Now()
+}
+
+// Computes the error percentage across all endpoints for the most recently completed window.
+// Requires at least 2 windows so we never evaluate a partially-filled window.
+func (a *Aggregator) checkErrorPercent() int {
+	var totalSuccess uint64
+	var totalErrors uint64
+	for _, stats := range a.stats {
+		if len(stats.windows) < 2 {
+			continue
+		}
+		lastCompleted := stats.windows[len(stats.windows)-2]
+		totalSuccess += lastCompleted.success
+		totalErrors += lastCompleted.errors
+	}
+	total := totalSuccess + totalErrors
+	if total == 0 {
+		return 0
+	}
+	return int(float64(totalErrors) / float64(total) * 100)
 }
 
 // constructs a logging string showing progress for all endpoints

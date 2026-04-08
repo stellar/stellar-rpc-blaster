@@ -68,7 +68,7 @@ func (a *App) RunApp(runtimeSettings config.RuntimeSettings) error {
 		if missingFields != "" {
 			return fmt.Errorf("missing required fields in Run mode: %s", missingFields)
 		}
-		if err := a.runLoadTest(ctx); err != nil {
+		if err := a.runLoadTest(ctx, cancel); err != nil {
 			return err
 		}
 	case config.Generate:
@@ -112,7 +112,7 @@ func (a *App) close() {
 	a.logger.Info("Shutting down Blaster")
 }
 
-func (a *App) runLoadTest(ctx context.Context) error {
+func (a *App) runLoadTest(ctx context.Context, cancel context.CancelFunc) error {
 	out := make(chan blasterMetrics.Sample, 1000) // engine writes samples to this channel, aggregator reads from it
 
 	be, err := engine.NewBlastEngine(ctx, a.logger, a.config, a.client, out)
@@ -120,7 +120,7 @@ func (a *App) runLoadTest(ctx context.Context) error {
 		return fmt.Errorf("could not create blast engine: %w", err)
 	}
 
-	aggregator := blasterMetrics.NewAggregator(a.logger, a.config)
+	aggregator := blasterMetrics.NewAggregator(a.logger, a.config, cancel)
 	// Aggregator goroutine: consumes samples and prints every 5s
 	var wg sync.WaitGroup
 	wg.Go(func() {
