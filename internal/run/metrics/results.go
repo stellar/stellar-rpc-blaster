@@ -1,11 +1,12 @@
 package blasterMetrics
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"maps"
 	"math"
-	"regexp"
+	"slices"
 	"time"
 )
 
@@ -14,7 +15,7 @@ type Results struct {
 	Start           time.Time                  `json:"start"`
 	End             time.Time                  `json:"end"`
 	DurationSeconds float64                    `json:"duration_seconds"`
-	Endpoints       map[string]*EndpointResult `json:"endpoints"`
+	Endpoints       map[string]*EndpointResult `json:"-"`
 }
 
 // EndpointResult holds final stats for one endpoint
@@ -25,7 +26,7 @@ type EndpointResult struct {
 	TargetRPS     float64                `json:"target_rps"`
 	Percentiles   map[string]float64     `json:"percentiles_ms"`
 	ErrorTypes    map[string]ErrorResult `json:"error_types,omitempty"`
-	Timeline      []StepSnapshot         `json:"timeline,omitempty"`
+	Timeline      []StepSnapshot         `json:"-"`
 }
 
 // StepSnapshot captures metrics for a single step-interval window
@@ -103,36 +104,56 @@ func (a *Aggregator) Results() *Results {
 	return results
 }
 
-// snapshotRe matches expanded StepSnapshot objects produced by json.MarshalIndent.
-var snapshotRe = regexp.MustCompile(
-	`\{\s+` +
-		`"target_rps": ([^,]+),\s+` +
-		`"success": (\d+),\s+` +
-		`"errors": (\d+),\s+` +
-		`"error_rate_pct": ([^,]+),\s+` +
-		`"p50_ms": ([^,]+),\s+` +
-		`"p95_ms": ([^,]+),\s+` +
-		`"p99_ms": ([^,]+),\s+` +
-		`"p99\.9_ms": ([^\s}]+)\s+` +
-		`\}`)
-
-// MarshalIndented returns indented JSON with compact timeline entries.
-// json.MarshalIndent re-parses custom MarshalJSON output, so a post-process pass
-// is the only way to control snapshot formatting.
-func (r *Results) MarshalIndented() ([]byte, error) {
-	data, err := json.MarshalIndent(r, "", "  ")
+// marshalOpen marshals v as indented JSON and returns everything up to (not including) the
+// closing '}', so the caller can append more fields before closing the object.
+func marshalOpen(v any, prefix, indent string) ([]byte, error) {
+	data, err := json.MarshalIndent(v, prefix, indent)
 	if err != nil {
 		return nil, err
 	}
-	return snapshotRe.ReplaceAllFunc(data, func(match []byte) []byte {
-		groups := snapshotRe.FindSubmatch(match)
-		return fmt.Appendf(nil,
-			"{\n"+
-				`          "target_rps": %s, "success": %s, "errors": %s, "error_rate_pct": %s,`+"\n"+
-				`          "p50_ms": %s, "p95_ms": %s, "p99_ms": %s, "p99.9_ms": %s`+"\n"+
-				`        }`,
-			groups[1], groups[2], groups[3], groups[4],
-			groups[5], groups[6], groups[7], groups[8],
-		)
-	}), nil
+	return bytes.TrimRight(data[:bytes.LastIndexByte(data, '}')], "\n "+prefix), nil
+}
+
+// MarshalJSON produces indented JSON but keeps each timeline entry on a single line.
+func (r Results) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	type resultsAlias Results
+	top, err := marshalOpen(resultsAlias(r), "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	buf.Write(top)
+	buf.WriteString(",\n  \"endpoints\": {")
+
+	// Write each endpoint's main stats as indented JSON
+	for i, name := range slices.Sorted(maps.Keys(r.Endpoints)) {
+		ep := r.Endpoints[name]
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		epJson, err := marshalOpen(ep, "    ", "  ")
+		if err != nil {
+			return nil, err
+		}
+		fmt.Fprintf(&buf, "\n    %q: ", name)
+		buf.Write(epJson)
+
+		// Write timeline as compact JSON array
+		if len(ep.Timeline) > 0 {
+			buf.WriteString(",\n      \"timeline\": [\n")
+			for _, snap := range ep.Timeline {
+				snapJson, err := json.Marshal(snap)
+				if err != nil {
+					return nil, err
+				}
+				fmt.Fprintf(&buf, "        %s,\n", snapJson)
+			}
+			buf.Truncate(buf.Len() - 2)
+			buf.WriteString("\n      ]")
+		}
+		buf.WriteString("\n    }")
+	}
+
+	buf.WriteString("\n  }\n}")
+	return buf.Bytes(), nil
 }
