@@ -2,20 +2,17 @@ package benchmark
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math/rand/v2"
-	"net/http"
 	"sync/atomic"
 
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 
 	"github.com/stellar/go-stellar-sdk/keypair"
-	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/strkey"
-	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	sharedsoroban "github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/soroban"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
 
@@ -216,18 +213,22 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 
 		footprint := buildFootprintFromTemplate(simFootprintTemplates[sacIdx], assetXDR, holderSrcAccID, dstAccID)
 
-		op := txnbuild.InvokeHostFunction{
-			HostFunction: xdr.HostFunction{
-				Type:           xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
-				InvokeContract: &invokeArgs,
-			},
-			// SorobanCredentialsSourceAccount: the operation source account's
-			// signature authorizes the contract invocation. When the transaction
-			// source differs from the holder source, both accounts sign.
-			Auth: []xdr.SorobanAuthorizationEntry{{
-				Credentials: xdr.SorobanCredentials{
-					Type: xdr.SorobanCredentialsTypeSorobanCredentialsSourceAccount,
-				},
+		signers := []*keypair.Full{txSourceKP}
+		if holderSrcKP.Address() != txSourceKP.Address() {
+			signers = append(signers, holderSrcKP)
+		}
+
+		id := slot + 1
+		body, err := buildSorobanSendTransactionBody(sorobanSendTransactionParams{
+			RPCID:             id,
+			NetworkPassphrase: networkPassphrase,
+			TxSource:          txSourceKP,
+			Sequence:          seq,
+			Signers:           signers,
+			OpSourceAccount:   holderSrcKP.Address(),
+			InvokeArgs:        invokeArgs,
+			AuthEntries: []xdr.SorobanAuthorizationEntry{{
+				Credentials: xdr.SorobanCredentials{Type: xdr.SorobanCredentialsTypeSorobanCredentialsSourceAccount},
 				RootInvocation: xdr.SorobanAuthorizedInvocation{
 					Function: xdr.SorobanAuthorizedFunction{
 						Type:       xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn,
@@ -235,64 +236,18 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 					},
 				},
 			}},
-			SourceAccount: holderSrcKP.Address(),
-			Ext: xdr.TransactionExt{
-				V: 1,
-				SorobanData: &xdr.SorobanTransactionData{
-					Resources: xdr.SorobanResources{
-						Footprint:     footprint,
-						Instructions:  simResources.Instructions,
-						DiskReadBytes: simResources.DiskReadBytes,
-						WriteBytes:    simResources.WriteBytes,
-					},
-					ResourceFee: simResourceFee,
-				},
+			Resources: xdr.SorobanResources{
+				Footprint:     footprint,
+				Instructions:  simResources.Instructions,
+				DiskReadBytes: simResources.DiskReadBytes,
+				WriteBytes:    simResources.WriteBytes,
 			},
-		}
-
-		tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
-			SourceAccount: &txnbuild.SimpleAccount{
-				AccountID: txSourceKP.Address(),
-				Sequence:  seq,
-			},
-			IncrementSequenceNum: false,
-			Operations:           []txnbuild.Operation{&op},
-			BaseFee:              benchmarkBaseFee,
-			Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(60)},
+			ResourceFee: simResourceFee,
 		})
 		if err != nil {
-			return fmt.Errorf("build transaction: %w", err)
+			return err
 		}
-
-		signers := []*keypair.Full{txSourceKP}
-		if holderSrcKP.Address() != txSourceKP.Address() {
-			signers = append(signers, holderSrcKP)
-		}
-		tx, err = tx.Sign(networkPassphrase, signers...)
-		if err != nil {
-			return fmt.Errorf("sign transaction: %w", err)
-		}
-
-		b64, err := tx.Base64()
-		if err != nil {
-			return fmt.Errorf("marshal transaction: %w", err)
-		}
-
-		id := slot + 1
-		body, err := json.Marshal(rpcJSONBody{
-			JSONRPC: "2.0",
-			ID:      id,
-			Method:  protocol.SendTransactionMethodName,
-			Params:  map[string]string{"transaction": b64},
-		})
-		if err != nil {
-			return fmt.Errorf("marshal JSON-RPC body: %w", err)
-		}
-
-		t.Method = http.MethodPost
-		t.URL = rpcURL
-		t.Body = body
-		t.Header = http.Header{"Content-Type": {"application/json"}}
+		populateJSONRPCTarget(t, rpcURL, body)
 		return nil
 	}, seqs.ResetFunc(), nil
 }
@@ -334,7 +289,11 @@ func presimulate(
 		Args:         args,
 	}
 
-	return simulatePaddedInvokeContract(state, txSourceKP, srcKP.Address(), invokeArgs)
+	sim, err := sharedsoroban.SimulatePaddedInvokeContract(state, txSourceKP, srcKP.Address(), invokeArgs, benchmarkBaseFee, resourcePadFactor)
+	if err != nil {
+		return xdr.SorobanResources{}, 0, xdr.LedgerFootprint{}, err
+	}
+	return sim.Resources, sim.ResourceFee, sim.Footprint, nil
 }
 
 // buildFootprintFromTemplate takes the footprint returned by the simulator for
@@ -352,11 +311,9 @@ func buildFootprintFromTemplate(
 		AlphaNum4:  assetXDR.AlphaNum4,
 		AlphaNum12: assetXDR.AlphaNum12,
 	}
-	return xdr.LedgerFootprint{
-		ReadOnly: tmpl.ReadOnly,
-		ReadWrite: []xdr.LedgerKey{
-			{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.LedgerKeyTrustLine{AccountId: src, Asset: tla}},
-			{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.LedgerKeyTrustLine{AccountId: dst, Asset: tla}},
-		},
-	}
+	return sharedsoroban.ReplaceFootprintReadWriteKeys(
+		tmpl,
+		xdr.LedgerKey{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.LedgerKeyTrustLine{AccountId: src, Asset: tla}},
+		xdr.LedgerKey{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.LedgerKeyTrustLine{AccountId: dst, Asset: tla}},
+	)
 }

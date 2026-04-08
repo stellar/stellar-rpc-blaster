@@ -2,17 +2,13 @@ package benchmark
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"sync/atomic"
 	"time"
 
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 
 	"github.com/stellar/go-stellar-sdk/keypair"
-	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
-	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
 
@@ -138,60 +134,28 @@ func (soroswapMode) NewTargeter(ctx context.Context, rpcURL string, st *state.St
 			return fmt.Errorf("rewrite Soroswap footprint: %w", err)
 		}
 
-		op := txnbuild.InvokeHostFunction{
-			HostFunction: xdr.HostFunction{
-				Type:           xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
-				InvokeContract: &invokeArgs,
-			},
-			Auth:          authEntries,
-			SourceAccount: txSourceKP.Address(),
-			Ext: xdr.TransactionExt{
-				V: 1,
-				SorobanData: &xdr.SorobanTransactionData{
-					Resources: xdr.SorobanResources{
-						Footprint:     footprint,
-						Instructions:  tmpl.resources.Instructions,
-						DiskReadBytes: tmpl.resources.DiskReadBytes,
-						WriteBytes:    tmpl.resources.WriteBytes,
-					},
-					ResourceFee: tmpl.resourceFee,
-				},
-			},
-		}
-
-		tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
-			SourceAccount:        &txnbuild.SimpleAccount{AccountID: txSourceKP.Address(), Sequence: seq},
-			IncrementSequenceNum: false,
-			Operations:           []txnbuild.Operation{&op},
-			BaseFee:              benchmarkBaseFee,
-			Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(60)},
-		})
-		if err != nil {
-			return fmt.Errorf("build Soroswap transaction: %w", err)
-		}
-		tx, err = tx.Sign(st.NetworkPassphrase, txSourceKP)
-		if err != nil {
-			return fmt.Errorf("sign Soroswap transaction: %w", err)
-		}
-		b64, err := tx.Base64()
-		if err != nil {
-			return fmt.Errorf("marshal Soroswap transaction: %w", err)
-		}
-
 		id := slot + 1
-		body, err := json.Marshal(rpcJSONBody{
-			JSONRPC: "2.0",
-			ID:      id,
-			Method:  protocol.SendTransactionMethodName,
-			Params:  map[string]string{"transaction": b64},
+		body, err := buildSorobanSendTransactionBody(sorobanSendTransactionParams{
+			RPCID:             id,
+			NetworkPassphrase: st.NetworkPassphrase,
+			TxSource:          txSourceKP,
+			Sequence:          seq,
+			Signers:           []*keypair.Full{txSourceKP},
+			OpSourceAccount:   txSourceKP.Address(),
+			InvokeArgs:        invokeArgs,
+			AuthEntries:       authEntries,
+			Resources: xdr.SorobanResources{
+				Footprint:     footprint,
+				Instructions:  tmpl.resources.Instructions,
+				DiskReadBytes: tmpl.resources.DiskReadBytes,
+				WriteBytes:    tmpl.resources.WriteBytes,
+			},
+			ResourceFee: tmpl.resourceFee,
 		})
 		if err != nil {
-			return fmt.Errorf("marshal JSON-RPC body: %w", err)
+			return err
 		}
-		t.Method = http.MethodPost
-		t.URL = rpcURL
-		t.Body = body
-		t.Header = http.Header{"Content-Type": {"application/json"}}
+		populateJSONRPCTarget(t, rpcURL, body)
 		return nil
 	}, seqs.ResetFunc(), nil
 }
