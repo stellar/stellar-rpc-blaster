@@ -12,19 +12,18 @@ import (
 )
 
 var soroswapPairWasmPaths = []string{
-	"contracts/soroswap/contracts/pair/target/wasm32v1-none/release/soroswap_pair.wasm",
-	"contracts/soroswap/contracts/pair/target/wasm32-unknown-unknown/release/soroswap_pair.wasm",
+	"contracts/soroswap_pair.wasm",
 }
 
 var soroswapFactoryWasmPaths = []string{
-	"contracts/soroswap/contracts/factory/target/wasm32v1-none/release/soroswap_factory.wasm",
-	"contracts/soroswap/contracts/factory/target/wasm32-unknown-unknown/release/soroswap_factory.wasm",
+	"contracts/soroswap_factory.wasm",
 }
 
 var soroswapRouterWasmPaths = []string{
-	"contracts/soroswap/contracts/router/target/wasm32v1-none/release/soroswap_router.wasm",
-	"contracts/soroswap/contracts/router/target/wasm32-unknown-unknown/release/soroswap_router.wasm",
+	"contracts/soroswap_router.wasm",
 }
+
+const contractWasmRefreshScript = "contracts/update-wasms.sh"
 
 type soroswapCoreArtifact struct {
 	label         string
@@ -99,7 +98,7 @@ func readSoroswapWasm(label string, paths []string) ([]byte, string, error) {
 			return nil, "", fmt.Errorf("read %s Wasm %q: %w", label, path, err)
 		}
 	}
-	return nil, "", fmt.Errorf("%s Wasm not found; build it first and place it at one of: %s", label, strings.Join(paths, ", "))
+	return nil, "", fmt.Errorf("%s Wasm not found; run %s or place it at one of: %s", label, contractWasmRefreshScript, strings.Join(paths, ", "))
 }
 
 func deterministicContractIdentity(

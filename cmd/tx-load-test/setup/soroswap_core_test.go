@@ -47,7 +47,7 @@ func TestReadSoroswapWasmSkipsMissingPaths(t *testing.T) {
 
 func TestReadSoroswapWasmReportsMissingArtifacts(t *testing.T) {
 	_, _, err := readSoroswapWasm("Soroswap factory", []string{"/missing/one.wasm", "/missing/two.wasm"})
-	require.EqualError(t, err, "Soroswap factory Wasm not found; build it first and place it at one of: /missing/one.wasm, /missing/two.wasm")
+	require.EqualError(t, err, "Soroswap factory Wasm not found; run contracts/update-wasms.sh or place it at one of: /missing/one.wasm, /missing/two.wasm")
 }
 
 func TestLoadSoroswapContractArtifactDerivesIdentityAndHash(t *testing.T) {
