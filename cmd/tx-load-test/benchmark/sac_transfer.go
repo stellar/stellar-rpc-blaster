@@ -12,7 +12,6 @@ import (
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	sharedsoroban "github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/soroban"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
 
@@ -126,23 +125,19 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 			}
 		}
 
-		r, fee, tmpl, err := presimulate(
+		simTemplate, err := presimulateSACTransfer(
 			st, sacIDs[i],
 			simTxSource, holderAccounts[0], holderAccounts[1],
 		)
 		if err != nil {
 			return nil, nil, fmt.Errorf("pre-simulate SAC[%d] transfer: %w", i, err)
 		}
-		simFootprintTemplates[i] = tmpl
+		simFootprintTemplates[i] = simTemplate.simulation.Footprint
 		// All three SACs share the same WASM and logic; use the last
 		// simulation's resource numbers (they should be identical).
-		simResources = r
-		simResourceFee = fee
+		simResources = simTemplate.simulation.Resources
+		simResourceFee = simTemplate.simulation.ResourceFee
 	}
-	simResources.Instructions = xdr.Uint32(float64(simResources.Instructions) * resourcePadFactor)
-	simResources.DiskReadBytes = xdr.Uint32(float64(simResources.DiskReadBytes) * resourcePadFactor)
-	simResources.WriteBytes = xdr.Uint32(float64(simResources.WriteBytes) * resourcePadFactor)
-	simResourceFee = xdr.Int64(float64(simResourceFee) * resourcePadFactor)
 
 	// Pre-load the on-ledger sequence numbers for every participant account.
 	// These serve as the base for per-account atomic counters that track
@@ -211,7 +206,10 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 			Args:         args,
 		}
 
-		footprint := buildFootprintFromTemplate(simFootprintTemplates[sacIdx], assetXDR, holderSrcAccID, dstAccID)
+		footprint, err := buildSACFootprintFromTemplate(simFootprintTemplates[sacIdx], assetXDR, holderSrcAccID, dstAccID)
+		if err != nil {
+			return fmt.Errorf("build SAC footprint: %w", err)
+		}
 
 		signers := []*keypair.Full{txSourceKP}
 		if holderSrcKP.Address() != txSourceKP.Address() {
@@ -252,21 +250,20 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 	}, seqs.ResetFunc(), nil
 }
 
-// presimulate calls SimulateTransaction with the given src/dst keypair and
-// returns the resource budget plus the complete footprint as computed by the
-// simulator.
-func presimulate(
+// presimulateSACTransfer builds a representative SAC transfer invocation and
+// returns the padded simulation result plus the invoke args used to obtain it.
+func presimulateSACTransfer(
 	state *state.State,
 	sacID xdr.ContractId,
 	txSourceKP, srcKP, dstKP *keypair.Full,
-) (xdr.SorobanResources, xdr.Int64, xdr.LedgerFootprint, error) {
+) (simulatedInvocationTemplate, error) {
 	srcAccID, err := xdr.AddressToAccountId(srcKP.Address())
 	if err != nil {
-		return xdr.SorobanResources{}, 0, xdr.LedgerFootprint{}, err
+		return simulatedInvocationTemplate{}, err
 	}
 	dstAccID, err := xdr.AddressToAccountId(dstKP.Address())
 	if err != nil {
-		return xdr.SorobanResources{}, 0, xdr.LedgerFootprint{}, err
+		return simulatedInvocationTemplate{}, err
 	}
 
 	args := xdr.ScVec{
@@ -289,31 +286,31 @@ func presimulate(
 		Args:         args,
 	}
 
-	sim, err := sharedsoroban.SimulatePaddedInvokeContract(state, txSourceKP, srcKP.Address(), invokeArgs, benchmarkBaseFee, resourcePadFactor)
-	if err != nil {
-		return xdr.SorobanResources{}, 0, xdr.LedgerFootprint{}, err
-	}
-	return sim.Resources, sim.ResourceFee, sim.Footprint, nil
+	return presimulateBenchmarkInvocation(state, txSourceKP, srcKP.Address(), invokeArgs)
 }
 
-// buildFootprintFromTemplate takes the footprint returned by the simulator for
+// buildSACFootprintFromTemplate takes the footprint returned by the simulator for
 // a representative transfer (accounts[0] -> accounts[1]) and substitutes the two
 // ReadWrite trustline keys with the actual src/dst accounts for this request.
 // All ReadOnly entries (contract instance, issuer account, source account read
 // for auth) are kept as-is since they are identical for every invocation.
-func buildFootprintFromTemplate(
+func buildSACFootprintFromTemplate(
 	tmpl xdr.LedgerFootprint,
 	assetXDR xdr.Asset,
 	src, dst xdr.AccountId,
-) xdr.LedgerFootprint {
+) (xdr.LedgerFootprint, error) {
 	tla := xdr.TrustLineAsset{
 		Type:       assetXDR.Type,
 		AlphaNum4:  assetXDR.AlphaNum4,
 		AlphaNum12: assetXDR.AlphaNum12,
 	}
-	return sharedsoroban.ReplaceFootprintReadWriteKeys(
+	return buildFootprintFromTemplate(
 		tmpl,
-		xdr.LedgerKey{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.LedgerKeyTrustLine{AccountId: src, Asset: tla}},
-		xdr.LedgerKey{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.LedgerKeyTrustLine{AccountId: dst, Asset: tla}},
+		func() (xdr.LedgerKey, error) {
+			return xdr.LedgerKey{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.LedgerKeyTrustLine{AccountId: src, Asset: tla}}, nil
+		},
+		func() (xdr.LedgerKey, error) {
+			return xdr.LedgerKey{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.LedgerKeyTrustLine{AccountId: dst, Asset: tla}}, nil
+		},
 	)
 }
