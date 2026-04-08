@@ -38,8 +38,6 @@ const (
 
 var ozTokenWasmPaths = []string{
 	"contracts/oz_token.wasm",
-	"contracts/oz_token/target/wasm32v1-none/release/oz_token_contract.wasm",
-	"contracts/oz_token/target/wasm32-unknown-unknown/release/oz_token_contract.wasm",
 }
 
 type ozTokenStep struct{}
@@ -120,7 +118,8 @@ func readOZTokenWasm() ([]byte, string, error) {
 		}
 	}
 	return nil, "", fmt.Errorf(
-		"OZ token Wasm not found; build the contract first and place it at one of: %s",
+		"OZ token Wasm not found; run %s or place it at one of: %s",
+		contractWasmRefreshScript,
 		strings.Join(ozTokenWasmPaths, ", "),
 	)
 }
