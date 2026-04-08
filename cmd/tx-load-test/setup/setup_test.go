@@ -1,34 +1,12 @@
 package setup
 
 import (
-	"bytes"
 	"testing"
 
-	"github.com/stellar/go-stellar-sdk/keypair"
-	"github.com/stellar/go-stellar-sdk/strkey"
-	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stretchr/testify/require"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
 )
-
-func TestAddressScValSupportsAccountAndContractAddresses(t *testing.T) {
-	kp, err := keypair.Random()
-	require.NoError(t, err)
-
-	accountVal, err := addressScVal(kp.Address())
-	require.NoError(t, err)
-	require.Equal(t, xdr.ScValTypeScvAddress, accountVal.Type)
-	require.Equal(t, xdr.ScAddressTypeScAddressTypeAccount, accountVal.Address.Type)
-
-	contractAddress, err := strkey.Encode(strkey.VersionByteContract, bytes.Repeat([]byte{0x42}, 32))
-	require.NoError(t, err)
-
-	contractVal, err := addressScVal(contractAddress)
-	require.NoError(t, err)
-	require.Equal(t, xdr.ScValTypeScvAddress, contractVal.Type)
-	require.Equal(t, xdr.ScAddressTypeScAddressTypeContract, contractVal.Address.Type)
-}
 
 func TestSetupStepsAlwaysIncludeSoroswapBootstrapAndLiquidity(t *testing.T) {
 	steps := setupSteps(config.Config{Mode: config.ModeSoroswap})

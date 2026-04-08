@@ -15,6 +15,7 @@ import (
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
+	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/soroswap"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
 
@@ -234,7 +235,7 @@ func ensureSoroswapRouterInitialized(
 	routerContract string,
 	factoryContract string,
 ) error {
-	reportedFactory, err := soroswapGetFactory(ctx, st, routerContract)
+	reportedFactory, err := soroswap.GetFactory(ctx, st, routerContract)
 	if err == nil {
 		if reportedFactory != factoryContract {
 			return fmt.Errorf("router %s is already initialized with factory %s, want %s", routerContract, reportedFactory, factoryContract)
@@ -243,7 +244,7 @@ func ensureSoroswapRouterInitialized(
 		return nil
 	}
 
-	factoryVal, err := addressScVal(factoryContract)
+	factoryVal, err := soroswap.AddressScVal(factoryContract)
 	if err != nil {
 		return fmt.Errorf("encode factory contract address: %w", err)
 	}
@@ -252,7 +253,7 @@ func ensureSoroswapRouterInitialized(
 		return err
 	}
 
-	reportedFactory, err = soroswapGetFactory(ctx, st, routerContract)
+	reportedFactory, err = soroswap.GetFactory(ctx, st, routerContract)
 	if err != nil {
 		return fmt.Errorf("verify router initialization: %w", err)
 	}
@@ -263,11 +264,11 @@ func ensureSoroswapRouterInitialized(
 }
 
 func soroswapFeeToSetter(ctx context.Context, st *state.State, factoryContract string) (string, error) {
-	result, err := simulateReadonlyContractCall(ctx, st, factoryContract, "fee_to_setter", nil)
+	result, err := soroswap.SimulateReadonlyContractCall(ctx, st, factoryContract, "fee_to_setter", nil)
 	if err != nil {
 		return "", err
 	}
-	return scValAccountAddress(result)
+	return soroswap.ScValAccountAddress(result)
 }
 
 func uploadContractWasm(

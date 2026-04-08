@@ -5,10 +5,15 @@ import (
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/keypair"
+	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 	"github.com/stretchr/testify/require"
 )
+
+func nilLogger() *log.Entry {
+	return log.New()
+}
 
 func TestValidateConfig(t *testing.T) {
 	tests := []struct {

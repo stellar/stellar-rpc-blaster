@@ -5,16 +5,11 @@ package teardown
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
-	"github.com/stellar/go-stellar-sdk/amount"
-	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/support/log"
-	"github.com/stellar/go-stellar-sdk/txnbuild"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
-	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
 
@@ -37,95 +32,23 @@ const maxCleanupTimeout = 10 * time.Minute
 func Teardown(ctx context.Context, logger *log.Entry, cfg config.Config, st *state.State, stateFile string) error {
 	logger = logger.WithField("phase", "teardown")
 
-	if st == nil || st.RPCClient == nil || st.FeePayerKP == nil {
-		logger.Warn("state not initialized, nothing to do")
+	if !cleanupStateReady(logger, st) {
 		return nil
 	}
 
-	// Filter to accounts that still exist on-chain.
-	var toMerge []*keypair.Full
-	for _, kp := range st.AccountKPs {
-		if kp == nil {
-			continue
-		}
-		exists, err := state.AccountExists(ctx, st.RPCClient, kp.Address())
-		if err != nil {
-			logger.WithError(err).Warnf("check %s", kp.Address())
-			continue
-		}
-		if exists {
-			toMerge = append(toMerge, kp)
-		}
-	}
-
+	toMerge := existingCleanupAccounts(ctx, logger, st, true)
 	if len(toMerge) == 0 {
 		logger.Info("no child accounts to merge")
-		if err := os.Remove(stateFile); err != nil && !os.IsNotExist(err) {
-			logger.WithError(err).Warn("could not delete state file")
-		} else {
-			logger.Infof("deleted %s", stateFile)
-		}
+		deleteStateFile(logger, stateFile)
 		return nil
 	}
 
 	logger.Infof("merging %d accounts back to fee payer", len(toMerge))
-
-	n := len(toMerge)
-	batches := (n + mergeBatchSize - 1) / mergeBatchSize
-	for b := range batches {
-		start := b * mergeBatchSize
-		end := min(start+mergeBatchSize, n)
-		batch := toMerge[start:end]
-
-		if err := cleanupBatch(ctx, logger, cfg, st, b+1, batches, batch); err != nil {
-			logger.WithError(err).Warnf("batch %d/%d: skipping", b+1, batches)
-			continue
-		}
-
-		// Remove merged accounts from state and save after each successful batch
-		// so progress is durable across crashes and interrupts.
-		mergedSet := make(map[string]struct{}, len(batch))
-		for _, kp := range batch {
-			mergedSet[kp.Address()] = struct{}{}
-		}
-		var remaining []*keypair.Full
-		for _, kp := range st.AccountKPs {
-			if _, ok := mergedSet[kp.Address()]; !ok {
-				remaining = append(remaining, kp)
-			}
-		}
-		st.AccountKPs = remaining
-		if len(st.SACHolderKPs) > 0 {
-			var remainingHolders []*keypair.Full
-			for _, kp := range st.SACHolderKPs {
-				if _, ok := mergedSet[kp.Address()]; !ok {
-					remainingHolders = append(remainingHolders, kp)
-				}
-			}
-			st.SACHolderKPs = remainingHolders
-		}
-		ps, err := st.ToPersistedState(cfg.RPCURL)
-		if err != nil {
-			return fmt.Errorf("build state after batch %d/%d: %w", b+1, batches, err)
-		}
-		if err := ps.Save(stateFile); err != nil {
-			return fmt.Errorf("save state after batch %d/%d: %w", b+1, batches, err)
-		}
+	if err := runCleanupBatches(ctx, logger, cfg, st, stateFile, toMerge); err != nil {
+		return err
 	}
 
-	if len(st.AccountKPs) > 0 {
-		logger.Warnf("%d accounts could not be merged -- re-run teardown", len(st.AccountKPs))
-		return fmt.Errorf("teardown incomplete: %d accounts remain", len(st.AccountKPs))
-	}
-
-	// Full success -- delete the state file.
-	logger.Info("all accounts merged")
-	if err := os.Remove(stateFile); err != nil && !os.IsNotExist(err) {
-		logger.WithError(err).Warn("could not delete state file")
-	} else {
-		logger.Infof("deleted %s", stateFile)
-	}
-	return nil
+	return finalizeTeardown(logger, st, stateFile)
 }
 
 // BestEffortCleanup is called on interrupt / panic during setup. It attempts
@@ -134,222 +57,57 @@ func Teardown(ctx context.Context, logger *log.Entry, cfg config.Config, st *sta
 func BestEffortCleanup(logger *log.Entry, cfg config.Config, st *state.State, stateFile string) {
 	logger = logger.WithField("phase", "cleanup")
 
-	if st == nil || st.RPCClient == nil || st.FeePayerKP == nil {
-		logger.Warn("state not initialized, nothing to clean up")
+	if !cleanupStateReady(logger, st) {
 		return
 	}
 
-	// Cap total cleanup time.
 	ctx, cancel := context.WithTimeout(context.Background(), maxCleanupTimeout)
 	defer cancel()
 
-	// Write state first so teardown can pick up if cleanup fails.
-	ps, err := st.ToPersistedState(cfg.RPCURL)
-	if err != nil {
-		logger.WithError(err).Error("failed to build state file before cleanup")
-		return
-	}
-	if err := ps.Save(stateFile); err != nil {
+	if err := saveStateSnapshot(cfg, st, stateFile); err != nil {
 		logger.WithError(err).Error("failed to write state file before cleanup")
 		return
-	} else {
-		logger.Infof("wrote partial state to %s", stateFile)
 	}
+	logger.Infof("wrote partial state to %s", stateFile)
 
-	var toMerge []*keypair.Full
-	for _, kp := range st.AccountKPs {
-		if kp == nil {
-			continue
-		}
-		exists, err := state.AccountExists(ctx, st.RPCClient, kp.Address())
-		if err != nil {
-			continue
-		}
-		if exists {
-			toMerge = append(toMerge, kp)
-		}
-	}
-
+	toMerge := existingCleanupAccounts(ctx, logger, st, false)
 	if len(toMerge) == 0 {
 		logger.Info("no child accounts found on-chain")
 		return
 	}
 
 	logger.Infof("best-effort merge of %d accounts", len(toMerge))
-	n := len(toMerge)
-	batches := (n + mergeBatchSize - 1) / mergeBatchSize
-	for b := range batches {
-		start := b * mergeBatchSize
-		end := min(start+mergeBatchSize, n)
-		batch := toMerge[start:end]
-
-		if err := cleanupBatch(ctx, logger, cfg, st, b+1, batches, batch); err != nil {
-			logger.WithError(err).Warnf("batch %d/%d: skipping", b+1, batches)
-			continue
-		}
-
-		// Remove merged accounts and save incrementally.
-		mergedSet := make(map[string]struct{}, len(batch))
-		for _, kp := range batch {
-			mergedSet[kp.Address()] = struct{}{}
-		}
-		var remaining []*keypair.Full
-		for _, kp := range st.AccountKPs {
-			if _, ok := mergedSet[kp.Address()]; !ok {
-				remaining = append(remaining, kp)
-			}
-		}
-		st.AccountKPs = remaining
-		if len(st.SACHolderKPs) > 0 {
-			var remainingHolders []*keypair.Full
-			for _, kp := range st.SACHolderKPs {
-				if _, ok := mergedSet[kp.Address()]; !ok {
-					remainingHolders = append(remainingHolders, kp)
-				}
-			}
-			st.SACHolderKPs = remainingHolders
-		}
-		ps, err = st.ToPersistedState(cfg.RPCURL)
-		if err != nil {
-			logger.WithError(err).Errorf("build state after batch %d/%d", b+1, batches)
-			return
-		}
-		if err := ps.Save(stateFile); err != nil {
-			logger.WithError(err).Errorf("save state after batch %d/%d", b+1, batches)
-			return
-		}
+	if err := runCleanupBatches(ctx, logger, cfg, st, stateFile, toMerge); err != nil {
+		logger.WithError(err).Error("failed to persist cleanup progress")
+		return
 	}
 
-	if len(st.AccountKPs) > 0 {
-		logger.Warnf("%d accounts remain -- run 'teardown' to finish cleanup", len(st.AccountKPs))
-	} else {
-		logger.Info("all accounts merged during best-effort cleanup")
-		if err := os.Remove(stateFile); err != nil && !os.IsNotExist(err) {
-			logger.WithError(err).Warn("could not delete state file")
-		}
-	}
+	finalizeBestEffortCleanup(logger, st, stateFile)
 }
 
-// cleanupBatch drains, de-trusts, and merges a single batch of accounts in
-// two sequential fee-bumped transactions:
-//
-//  1. Drain: one Payment per non-zero trustline balance back to the fee payer.
-//     Confirmed before pass 2 to avoid ChangeTrustInvalidLimit caused by
-//     in-flight SAC transfers that landed after the balance was read.
-//  2. Remove + merge: one ChangeTrust(limit=0) per asset, then AccountMerge.
-func cleanupBatch(
-	ctx context.Context,
-	logger *log.Entry,
-	cfg config.Config,
-	st *state.State,
-	batchNum, totalBatches int,
-	batch []*keypair.Full,
-) error {
-	// Fetch trustline balances upfront.
-	tlBalances, err := ledger.FetchTrustlineBalances(ctx, st.RPCClient, st.Assets[:], batch, ledger.DefaultBatchSize)
-	if err != nil {
-		return fmt.Errorf("fetch trustline balances: %w", err)
+func cleanupStateReady(logger *log.Entry, st *state.State) bool {
+	if st == nil || st.RPCClient == nil || st.FeePayerKP == nil {
+		logger.Warn("state not initialized, nothing to do")
+		return false
 	}
+	return true
+}
 
-	// --- pass 1: drain non-zero balances ---------------------------------
-	var drainOps []txnbuild.Operation
-	drainSignerSet := make(map[string]*keypair.Full, len(batch))
-	drainSignerSet[batch[0].Address()] = batch[0]
-	for j, kp := range batch {
-		srcAccount := ""
-		if j > 0 {
-			srcAccount = kp.Address()
-		}
-		for _, asset := range st.Assets {
-			bal, hasTrustline := tlBalances[kp.Address()][asset.GetCode()]
-			if !hasTrustline || bal == 0 {
-				continue
-			}
-			drainSignerSet[kp.Address()] = kp
-			drainOps = append(drainOps, &txnbuild.Payment{
-				Destination:   st.FeePayerKP.Address(),
-				Asset:         asset,
-				Amount:        amount.String(bal),
-				SourceAccount: srcAccount,
-			})
-		}
+func finalizeTeardown(logger *log.Entry, st *state.State, stateFile string) error {
+	if len(st.AccountKPs) > 0 {
+		logger.Warnf("%d accounts could not be merged -- re-run teardown", len(st.AccountKPs))
+		return fmt.Errorf("teardown incomplete: %d accounts remain", len(st.AccountKPs))
 	}
-	if len(drainOps) > 0 {
-		src, err := st.RPCClient.LoadAccount(ctx, batch[0].Address())
-		if err != nil {
-			return fmt.Errorf("load account for drain: %w", err)
-		}
-		drainTx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
-			SourceAccount:        src,
-			IncrementSequenceNum: true,
-			Operations:           drainOps,
-			BaseFee:              txnbuild.MinBaseFee,
-			Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(state.TxTimeBoundSecs)},
-		})
-		if err != nil {
-			return fmt.Errorf("build drain tx: %w", err)
-		}
-		drainSigners := make([]*keypair.Full, 0, len(drainSignerSet))
-		for _, kp := range batch {
-			if signer, ok := drainSignerSet[kp.Address()]; ok {
-				drainSigners = append(drainSigners, signer)
-			}
-		}
-		drainTx, err = drainTx.Sign(cfg.NetworkPassphrase, drainSigners...)
-		if err != nil {
-			return fmt.Errorf("sign drain tx: %w", err)
-		}
-		if err := state.SubmitFeeBumpAndWait(ctx, logger, st.RPCClient, cfg.NetworkPassphrase, st.FeePayerKP, drainTx); err != nil {
-			return fmt.Errorf("submit drain tx: %w", err)
-		}
-	}
-
-	// --- pass 2: remove trustlines + merge -------------------------------
-	mergeOps := make([]txnbuild.Operation, 0, len(batch)*4)
-	for j, kp := range batch {
-		srcAccount := ""
-		if j > 0 {
-			srcAccount = kp.Address()
-		}
-		for _, asset := range st.Assets {
-			_, hasTrustline := tlBalances[kp.Address()][asset.GetCode()]
-			if !hasTrustline {
-				continue
-			}
-			mergeOps = append(mergeOps, &txnbuild.ChangeTrust{
-				Line:          txnbuild.ChangeTrustAssetWrapper{Asset: asset},
-				Limit:         "0",
-				SourceAccount: srcAccount,
-			})
-		}
-		mergeOps = append(mergeOps, &txnbuild.AccountMerge{
-			Destination:   st.FeePayerKP.Address(),
-			SourceAccount: srcAccount,
-		})
-	}
-
-	src, err := st.RPCClient.LoadAccount(ctx, batch[0].Address())
-	if err != nil {
-		return fmt.Errorf("load account for merge: %w", err)
-	}
-	mergeTx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
-		SourceAccount:        src,
-		IncrementSequenceNum: true,
-		Operations:           mergeOps,
-		BaseFee:              txnbuild.MinBaseFee,
-		Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(state.TxTimeBoundSecs)},
-	})
-	if err != nil {
-		return fmt.Errorf("build merge tx: %w", err)
-	}
-	mergeTx, err = mergeTx.Sign(cfg.NetworkPassphrase, batch...)
-	if err != nil {
-		return fmt.Errorf("sign merge tx: %w", err)
-	}
-	if err := state.SubmitFeeBumpAndWait(ctx, logger, st.RPCClient, cfg.NetworkPassphrase, st.FeePayerKP, mergeTx); err != nil {
-		return fmt.Errorf("submit merge tx: %w", err)
-	}
-
-	logger.Infof("batch %d/%d merged (%d accounts)", batchNum, totalBatches, len(batch))
+	logger.Info("all accounts merged")
+	deleteStateFile(logger, stateFile)
 	return nil
+}
+
+func finalizeBestEffortCleanup(logger *log.Entry, st *state.State, stateFile string) {
+	if len(st.AccountKPs) > 0 {
+		logger.Warnf("%d accounts remain -- run 'teardown' to finish cleanup", len(st.AccountKPs))
+		return
+	}
+	logger.Info("all accounts merged during best-effort cleanup")
+	deleteStateFile(logger, stateFile)
 }
