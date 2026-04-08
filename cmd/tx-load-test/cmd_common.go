@@ -58,6 +58,11 @@ func makeLogger(cmd *cobra.Command, service string) (*log.Entry, error) {
 	return logger, nil
 }
 
+func addRuntimeStatePreflightFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("skip-account-preflight", false, "Skip the early on-chain existence check for a small sample of participant accounts")
+	cmd.Flags().Int("account-preflight-sample", state.DefaultRuntimeAccountPreflightSampleSize, "How many participant accounts to check on-chain during runtime state preflight")
+}
+
 func commonConfig(cmd *cobra.Command, cfg *config.Config) error {
 	var err error
 	if cfg.RPCURL, err = cmd.Flags().GetString("rpc-url"); err != nil {

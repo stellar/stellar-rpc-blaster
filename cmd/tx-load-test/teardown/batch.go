@@ -3,6 +3,7 @@ package teardown
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/stellar/go-stellar-sdk/amount"
 	"github.com/stellar/go-stellar-sdk/keypair"
@@ -29,6 +30,7 @@ func cleanupBatch(
 	batchNum, totalBatches int,
 	batch []*keypair.Full,
 ) error {
+	batchStarted := time.Now()
 	tlBalances, err := ledger.FetchTrustlineBalances(ctx, st.RPCClient, st.Assets[:], batch, ledger.DefaultBatchSize)
 	if err != nil {
 		return fmt.Errorf("fetch trustline balances: %w", err)
@@ -57,6 +59,7 @@ func cleanupBatch(
 		}
 	}
 	if len(drainOps) > 0 {
+		logger.Infof("batch %d/%d drain pass (%d payments)", batchNum, totalBatches, len(drainOps))
 		src, err := st.RPCClient.LoadAccount(ctx, batch[0].Address())
 		if err != nil {
 			return fmt.Errorf("load account for drain: %w", err)
@@ -131,6 +134,6 @@ func cleanupBatch(
 		return fmt.Errorf("submit merge tx: %w", err)
 	}
 
-	logger.Infof("batch %d/%d merged (%d accounts)", batchNum, totalBatches, len(batch))
+	logger.Infof("batch %d/%d merged (%d accounts) in %s", batchNum, totalBatches, len(batch), time.Since(batchStarted).Round(time.Millisecond))
 	return nil
 }

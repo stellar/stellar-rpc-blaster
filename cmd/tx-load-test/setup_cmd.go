@@ -149,6 +149,12 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	logger.Info("verifying benchmark readiness for all supported modes")
+	if err := benchmark.VerifySetupReadyForAllModes(ctx, st); err != nil {
+		logger.WithError(err).Error("setup completed but benchmark readiness validation failed")
+		return fmt.Errorf("setup completed but resulting state is not benchmark-ready for all modes: %w", err)
+	}
+
 	logger.Infof("state written to %s", stateFile)
 	return nil
 }
