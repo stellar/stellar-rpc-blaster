@@ -18,6 +18,10 @@ func TestBuildSorobanSendTransactionBodyBuildsSignedJSONRPCRequest(t *testing.T)
 	coSigner, err := keypair.Random()
 	require.NoError(t, err)
 	contractID := xdr.ContractId{}
+	invokeArgs := xdr.InvokeContractArgs{
+		ContractAddress: xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &contractID},
+		FunctionName:    "transfer",
+	}
 	resourceFee := xdr.Int64(321)
 
 	body, err := buildSorobanSendTransactionBody(sorobanSendTransactionParams{
@@ -27,12 +31,15 @@ func TestBuildSorobanSendTransactionBodyBuildsSignedJSONRPCRequest(t *testing.T)
 		Sequence:          41,
 		Signers:           []*keypair.Full{txSource, coSigner},
 		OpSourceAccount:   coSigner.Address(),
-		InvokeArgs: xdr.InvokeContractArgs{
-			ContractAddress: xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &contractID},
-			FunctionName:    "transfer",
-		},
+		InvokeArgs:        invokeArgs,
 		AuthEntries: []xdr.SorobanAuthorizationEntry{{
 			Credentials: xdr.SorobanCredentials{Type: xdr.SorobanCredentialsTypeSorobanCredentialsSourceAccount},
+			RootInvocation: xdr.SorobanAuthorizedInvocation{
+				Function: xdr.SorobanAuthorizedFunction{
+					Type:       xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn,
+					ContractFn: &invokeArgs,
+				},
+			},
 		}},
 		Resources: xdr.SorobanResources{
 			Instructions:  11,
@@ -56,7 +63,7 @@ func TestBuildSorobanSendTransactionBodyBuildsSignedJSONRPCRequest(t *testing.T)
 	require.True(t, ok)
 	require.Equal(t, txSource.Address(), tx.SourceAccount().AccountID)
 	require.Equal(t, int64(41), tx.SequenceNumber())
-	require.Equal(t, benchmarkBaseFee, tx.BaseFee())
+	require.Equal(t, benchmarkBaseFee+int64(resourceFee), tx.BaseFee())
 	require.Len(t, tx.Signatures(), 2)
 	operations := tx.Operations()
 	require.Len(t, operations, 1)
