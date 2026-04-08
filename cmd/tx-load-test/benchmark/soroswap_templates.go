@@ -9,6 +9,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
+	sharedsoroban "github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/soroban"
 	sharedsoroswap "github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/soroswap"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
@@ -76,7 +77,7 @@ func presimulateSoroswapSwap(
 	if err != nil {
 		return soroswapSwapTemplate{}, err
 	}
-	sim, err := simulatePaddedInvokeContractDetailed(st, trader, trader.Address(), invokeArgs)
+	sim, err := sharedsoroban.SimulatePaddedInvokeContract(st, trader, trader.Address(), invokeArgs, benchmarkBaseFee, resourcePadFactor)
 	if err != nil {
 		return soroswapSwapTemplate{}, err
 	}
@@ -84,9 +85,9 @@ func presimulateSoroswapSwap(
 	return soroswapSwapTemplate{
 		traderAddress: trader.Address(),
 		invokeArgs:    invokeArgs,
-		authEntries:   sim.authEntries,
-		resources:     sim.resources,
-		resourceFee:   sim.resourceFee,
-		footprint:     sim.footprint,
+		authEntries:   sim.AuthEntries,
+		resources:     sim.Resources,
+		resourceFee:   sim.ResourceFee,
+		footprint:     sim.Footprint,
 	}, nil
 }
