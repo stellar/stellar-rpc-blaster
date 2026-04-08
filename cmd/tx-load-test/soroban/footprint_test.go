@@ -42,6 +42,6 @@ func TestReplaceFootprintReadWriteKeysReplacesAndClones(t *testing.T) {
 
 	require.Equal(t, tmpl.ReadOnly, footprint.ReadOnly)
 	require.Equal(t, replacement, footprint.ReadWrite)
-	require.NotSame(t, tmpl.ReadOnly, footprint.ReadOnly)
-	require.NotSame(t, replacement, footprint.ReadWrite)
+	require.NotSame(t, &tmpl.ReadOnly[0], &footprint.ReadOnly[0])
+	require.NotSame(t, &replacement[0], &footprint.ReadWrite[0])
 }

@@ -28,7 +28,8 @@ func TestParseSimulatedInvocationDecodesResourcesAndAuth(t *testing.T) {
 	}
 	encodedAuth, err := xdr.MarshalBase64(entry)
 	require.NoError(t, err)
-	accountID := xdr.MustAddressToAccountId("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF")
+	accountID, err := xdr.AddressToAccountId("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF")
+	require.NoError(t, err)
 	data := xdr.SorobanTransactionData{
 		Resources: xdr.SorobanResources{
 			Footprint: xdr.LedgerFootprint{
