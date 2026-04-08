@@ -2,14 +2,55 @@ package setup
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stretchr/testify/require"
 
+	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
+
+func TestBuildAccountProvisionPlan(t *testing.T) {
+	feePayer, err := keypair.Random()
+	require.NoError(t, err)
+
+	existing := make([]*keypair.Full, 0, 5)
+	for idx := 1; idx <= 5; idx++ {
+		kp, err := state.DeriveKeypair(feePayer, idx)
+		require.NoError(t, err)
+		existing = append(existing, kp)
+	}
+
+	st := &state.State{
+		FeePayerKP:   feePayer,
+		AccountKPs:   existing,
+		SACHolderKPs: existing[:2],
+	}
+	cfg := config.DefaultConfig()
+	cfg.NumberOfAccounts = 8
+	cfg.TargetRPS = 1
+	cfg.Duration = time.Second
+
+	plan, err := buildAccountProvisionPlan(cfg, st)
+	require.NoError(t, err)
+	require.Equal(t, 5, plan.existingCount)
+	require.Equal(t, 8, plan.targetCount)
+	require.Equal(t, 2, plan.existingHolders)
+	require.Equal(t, 8, plan.targetHolders)
+	require.Len(t, plan.promotedExistingKPs, 3)
+	require.Equal(t, existing[2].Address(), plan.promotedExistingKPs[0].Address())
+	require.Len(t, plan.newKPs, 3)
+	require.Len(t, plan.holderNewKPs, 3)
+	require.Empty(t, plan.passiveNewKPs)
+	for i, kp := range plan.newKPs {
+		idx, err := state.RecoverIndex(kp)
+		require.NoError(t, err)
+		require.Equal(t, 6+i, idx)
+	}
+}
 
 func TestPlanSACHolderRepairs(t *testing.T) {
 	issuer, err := keypair.Random()
