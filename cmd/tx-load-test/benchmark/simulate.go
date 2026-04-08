@@ -22,20 +22,6 @@ type simulatedInvocation struct {
 
 const simulateInvokeTimeout = 30 * time.Second
 
-func sourceAccountContractAuth(invokeArgs xdr.InvokeContractArgs) []xdr.SorobanAuthorizationEntry {
-	return []xdr.SorobanAuthorizationEntry{{
-		Credentials: xdr.SorobanCredentials{
-			Type: xdr.SorobanCredentialsTypeSorobanCredentialsSourceAccount,
-		},
-		RootInvocation: xdr.SorobanAuthorizedInvocation{
-			Function: xdr.SorobanAuthorizedFunction{
-				Type:       xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn,
-				ContractFn: &invokeArgs,
-			},
-		},
-	}}
-}
-
 func simulateInvokeContract(
 	st *state.State,
 	txSourceKP *keypair.Full,
