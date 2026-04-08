@@ -57,7 +57,6 @@ require (
 	github.com/rs/dnscache v0.0.0-20230804202142-fc85eb664529 // indirect
 	github.com/sagikazarmark/locafero v0.12.0 // indirect
 	github.com/segmentio/go-loggly v0.5.1-0.20171222203950-eb91657e62b2 // indirect
-	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.6.0 // indirect
@@ -78,7 +77,6 @@ require (
 	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa // indirect
 	golang.org/x/net v0.51.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
-	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
@@ -96,6 +94,8 @@ require (
 
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0
-	github.com/stellar/go-stellar-sdk v0.3.0
+	github.com/sirupsen/logrus v1.9.4
+	github.com/stellar/go-stellar-sdk v0.4.0
 	github.com/tsenart/vegeta/v12 v12.13.0
+	golang.org/x/sync v0.19.0
 )
