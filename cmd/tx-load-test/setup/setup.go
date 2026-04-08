@@ -26,12 +26,12 @@ func setupSteps(cfg config.Config) []Step {
 		assetsStep{},
 		accountsStep{},
 		sacStep{},
+		soroswapCoreStep{},
+		soroswapPoolsStep{},
+		liquidityStep{},
+		ozTokenStep{},
 	}
-	if cfg.Mode == config.ModeSoroswap { // before OZ to fail-fast
-		steps = append(steps, soroswapPoolsStep{})
-		steps = append(steps, liquidityStep{})
-	}
-	return append(steps, ozTokenStep{})
+	return steps
 }
 
 // Setup orchestrates the full ledger-state setup before benchmarking begins.

@@ -2,7 +2,6 @@ package state
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"sync"
@@ -22,6 +21,12 @@ import (
 // transaction we submit. 200 stroops gives comfortable headroom above the
 // network minimum (100 stroops) without being wasteful.
 const InclusionFee = 200
+
+// setupResourcePadFactor adds a small safety margin to simulation-derived
+// Soroban resources for one-off setup transactions. Standalone deployments can
+// be slightly under-estimated for create-contract flows, and setup is not
+// latency-sensitive enough for exact-minimum provisioning to matter.
+const setupResourcePadFactor = 1.10
 
 // TxTimeBoundSecs is the MaxTime window (in seconds from now) set on every
 // setup transaction. Stellar closes a ledger every ~5 s, so 300 s (60 ledgers)
@@ -185,25 +190,33 @@ func SubmitSorobanAndWait(
 	if err != nil {
 		return fmt.Errorf("load source account: %w", err)
 	}
+	seq, err := src.GetSequenceNumber()
+	if err != nil {
+		return fmt.Errorf("get source account sequence: %w", err)
+	}
 
-	// Provide a minimal placeholder SorobanTransactionData so the envelope is
-	// recognized as a Soroban (v1) transaction by the RPC simulator.
-	op.Ext = xdr.TransactionExt{V: 1, SorobanData: &xdr.SorobanTransactionData{}}
+	// Simulate invoke-contract calls without prefilled auth so the RPC can
+	// derive the full authorization tree for nested contract calls. For other
+	// host functions, keep the original auth shape so simulation matches the
+	// submitted transaction as closely as possible.
+	simOp := *op
+	simOp.Auth = nil
+	simOp.Ext = xdr.TransactionExt{V: 1, SorobanData: &xdr.SorobanTransactionData{}}
 
-	tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
-		SourceAccount:        src,
-		IncrementSequenceNum: true,
-		Operations:           []txnbuild.Operation{op},
+	simTx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+		SourceAccount:        &txnbuild.SimpleAccount{AccountID: signer.Address(), Sequence: seq + 1},
+		IncrementSequenceNum: false,
+		Operations:           []txnbuild.Operation{&simOp},
 		BaseFee:              InclusionFee,
 		Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(TxTimeBoundSecs)},
 	})
 	if err != nil {
-		return fmt.Errorf("build soroban transaction: %w", err)
+		return fmt.Errorf("build soroban simulation transaction: %w", err)
 	}
 
-	b64, err := tx.Base64()
+	b64, err := simTx.Base64()
 	if err != nil {
-		return fmt.Errorf("encode transaction: %w", err)
+		return fmt.Errorf("encode simulation transaction: %w", err)
 	}
 
 	simResp, err := rpc.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{
@@ -223,35 +236,27 @@ func SubmitSorobanAndWait(
 	if err := applySimulatedAuthEntries(op, simResp); err != nil {
 		return fmt.Errorf("parse simulation auth entries: %w", err)
 	}
+	padSorobanResources(&sorobanData, setupResourcePadFactor)
+	op.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
 	logSorobanSimulation(logger, op, simResp, sorobanData)
 
-	// Reconstruct the envelope with the accurate Soroban data and total fee.
-	xdrEnv := tx.ToXDR()
-	xdrEnv.V1.Tx.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
-	xdrEnv.V1.Tx.Fee = xdr.Uint32(int64(xdrEnv.V1.Tx.Fee) + simResp.MinResourceFee)
-
-	envelopeBytes, err := xdrEnv.MarshalBinary()
+	finalTx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+		SourceAccount:        &txnbuild.SimpleAccount{AccountID: signer.Address(), Sequence: seq + 1},
+		IncrementSequenceNum: false,
+		Operations:           []txnbuild.Operation{op},
+		BaseFee:              InclusionFee + int64(sorobanData.ResourceFee),
+		Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(TxTimeBoundSecs)},
+	})
 	if err != nil {
-		return fmt.Errorf("re-marshal updated transaction: %w", err)
+		return fmt.Errorf("build final soroban transaction: %w", err)
 	}
 
-	b64Updated := base64.StdEncoding.EncodeToString(envelopeBytes)
-
-	gt, err := txnbuild.TransactionFromXDR(b64Updated)
-	if err != nil {
-		return fmt.Errorf("parse updated transaction: %w", err)
-	}
-	updatedTx, ok := gt.Transaction()
-	if !ok {
-		return fmt.Errorf("updated XDR is not a v1 transaction")
-	}
-
-	updatedTx, err = updatedTx.Sign(networkPassphrase, signer)
+	finalTx, err = finalTx.Sign(networkPassphrase, signer)
 	if err != nil {
 		return fmt.Errorf("sign soroban transaction: %w", err)
 	}
 
-	b64Final, err := updatedTx.Base64()
+	b64Final, err := finalTx.Base64()
 	if err != nil {
 		return fmt.Errorf("marshal soroban transaction: %w", err)
 	}
@@ -259,6 +264,16 @@ func SubmitSorobanAndWait(
 		return fmt.Errorf("soroban transaction failed")
 	}
 	return nil
+}
+
+func padSorobanResources(data *xdr.SorobanTransactionData, factor float64) {
+	if data == nil || factor <= 1 {
+		return
+	}
+	data.Resources.Instructions = xdr.Uint32(float64(data.Resources.Instructions) * factor)
+	data.Resources.DiskReadBytes = xdr.Uint32(float64(data.Resources.DiskReadBytes) * factor)
+	data.Resources.WriteBytes = xdr.Uint32(float64(data.Resources.WriteBytes) * factor)
+	data.ResourceFee = xdr.Int64(float64(data.ResourceFee) * factor)
 }
 
 func applySimulatedAuthEntries(op *txnbuild.InvokeHostFunction, simResp protocol.SimulateTransactionResponse) error {
@@ -506,7 +521,8 @@ func logSorobanSimulation(
 		return
 	}
 	entry := logger.WithFields(log.F{
-		"resourceFee":      simResp.MinResourceFee,
+		"resourceFee":      sorobanData.ResourceFee,
+		"minResourceFee":   simResp.MinResourceFee,
 		"readOnlyKeys":     len(sorobanData.Resources.Footprint.ReadOnly),
 		"readWriteKeys":    len(sorobanData.Resources.Footprint.ReadWrite),
 		"instructions":     sorobanData.Resources.Instructions,

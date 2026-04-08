@@ -5,8 +5,10 @@ import (
 	"fmt"
 
 	"github.com/stellar/go-stellar-sdk/keypair"
+	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
+	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
@@ -42,7 +44,8 @@ func (accountsStep) Name() string { return "create participant accounts" }
 
 // Run creates cfg.NumberOfAccounts participant accounts. A formula-derived
 // prefix of the participant set forms the trustlined / asset-funded holder
-// subset and is:
+// superset needed to support every benchmark mode with the requested rates
+// and duration, and is:
 //   - Funded with cfg.BaseReserveXLM (covers 2 base reserves + 3 trustlines).
 //   - Given a trustline for each of the 3 benchmark assets.
 //   - Minted an initial balance of each asset from the fee-payer/issuer.
@@ -57,15 +60,28 @@ func (accountsStep) Run(ctx context.Context, logger *log.Entry, cfg config.Confi
 	existingCount := len(st.AccountKPs)
 	targetCount := cfg.NumberOfAccounts
 	existingHolders := len(st.SACHolderKPs)
+	fundingAmount := fmt.Sprintf("%.7f", cfg.BaseReserveXLM)
 	if existingHolders == 0 && existingCount > 0 {
 		st.SACHolderKPs = state.DefaultSACHolderKPs(st.AccountKPs)
 		existingHolders = len(st.SACHolderKPs)
 	}
-	computedTargetHolders := state.RecommendedHolderAccountCount(cfg, targetCount)
+	computedTargetHolders := state.RecommendedBenchmarkSupersetHolderAccountCount(cfg, targetCount)
 	targetHolders := max(existingHolders, computedTargetHolders)
 
 	if existingCount >= targetCount && existingHolders >= targetHolders {
-		logger.Infof("already have %d accounts (target %d) and %d holder accounts (target %d)  -- nothing to do", existingCount, targetCount, existingHolders, targetHolders)
+		if targetHolders > 0 {
+			st.SACHolderKPs = make([]*keypair.Full, targetHolders)
+			copy(st.SACHolderKPs, st.AccountKPs[:targetHolders])
+		} else {
+			st.SACHolderKPs = nil
+		}
+		if err := reconcileSACHolderAccounts(ctx, logger, cfg, st, st.SACHolderKPs, fundingAmount); err != nil {
+			return err
+		}
+		if err := reconcilePassiveAccounts(ctx, logger, cfg, st, passiveParticipantAccounts(st.AccountKPs, targetHolders), fundingAmount); err != nil {
+			return err
+		}
+		logger.Infof("already have %d accounts (target %d) and %d holder accounts (target %d)  -- reconciled ledger state", existingCount, targetCount, existingHolders, targetHolders)
 		st.PendingOZMintKPs = nil
 		return nil
 	}
@@ -112,8 +128,6 @@ func (accountsStep) Run(ctx context.Context, logger *log.Entry, cfg config.Confi
 		existingHolders, targetHolders, len(promotedExistingKPs), len(holderNewKPs), len(passiveNewKPs),
 	)
 
-	fundingAmount := fmt.Sprintf("%.7f", cfg.BaseReserveXLM)
-
 	// --- Promote existing passive accounts into holder accounts ---------
 	if len(promotedExistingKPs) > 0 {
 		if err := createSACHolderAccounts(ctx, logger, cfg, st, promotedExistingKPs, fundingAmount); err != nil {
@@ -152,8 +166,260 @@ func (accountsStep) Run(ctx context.Context, logger *log.Entry, cfg config.Confi
 	} else {
 		st.SACHolderKPs = nil
 	}
+	if err := reconcileSACHolderAccounts(ctx, logger, cfg, st, st.SACHolderKPs, fundingAmount); err != nil {
+		return err
+	}
+	if err := reconcilePassiveAccounts(ctx, logger, cfg, st, passiveParticipantAccounts(st.AccountKPs, targetHolders), fundingAmount); err != nil {
+		return err
+	}
 	st.PendingOZMintKPs = newKPs
 	return nil
+}
+
+func passiveParticipantAccounts(accountKPs []*keypair.Full, holderCount int) []*keypair.Full {
+	if holderCount < 0 {
+		holderCount = 0
+	}
+	if holderCount >= len(accountKPs) {
+		return nil
+	}
+	return accountKPs[holderCount:]
+}
+
+func reconcileSACHolderAccounts(
+	ctx context.Context,
+	logger *log.Entry,
+	cfg config.Config,
+	st *state.State,
+	holderKPs []*keypair.Full,
+	fundingAmount string,
+) error {
+	if len(holderKPs) == 0 {
+		return nil
+	}
+
+	balances, err := fetchSetupTrustlineBalances(ctx, st, holderKPs)
+	if err != nil {
+		return fmt.Errorf("accounts: fetch holder trustlines for reconciliation: %w", err)
+	}
+
+	trustlineRepairKPs, mintPlan := planSACHolderRepairs(st, holderKPs, balances)
+	if len(trustlineRepairKPs) == 0 && len(mintPlan) == 0 {
+		return nil
+	}
+	if len(trustlineRepairKPs) > 0 {
+		logger.Warnf("repairing %d holder accounts with missing trustlines", len(trustlineRepairKPs))
+		if err := createSACHolderAccounts(ctx, logger, cfg, st, trustlineRepairKPs, fundingAmount); err != nil {
+			return err
+		}
+	}
+	if len(mintPlan) > 0 {
+		logger.Warnf("repairing holder balances on %d accounts with missing or zero asset balances", len(mintPlan))
+		if err := mintMissingSACBalances(ctx, logger, cfg, st, holderKPs, mintPlan); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func reconcilePassiveAccounts(
+	ctx context.Context,
+	logger *log.Entry,
+	cfg config.Config,
+	st *state.State,
+	passiveKPs []*keypair.Full,
+	fundingAmount string,
+) error {
+	if len(passiveKPs) == 0 {
+		return nil
+	}
+
+	missingKPs := make([]*keypair.Full, 0)
+	for _, kp := range passiveKPs {
+		exists, err := state.AccountExists(ctx, st.RPCClient, kp.Address())
+		if err != nil {
+			return fmt.Errorf("accounts: check passive account %s: %w", kp.Address(), err)
+		}
+		if !exists {
+			missingKPs = append(missingKPs, kp)
+		}
+	}
+	if len(missingKPs) == 0 {
+		return nil
+	}
+
+	logger.Warnf("repairing %d passive accounts missing on-ledger", len(missingKPs))
+	return createPassiveAccounts(ctx, logger, cfg, st, missingKPs, fundingAmount)
+}
+
+func planSACHolderRepairs(
+	st *state.State,
+	holderKPs []*keypair.Full,
+	balances map[string]map[string]xdr.Int64,
+) ([]*keypair.Full, map[string][]txnbuild.CreditAsset) {
+	trustlineRepairKPs := make([]*keypair.Full, 0)
+	mintPlan := make(map[string][]txnbuild.CreditAsset)
+
+	for _, kp := range holderKPs {
+		accountBalances := balances[kp.Address()]
+		missingTrustline := false
+		for _, asset := range st.Assets {
+			balance, ok := accountBalances[asset.GetCode()]
+			if !ok {
+				missingTrustline = true
+			}
+			if !ok || balance == 0 {
+				mintPlan[kp.Address()] = append(mintPlan[kp.Address()], asset)
+			}
+		}
+		if missingTrustline {
+			trustlineRepairKPs = append(trustlineRepairKPs, kp)
+		}
+	}
+
+	return trustlineRepairKPs, mintPlan
+}
+
+func mintMissingSACBalances(
+	ctx context.Context,
+	logger *log.Entry,
+	cfg config.Config,
+	st *state.State,
+	holderKPs []*keypair.Full,
+	mintPlan map[string][]txnbuild.CreditAsset,
+) error {
+	if len(mintPlan) == 0 {
+		return nil
+	}
+
+	type mintOp struct {
+		address string
+		asset   txnbuild.CreditAsset
+	}
+	opsToSend := make([]mintOp, 0)
+	for _, kp := range holderKPs {
+		for _, asset := range mintPlan[kp.Address()] {
+			opsToSend = append(opsToSend, mintOp{address: kp.Address(), asset: asset})
+		}
+	}
+
+	if len(opsToSend) == 0 {
+		return nil
+	}
+
+	totalBatches := (len(opsToSend) + 99) / 100
+	for b := range totalBatches {
+		start := b * 100
+		end := min(start+100, len(opsToSend))
+		batch := opsToSend[start:end]
+
+		ops := make([]txnbuild.Operation, 0, len(batch))
+		for _, item := range batch {
+			ops = append(ops, &txnbuild.Payment{
+				Destination: item.address,
+				Asset:       item.asset,
+				Amount:      initialAccountTokenBalance,
+			})
+		}
+
+		logger.Infof("repair mint batch %d/%d (%d payments)", b+1, totalBatches, len(batch))
+		if err := state.SubmitAndWait(ctx, logger, st.RPCClient, cfg.NetworkPassphrase, st.FeePayerKP, state.InclusionFee, ops); err != nil {
+			return fmt.Errorf("accounts: repair mint batch %d: %w", b+1, err)
+		}
+	}
+	return nil
+}
+
+func fetchSetupTrustlineBalances(
+	ctx context.Context,
+	st *state.State,
+	accounts []*keypair.Full,
+) (map[string]map[string]xdr.Int64, error) {
+	type keyMeta struct{ account, assetCode string }
+
+	keys := make([]string, 0, len(accounts)*len(st.Assets))
+	metas := make([]keyMeta, 0, len(accounts)*len(st.Assets))
+	for _, kp := range accounts {
+		accountID, err := xdr.AddressToAccountId(kp.Address())
+		if err != nil {
+			return nil, fmt.Errorf("parse account %s: %w", kp.Address(), err)
+		}
+		for _, asset := range st.Assets {
+			ax, err := asset.ToXDR()
+			if err != nil {
+				return nil, fmt.Errorf("asset %s to XDR: %w", asset.GetCode(), err)
+			}
+			lk := xdr.LedgerKey{
+				Type: xdr.LedgerEntryTypeTrustline,
+				TrustLine: &xdr.LedgerKeyTrustLine{
+					AccountId: accountID,
+					Asset: xdr.TrustLineAsset{
+						Type:       ax.Type,
+						AlphaNum4:  ax.AlphaNum4,
+						AlphaNum12: ax.AlphaNum12,
+					},
+				},
+			}
+			b64, err := xdr.MarshalBase64(lk)
+			if err != nil {
+				return nil, fmt.Errorf("marshal trustline key: %w", err)
+			}
+			keys = append(keys, b64)
+			metas = append(metas, keyMeta{kp.Address(), asset.GetCode()})
+		}
+	}
+
+	entries, err := fetchSetupLedgerEntriesByKey(ctx, st.RPCClient, keys)
+	if err != nil {
+		return nil, fmt.Errorf("get trustline entries: %w", err)
+	}
+
+	keyToMeta := make(map[string]keyMeta, len(keys))
+	for i, key := range keys {
+		keyToMeta[key] = metas[i]
+	}
+
+	result := make(map[string]map[string]xdr.Int64)
+	for key, entry := range entries {
+		meta, ok := keyToMeta[key]
+		if !ok {
+			continue
+		}
+		var data xdr.LedgerEntryData
+		if err := xdr.SafeUnmarshalBase64(entry.DataXDR, &data); err != nil {
+			continue
+		}
+		if data.TrustLine == nil {
+			continue
+		}
+		if result[meta.account] == nil {
+			result[meta.account] = make(map[string]xdr.Int64)
+		}
+		result[meta.account][meta.assetCode] = data.TrustLine.Balance
+	}
+	return result, nil
+}
+
+func fetchSetupLedgerEntriesByKey(
+	ctx context.Context,
+	rpc interface {
+		GetLedgerEntries(context.Context, protocol.GetLedgerEntriesRequest) (protocol.GetLedgerEntriesResponse, error)
+	},
+	keys []string,
+) (map[string]protocol.LedgerEntryResult, error) {
+	const batchSize = 100
+	entries := make(map[string]protocol.LedgerEntryResult, len(keys))
+	for start := 0; start < len(keys); start += batchSize {
+		end := min(start+batchSize, len(keys))
+		resp, err := rpc.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{Keys: keys[start:end]})
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range resp.Entries {
+			entries[entry.KeyXDR] = entry
+		}
+	}
+	return entries, nil
 }
 
 // createSACHolderAccounts provisions the SAC-active participant subset via the

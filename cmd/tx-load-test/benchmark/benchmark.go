@@ -51,6 +51,12 @@ var modes = map[config.BenchmarkMode]Mode{
 	config.ModeSoroswap:    soroswapMode{},
 }
 
+var supportedModes = []config.BenchmarkMode{
+	config.ModeSACTransfer,
+	config.ModeOZTransfer,
+	config.ModeSoroswap,
+}
+
 type workload struct {
 	label       string
 	targetRPS   int
@@ -93,6 +99,19 @@ func ValidateConfig(cfg config.Config) error {
 	return nil
 }
 
+// ValidateSetupConfig checks that a single setup run can support every
+// benchmark mode for the requested rates, duration, and account pool size.
+func ValidateSetupConfig(cfg config.Config) error {
+	for _, mode := range supportedModes {
+		modeCfg := cfg
+		modeCfg.Mode = mode
+		if err := ValidateConfig(modeCfg); err != nil {
+			return fmt.Errorf("benchmark shape is not valid for mode=%s: %w", mode, err)
+		}
+	}
+	return nil
+}
+
 func holderAccountsForBenchmark(cfg config.Config, st *state.State) ([]*keypair.Full, error) {
 	holderRequired := state.HolderAccountCount(cfg)
 	if holderRequired == 0 {
@@ -116,14 +135,15 @@ func partitionSourceAccounts(cfg config.Config, st *state.State) ([]*keypair.Ful
 	simpleSourceCount := state.SimplePaymentSourceAccountCount(cfg)
 	partitionIdx := len(st.AccountKPs) - simpleSourceCount
 	simpleSources := st.AccountKPs[partitionIdx:]
-	sorobanSources := st.AccountKPs[:partitionIdx]
+	sorobanPool := st.AccountKPs[:partitionIdx]
 	sorobanRequired := state.SorobanSourceAccountCount(cfg)
-	if len(sorobanSources) < sorobanRequired {
+	if len(sorobanPool) < sorobanRequired {
 		return nil, nil, fmt.Errorf(
 			"need at least %d Soroban tx-source accounts after reserving %d simple-payment sources, got %d  -- rerun setup with more --accounts or lower the configured rates/duration",
-			sorobanRequired, simpleSourceCount, len(sorobanSources),
+			sorobanRequired, simpleSourceCount, len(sorobanPool),
 		)
 	}
+	sorobanSources := sorobanPool[:sorobanRequired]
 
 	return simpleSources, sorobanSources, nil
 }
