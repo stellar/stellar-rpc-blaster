@@ -250,3 +250,31 @@ func TestValidateRPCNetwork(t *testing.T) {
 		require.Error(t, err)
 	})
 }
+
+func TestLoadExistingSetupStateMissingFileReturnsNil(t *testing.T) {
+	dir := t.TempDir()
+	st, err := LoadExistingSetupState(context.Background(), dir+"/missing.json", "", "", network.TestNetworkPassphrase)
+	require.NoError(t, err)
+	require.Nil(t, st)
+}
+
+func TestLoadRuntimeStateUsesPersistedRPCURLWhenOverrideEmpty(t *testing.T) {
+	base := mustRandomKeypair(t)
+	srv := newGetNetworkServer(t, network.TestNetworkPassphrase)
+	defer srv.Close()
+
+	ps := &PersistedState{
+		RPCURL:            srv.URL,
+		NetworkPassphrase: network.TestNetworkPassphrase,
+		FeePayerHash:      HashSeed(base.Seed()),
+		AccountIndices:    []int{1},
+		Assets:            [3]string{"BLTA", "BLTB", "BLTC"},
+	}
+	stateFile := t.TempDir() + "/state.json"
+	require.NoError(t, ps.Save(stateFile))
+
+	loaded, err := LoadRuntimeState(context.Background(), RuntimePhaseBench, stateFile, base.Seed(), "")
+	require.NoError(t, err)
+	require.Equal(t, srv.URL, loaded.RPCURL)
+	require.NotNil(t, loaded.Live)
+}

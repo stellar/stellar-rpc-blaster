@@ -6,12 +6,12 @@ import (
 	"time"
 
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
-	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
+	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
 
@@ -42,21 +42,21 @@ func (soroswapPoolsStep) Run(ctx context.Context, logger *log.Entry, cfg config.
 		return fmt.Errorf("soroswap core contracts are not configured")
 	}
 
-	factoryID, err := decodeContractID(factoryContract)
+	factoryID, err := ledger.DecodeContractID(factoryContract)
 	if err != nil {
 		return fmt.Errorf("decode soroswap factory contract ID: %w", err)
 	}
-	routerID, err := decodeContractID(routerContract)
+	routerID, err := ledger.DecodeContractID(routerContract)
 	if err != nil {
 		return fmt.Errorf("decode soroswap router contract ID: %w", err)
 	}
 
-	if ok, err := contractInstanceExists(ctx, st.RPCClient, factoryID); err != nil {
+	if ok, err := ledger.ContractInstanceExists(ctx, st.RPCClient, factoryID); err != nil {
 		return fmt.Errorf("check soroswap factory contract: %w", err)
 	} else if !ok {
 		return fmt.Errorf("soroswap factory contract %s is missing on-ledger", factoryContract)
 	}
-	if ok, err := contractInstanceExists(ctx, st.RPCClient, routerID); err != nil {
+	if ok, err := ledger.ContractInstanceExists(ctx, st.RPCClient, routerID); err != nil {
 		return fmt.Errorf("check soroswap router contract: %w", err)
 	} else if !ok {
 		return fmt.Errorf("soroswap router contract %s is missing on-ledger", routerContract)
@@ -118,11 +118,11 @@ func ensureSoroswapPair(
 	if err != nil {
 		return "", false, fmt.Errorf("fetch pair address: %w", err)
 	}
-	pairID, err := decodeContractID(pairContract)
+	pairID, err := ledger.DecodeContractID(pairContract)
 	if err != nil {
 		return "", false, fmt.Errorf("decode pair contract ID: %w", err)
 	}
-	if ok, err := contractInstanceExists(ctx, st.RPCClient, pairID); err != nil {
+	if ok, err := ledger.ContractInstanceExists(ctx, st.RPCClient, pairID); err != nil {
 		return "", false, fmt.Errorf("check pair contract instance: %w", err)
 	} else if !ok {
 		return "", false, fmt.Errorf("pair contract %s not found on-ledger after provisioning", pairContract)
@@ -176,7 +176,7 @@ func createSoroswapPair(
 	tokenA string,
 	tokenB string,
 ) error {
-	factoryID, err := decodeContractID(factoryContract)
+	factoryID, err := ledger.DecodeContractID(factoryContract)
 	if err != nil {
 		return err
 	}
@@ -209,7 +209,7 @@ func simulateReadonlyContractCall(
 	functionName string,
 	args xdr.ScVec,
 ) (xdr.ScVal, error) {
-	contractID, err := decodeContractID(contractIDStr)
+	contractID, err := ledger.DecodeContractID(contractIDStr)
 	if err != nil {
 		return xdr.ScVal{}, err
 	}
@@ -286,21 +286,11 @@ func scValContractAddress(value xdr.ScVal) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("expected contract address return value, got %s", address.Type.String())
 	}
-	encoded, err := strkey.Encode(strkey.VersionByteContract, contractID[:])
+	encoded, err := ledger.EncodeContractID(contractID)
 	if err != nil {
 		return "", fmt.Errorf("encode contract address: %w", err)
 	}
 	return encoded, nil
-}
-
-func decodeContractID(contractIDStr string) (xdr.ContractId, error) {
-	raw, err := strkey.Decode(strkey.VersionByteContract, contractIDStr)
-	if err != nil {
-		return xdr.ContractId{}, err
-	}
-	var contractID xdr.ContractId
-	copy(contractID[:], raw)
-	return contractID, nil
 }
 
 func resolvedSoroswapContracts(cfg config.Config, st *state.State) (string, string) {
@@ -393,7 +383,7 @@ func addSoroswapLiquidity(
 	tokenB string,
 	amount int64,
 ) error {
-	routerID, err := decodeContractID(routerContract)
+	routerID, err := ledger.DecodeContractID(routerContract)
 	if err != nil {
 		return fmt.Errorf("decode router contract ID: %w", err)
 	}

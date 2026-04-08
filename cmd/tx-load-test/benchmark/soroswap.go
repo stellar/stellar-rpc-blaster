@@ -12,9 +12,9 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/keypair"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
-	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
+	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
@@ -64,27 +64,15 @@ func (soroswapMode) VerifyReady(ctx context.Context, st *state.State) error {
 	if len(holderAccounts) == 0 {
 		return fmt.Errorf("need trustlined participant accounts for Soroswap benchmark -- rerun setup")
 	}
-	if err := verifyHolderTrustlinesReady(ctx, st, holderAccounts, "Soroswap"); err != nil {
+	if err := verifyTrustlineBalancesReady(ctx, st, holderAccounts, "Soroswap"); err != nil {
 		return err
 	}
 
-	factoryID, err := decodeContractID(st.SoroswapFactoryContract)
-	if err != nil {
-		return fmt.Errorf("decode soroswap factory contract ID: %w", err)
+	if _, err := requireReadyContract(ctx, st, "soroswap factory", st.SoroswapFactoryContract); err != nil {
+		return err
 	}
-	routerID, err := decodeContractID(st.SoroswapRouterContract)
-	if err != nil {
-		return fmt.Errorf("decode soroswap router contract ID: %w", err)
-	}
-	if ok, err := contractInstanceExists(ctx, st.RPCClient, factoryID); err != nil {
-		return fmt.Errorf("check soroswap factory contract: %w", err)
-	} else if !ok {
-		return fmt.Errorf("soroswap factory contract %s is missing on-ledger -- rerun setup", st.SoroswapFactoryContract)
-	}
-	if ok, err := contractInstanceExists(ctx, st.RPCClient, routerID); err != nil {
-		return fmt.Errorf("check soroswap router contract: %w", err)
-	} else if !ok {
-		return fmt.Errorf("soroswap router contract %s is missing on-ledger -- rerun setup", st.SoroswapRouterContract)
+	if _, err := requireReadyContract(ctx, st, "soroswap router", st.SoroswapRouterContract); err != nil {
+		return err
 	}
 	reportedFactory, err := benchmarkSoroswapGetFactory(ctx, st, st.SoroswapRouterContract)
 	if err != nil {
@@ -96,17 +84,8 @@ func (soroswapMode) VerifyReady(ctx context.Context, st *state.State) error {
 
 	for i, pair := range soroswapBenchmarkPairs {
 		pairContract := st.SoroswapPairContracts[i]
-		if pairContract == "" {
-			return fmt.Errorf("soroswap pair[%d] contract ID is empty -- rerun setup", i)
-		}
-		pairID, err := decodeContractID(pairContract)
-		if err != nil {
-			return fmt.Errorf("decode soroswap pair[%d] contract ID: %w", i, err)
-		}
-		if ok, err := contractInstanceExists(ctx, st.RPCClient, pairID); err != nil {
-			return fmt.Errorf("check soroswap pair[%d] contract: %w", i, err)
-		} else if !ok {
-			return fmt.Errorf("soroswap pair[%d] contract %s is missing on-ledger -- rerun setup", i, pairContract)
+		if _, err := requireReadyContract(ctx, st, fmt.Sprintf("soroswap pair[%d]", i), pairContract); err != nil {
+			return err
 		}
 
 		reserveA, err := benchmarkSoroswapTokenBalance(ctx, st, st.SACs[pair[0]], pairContract)
@@ -117,7 +96,7 @@ func (soroswapMode) VerifyReady(ctx context.Context, st *state.State) error {
 		if err != nil {
 			return fmt.Errorf("fetch soroswap pair[%d] reserve B: %w", i, err)
 		}
-		if !hasPositiveBalance(reserveA) || !hasPositiveBalance(reserveB) {
+		if !ledger.HasPositiveI128(reserveA) || !ledger.HasPositiveI128(reserveB) {
 			return fmt.Errorf("soroswap pair[%d] is not seeded with positive reserves -- rerun setup", i)
 		}
 	}
@@ -135,27 +114,19 @@ func (soroswapMode) NewTargeter(ctx context.Context, rpcURL string, st *state.St
 	if len(st.SoroswapPairContracts) != len(soroswapBenchmarkPairs) {
 		return nil, nil, fmt.Errorf("need %d Soroswap pair contracts, got %d -- rerun setup", len(soroswapBenchmarkPairs), len(st.SoroswapPairContracts))
 	}
-	if err := verifyHolderTrustlinesReady(ctx, st, txSourceAccounts, "Soroswap"); err != nil {
+	if err := verifyTrustlineBalancesReady(ctx, st, txSourceAccounts, "Soroswap"); err != nil {
 		return nil, nil, err
 	}
 
-	routerID, err := decodeContractID(st.SoroswapRouterContract)
+	routerID, err := ledger.DecodeContractID(st.SoroswapRouterContract)
 	if err != nil {
 		return nil, nil, fmt.Errorf("decode soroswap router contract ID: %w", err)
 	}
 
-	seqBase, err := loadSeqNums(ctx, st, txSourceAccounts)
+	seqs, err := newSequenceManager(ctx, st, txSourceAccounts, "Soroswap tx-source")
 	if err != nil {
-		return nil, nil, fmt.Errorf("load Soroswap tx-source sequence numbers: %w", err)
+		return nil, nil, err
 	}
-	seqCounters := make([]atomic.Int64, len(txSourceAccounts))
-	for i, base := range seqBase {
-		seqCounters[i].Store(base)
-	}
-	resetSeq := SequenceResetFunc(func(jsonRPCID int64) {
-		srcIdx := int((jsonRPCID - 1) % int64(len(txSourceAccounts)))
-		seqCounters[srcIdx].Add(-1)
-	})
 
 	deadline := uint64(time.Now().Add(soroswapSwapDeadlineWindow).Unix())
 	templates := make([]soroswapSwapTemplate, 0, len(soroswapBenchmarkPairs)*2)
@@ -195,7 +166,7 @@ func (soroswapMode) NewTargeter(ctx context.Context, rpcURL string, st *state.St
 		srcIdx := int(slot % int64(len(txSourceAccounts)))
 		templateIdx := int((slot / int64(len(txSourceAccounts))) % int64(len(templates)))
 		txSourceKP := txSourceAccounts[srcIdx]
-		seq := seqCounters[srcIdx].Add(1)
+		seq := seqs.Next(srcIdx)
 		tmpl := templates[templateIdx]
 
 		invokeArgs, err := rewriteInvokeContractAccount(tmpl.invokeArgs, tmpl.traderAddress, txSourceKP.Address())
@@ -266,7 +237,7 @@ func (soroswapMode) NewTargeter(ctx context.Context, rpcURL string, st *state.St
 		t.Body = body
 		t.Header = http.Header{"Content-Type": {"application/json"}}
 		return nil
-	}, resetSeq, nil
+	}, seqs.ResetFunc(), nil
 }
 
 func presimulateSoroswapSwap(
@@ -282,14 +253,10 @@ func presimulateSoroswapSwap(
 	if err != nil {
 		return soroswapSwapTemplate{}, err
 	}
-	sim, err := simulateInvokeContractDetailed(st, trader, trader.Address(), invokeArgs)
+	sim, err := simulatePaddedInvokeContractDetailed(st, trader, trader.Address(), invokeArgs)
 	if err != nil {
 		return soroswapSwapTemplate{}, err
 	}
-	sim.resources.Instructions = xdr.Uint32(float64(sim.resources.Instructions) * resourcePadFactor)
-	sim.resources.DiskReadBytes = xdr.Uint32(float64(sim.resources.DiskReadBytes) * resourcePadFactor)
-	sim.resources.WriteBytes = xdr.Uint32(float64(sim.resources.WriteBytes) * resourcePadFactor)
-	sim.resourceFee = xdr.Int64(float64(sim.resourceFee) * resourcePadFactor)
 
 	return soroswapSwapTemplate{
 		traderAddress: trader.Address(),
@@ -375,7 +342,7 @@ func benchmarkSimulateReadonlyContractCall(
 	functionName string,
 	args xdr.ScVec,
 ) (xdr.ScVal, error) {
-	contractID, err := decodeContractID(contractIDStr)
+	contractID, err := ledger.DecodeContractID(contractIDStr)
 	if err != nil {
 		return xdr.ScVal{}, err
 	}
@@ -429,7 +396,7 @@ func benchmarkAddressScVal(address string) (xdr.ScVal, error) {
 			Address: &xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeAccount, AccountId: &accountID},
 		}, nil
 	}
-	contractID, err := decodeContractID(address)
+	contractID, err := ledger.DecodeContractID(address)
 	if err != nil {
 		return xdr.ScVal{}, fmt.Errorf("decode address %s: not an account or contract address", address)
 	}
@@ -448,7 +415,7 @@ func benchmarkScValContractAddress(value xdr.ScVal) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("expected contract address return value, got %s", address.Type.String())
 	}
-	encoded, err := strkey.Encode(strkey.VersionByteContract, contractID[:])
+	encoded, err := ledger.EncodeContractID(contractID)
 	if err != nil {
 		return "", fmt.Errorf("encode contract address: %w", err)
 	}

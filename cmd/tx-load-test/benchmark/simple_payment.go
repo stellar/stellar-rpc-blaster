@@ -20,38 +20,7 @@ import (
 const simplePaymentAmount = "0.0000001"
 
 func verifyHolderTrustlinesReady(ctx context.Context, st *state.State, holderAccounts []*keypair.Full, label string) error {
-	balances, err := fetchTrustlineBalances(ctx, st, holderAccounts)
-	if err != nil {
-		return fmt.Errorf("fetch %s holder trustlines: %w", label, err)
-	}
-
-	missingCount := 0
-	examples := make([]string, 0, 5)
-	for _, kp := range holderAccounts {
-		accountBalances := balances[kp.Address()]
-		for _, asset := range st.Assets {
-			balance, ok := accountBalances[asset.GetCode()]
-			if ok && balance > 0 {
-				continue
-			}
-			missingCount++
-			if len(examples) < cap(examples) {
-				reason := "missing trustline"
-				if ok && balance == 0 {
-					reason = "zero balance"
-				}
-				examples = append(examples, fmt.Sprintf("%s %s (%s)", kp.Address(), asset.GetCode(), reason))
-			}
-		}
-	}
-	if missingCount > 0 {
-		return fmt.Errorf(
-			"%s benchmark state incomplete: %d holder trustlines/balances missing or zero; examples: %s -- rerun setup",
-			label, missingCount, formatExamples(examples),
-		)
-	}
-
-	return nil
+	return verifyTrustlineBalancesReady(ctx, st, holderAccounts, label)
 }
 
 func newSimplePaymentTargeter(ctx context.Context, rpcURL string, st *state.State, sourceAccounts, recipientAccounts []*keypair.Full) (vegeta.Targeter, SequenceResetFunc, error) {
@@ -62,20 +31,10 @@ func newSimplePaymentTargeter(ctx context.Context, rpcURL string, st *state.Stat
 		return nil, nil, fmt.Errorf("need at least 2 participant accounts for simple payments, got %d", len(recipientAccounts))
 	}
 
-	seqBase, err := loadSeqNums(ctx, st, sourceAccounts)
+	seqs, err := newSequenceManager(ctx, st, sourceAccounts, "simple-payment source")
 	if err != nil {
-		return nil, nil, fmt.Errorf("load simple-payment source sequence numbers: %w", err)
+		return nil, nil, err
 	}
-
-	seqCounters := make([]atomic.Int64, len(sourceAccounts))
-	for i, base := range seqBase {
-		seqCounters[i].Store(base)
-	}
-
-	resetSeq := SequenceResetFunc(func(jsonRPCID int64) {
-		srcIdx := int((jsonRPCID - 1) % int64(len(sourceAccounts)))
-		seqCounters[srcIdx].Add(-1)
-	})
 
 	var slotCounter int64
 	networkPassphrase := st.NetworkPassphrase
@@ -83,7 +42,7 @@ func newSimplePaymentTargeter(ctx context.Context, rpcURL string, st *state.Stat
 	return func(t *vegeta.Target) error {
 		slot := atomic.AddInt64(&slotCounter, 1) - 1
 		srcIdx := int(slot % int64(len(sourceAccounts)))
-		seq := seqCounters[srcIdx].Add(1)
+		seq := seqs.Next(srcIdx)
 
 		srcKP := sourceAccounts[srcIdx]
 		ops := make([]txnbuild.Operation, 0, state.SimplePaymentOpsPerTransaction)
@@ -140,5 +99,5 @@ func newSimplePaymentTargeter(ctx context.Context, rpcURL string, st *state.Stat
 		t.Body = body
 		t.Header = http.Header{"Content-Type": {"application/json"}}
 		return nil
-	}, resetSeq, nil
+	}, seqs.ResetFunc(), nil
 }

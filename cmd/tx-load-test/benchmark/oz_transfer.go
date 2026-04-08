@@ -12,9 +12,9 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/keypair"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
-	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
+	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
@@ -31,19 +31,12 @@ func (ozTransferMode) VerifyReady(ctx context.Context, st *state.State) error {
 		return fmt.Errorf("OZ token contract ID is empty -- run setup first")
 	}
 
-	contractID, err := decodeContractID(st.OZTokenContract)
+	contractID, err := requireReadyContract(ctx, st, "OZ token", st.OZTokenContract)
 	if err != nil {
-		return fmt.Errorf("decode OZ token contract ID: %w", err)
-	}
-	exists, err := contractInstanceExists(ctx, st.RPCClient, contractID)
-	if err != nil {
-		return fmt.Errorf("check OZ token contract instance: %w", err)
-	}
-	if !exists {
-		return fmt.Errorf("OZ token contract %s is missing on-ledger -- rerun setup", st.OZTokenContract)
+		return err
 	}
 
-	balances, err := fetchOZBalances(ctx, st, contractID)
+	balances, err := ledger.FetchOZBalances(ctx, st.RPCClient, contractID, st.AccountKPs, readinessBatchSize)
 	if err != nil {
 		return fmt.Errorf("fetch OZ balances: %w", err)
 	}
@@ -52,7 +45,7 @@ func (ozTransferMode) VerifyReady(ctx context.Context, st *state.State) error {
 	examples := make([]string, 0, 5)
 	for _, kp := range st.AccountKPs {
 		balance, ok := balances[kp.Address()]
-		if ok && hasPositiveBalance(balance) {
+		if ok && ledger.HasPositiveI128(balance) {
 			continue
 		}
 		missingCount++
@@ -82,37 +75,21 @@ func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *sta
 		return nil, nil, fmt.Errorf("OZ token contract ID is empty -- run setup first")
 	}
 
-	raw, err := strkey.Decode(strkey.VersionByteContract, state.OZTokenContract)
+	contractID, err := ledger.DecodeContractID(state.OZTokenContract)
 	if err != nil {
 		return nil, nil, fmt.Errorf("decode OZ token contract ID: %w", err)
 	}
-	var contractID xdr.ContractId
-	copy(contractID[:], raw)
 
 	simResources, simResourceFee, simFootprintTemplate, err := presimulateOZTransfer(state, contractID, txSourceAccounts[0], txSourceAccounts[1])
 	if err != nil {
 		return nil, nil, fmt.Errorf("pre-simulate OZ transfer: %w", err)
 	}
-	simResources.Instructions = xdr.Uint32(float64(simResources.Instructions) * resourcePadFactor)
-	simResources.DiskReadBytes = xdr.Uint32(float64(simResources.DiskReadBytes) * resourcePadFactor)
-	simResources.WriteBytes = xdr.Uint32(float64(simResources.WriteBytes) * resourcePadFactor)
-	simResourceFee = xdr.Int64(float64(simResourceFee) * resourcePadFactor)
 
 	n := len(txSourceAccounts)
-	seqBase, err := loadSeqNums(ctx, state, txSourceAccounts)
+	seqs, err := newSequenceManager(ctx, state, txSourceAccounts, "participant")
 	if err != nil {
-		return nil, nil, fmt.Errorf("load participant sequence numbers: %w", err)
+		return nil, nil, err
 	}
-
-	seqCounters := make([]atomic.Int64, n)
-	for i, base := range seqBase {
-		seqCounters[i].Store(base)
-	}
-
-	resetSeq := SequenceResetFunc(func(jsonRPCID int64) {
-		srcIdx := int((jsonRPCID - 1) % int64(n))
-		seqCounters[srcIdx].Add(-1)
-	})
 
 	networkPassphrase := state.NetworkPassphrase
 	var slotCounter int64
@@ -120,7 +97,7 @@ func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *sta
 	return func(t *vegeta.Target) error {
 		slot := atomic.AddInt64(&slotCounter, 1) - 1
 		srcIdx := int(slot % int64(n))
-		seq := seqCounters[srcIdx].Add(1)
+		seq := seqs.Next(srcIdx)
 
 		dstIdx := rand.IntN(n - 1)
 		if dstIdx >= srcIdx {
@@ -243,7 +220,7 @@ func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *sta
 		t.Body = body
 		t.Header = http.Header{"Content-Type": {"application/json"}}
 		return nil
-	}, resetSeq, nil
+	}, seqs.ResetFunc(), nil
 }
 
 func presimulateOZTransfer(
@@ -288,7 +265,7 @@ func presimulateOZTransfer(
 		},
 	}
 
-	return simulateInvokeContract(state, srcKP, srcKP.Address(), invokeArgs)
+	return simulatePaddedInvokeContract(state, srcKP, srcKP.Address(), invokeArgs)
 }
 
 func buildOZFootprintFromTemplate(
@@ -296,11 +273,11 @@ func buildOZFootprintFromTemplate(
 	contractID xdr.ContractId,
 	srcAddress, dstAddress string,
 ) (xdr.LedgerFootprint, error) {
-	srcKey, err := ozBalanceLedgerKey(contractID, srcAddress)
+	srcKey, err := ledger.OZBalanceLedgerKey(contractID, srcAddress)
 	if err != nil {
 		return xdr.LedgerFootprint{}, fmt.Errorf("src balance key: %w", err)
 	}
-	dstKey, err := ozBalanceLedgerKey(contractID, dstAddress)
+	dstKey, err := ledger.OZBalanceLedgerKey(contractID, dstAddress)
 	if err != nil {
 		return xdr.LedgerFootprint{}, fmt.Errorf("dst balance key: %w", err)
 	}
@@ -310,35 +287,6 @@ func buildOZFootprintFromTemplate(
 		ReadWrite: []xdr.LedgerKey{
 			srcKey,
 			dstKey,
-		},
-	}, nil
-}
-
-func ozBalanceLedgerKey(contractID xdr.ContractId, accountAddress string) (xdr.LedgerKey, error) {
-	accountID, err := xdr.AddressToAccountId(accountAddress)
-	if err != nil {
-		return xdr.LedgerKey{}, err
-	}
-
-	balanceVariant := xdr.ScSymbol("Balance")
-	balanceKeyVec := xdr.ScVec{
-		{Type: xdr.ScValTypeScvSymbol, Sym: &balanceVariant},
-		{Type: xdr.ScValTypeScvAddress, Address: &xdr.ScAddress{
-			Type:      xdr.ScAddressTypeScAddressTypeAccount,
-			AccountId: &accountID,
-		}},
-	}
-	balanceKeyRef := &balanceKeyVec
-
-	return xdr.LedgerKey{
-		Type: xdr.LedgerEntryTypeContractData,
-		ContractData: &xdr.LedgerKeyContractData{
-			Contract: xdr.ScAddress{
-				Type:       xdr.ScAddressTypeScAddressTypeContract,
-				ContractId: &contractID,
-			},
-			Key:        xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &balanceKeyRef},
-			Durability: xdr.ContractDataDurabilityPersistent,
 		},
 	}, nil
 }

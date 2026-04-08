@@ -8,13 +8,13 @@ import (
 	"strings"
 
 	"github.com/stellar/go-stellar-sdk/keypair"
-	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
+	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
 
@@ -56,7 +56,7 @@ func (ozTokenStep) Run(ctx context.Context, logger *log.Entry, cfg config.Config
 		return fmt.Errorf("derive OZ token contract ID: %w", err)
 	}
 
-	exists, err := contractInstanceExists(ctx, st.RPCClient, contractID)
+	exists, err := ledger.ContractInstanceExists(ctx, st.RPCClient, contractID)
 	if err != nil {
 		return fmt.Errorf("check OZ token existence: %w", err)
 	}
@@ -300,92 +300,20 @@ func accountsMissingOZBalances(
 	contractID xdr.ContractId,
 	accountKPs []*keypair.Full,
 ) ([]*keypair.Full, error) {
-	keys := make([]string, 0, len(accountKPs))
-	keyToKP := make(map[string]*keypair.Full, len(accountKPs))
-	for _, kp := range accountKPs {
-		ledgerKey, err := ozBalanceLedgerKey(contractID, kp.Address())
-		if err != nil {
-			return nil, fmt.Errorf("build balance key for %s: %w", kp.Address(), err)
-		}
-		b64, err := xdr.MarshalBase64(ledgerKey)
-		if err != nil {
-			return nil, fmt.Errorf("marshal balance key for %s: %w", kp.Address(), err)
-		}
-		keys = append(keys, b64)
-		keyToKP[b64] = kp
-	}
-
-	entries := make(map[string]protocol.LedgerEntryResult, len(keys))
-	for start := 0; start < len(keys); start += ozBalanceCheckBatchSize {
-		end := min(start+ozBalanceCheckBatchSize, len(keys))
-		resp, err := st.RPCClient.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{Keys: keys[start:end]})
-		if err != nil {
-			return nil, fmt.Errorf("get OZ balance entries: %w", err)
-		}
-		for _, entry := range resp.Entries {
-			entries[entry.KeyXDR] = entry
-		}
+	balances, err := ledger.FetchOZBalances(ctx, st.RPCClient, contractID, accountKPs, ozBalanceCheckBatchSize)
+	if err != nil {
+		return nil, err
 	}
 
 	missing := make([]*keypair.Full, 0)
-	for _, key := range keys {
-		kp := keyToKP[key]
-		entry, ok := entries[key]
-		if !ok {
-			missing = append(missing, kp)
-			continue
-		}
-
-		var data xdr.LedgerEntryData
-		if err := xdr.SafeUnmarshalBase64(entry.DataXDR, &data); err != nil {
-			return nil, fmt.Errorf("decode OZ balance entry for %s: %w", kp.Address(), err)
-		}
-		if data.ContractData == nil {
-			return nil, fmt.Errorf("OZ balance entry for %s is not contract data", kp.Address())
-		}
-		balance, ok := data.ContractData.Val.GetI128()
-		if !ok {
-			return nil, fmt.Errorf("OZ balance entry for %s is not i128", kp.Address())
-		}
-		if !hasPositiveI128(balance) {
+	for _, kp := range accountKPs {
+		balance, ok := balances[kp.Address()]
+		if !ok || !ledger.HasPositiveI128(balance) {
 			missing = append(missing, kp)
 		}
 	}
 
 	return missing, nil
-}
-
-func ozBalanceLedgerKey(contractID xdr.ContractId, accountAddress string) (xdr.LedgerKey, error) {
-	accountID, err := xdr.AddressToAccountId(accountAddress)
-	if err != nil {
-		return xdr.LedgerKey{}, err
-	}
-
-	balanceVariant := xdr.ScSymbol("Balance")
-	balanceKeyVec := xdr.ScVec{
-		{Type: xdr.ScValTypeScvSymbol, Sym: &balanceVariant},
-		{Type: xdr.ScValTypeScvAddress, Address: &xdr.ScAddress{
-			Type:      xdr.ScAddressTypeScAddressTypeAccount,
-			AccountId: &accountID,
-		}},
-	}
-	balanceKeyRef := &balanceKeyVec
-
-	return xdr.LedgerKey{
-		Type: xdr.LedgerEntryTypeContractData,
-		ContractData: &xdr.LedgerKeyContractData{
-			Contract: xdr.ScAddress{
-				Type:       xdr.ScAddressTypeScAddressTypeContract,
-				ContractId: &contractID,
-			},
-			Key:        xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &balanceKeyRef},
-			Durability: xdr.ContractDataDurabilityPersistent,
-		},
-	}, nil
-}
-
-func hasPositiveI128(balance xdr.Int128Parts) bool {
-	return balance.Hi > 0 || (balance.Hi == 0 && balance.Lo > 0)
 }
 
 func sourceAccountContractAuth(invokeArgs xdr.InvokeContractArgs) []xdr.SorobanAuthorizationEntry {
@@ -425,7 +353,7 @@ func addressScVal(address string) (xdr.ScVal, error) {
 		}, nil
 	}
 
-	contractID, err := decodeContractID(address)
+	contractID, err := ledger.DecodeContractID(address)
 	if err != nil {
 		return xdr.ScVal{}, fmt.Errorf("decode address %s: not an account or contract address", address)
 	}
