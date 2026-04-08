@@ -15,6 +15,7 @@ import (
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
+	sharedsoroban "github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/soroban"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/soroswap"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
@@ -208,12 +209,12 @@ func ensureSoroswapFactoryInitialized(
 		return nil
 	}
 
-	setterVal, err := addressScVal(st.FeePayerKP.Address())
+	setterVal, err := sharedsoroban.AddressScVal(st.FeePayerKP.Address())
 	if err != nil {
 		return fmt.Errorf("encode fee payer address: %w", err)
 	}
 	logger.Infof("initializing Soroswap factory %s", factoryContract)
-	if err := invokeContractNoAuth(ctx, logger, st, networkPassphrase, factoryContract, "initialize", xdr.ScVec{setterVal, bytesScVal(pairWasmHash[:])}); err != nil {
+	if err := invokeContractNoAuth(ctx, logger, st, networkPassphrase, factoryContract, "initialize", xdr.ScVec{setterVal, sharedsoroban.BytesScVal(pairWasmHash[:])}); err != nil {
 		return err
 	}
 
@@ -244,7 +245,7 @@ func ensureSoroswapRouterInitialized(
 		return nil
 	}
 
-	factoryVal, err := soroswap.AddressScVal(factoryContract)
+	factoryVal, err := sharedsoroban.AddressScVal(factoryContract)
 	if err != nil {
 		return fmt.Errorf("encode factory contract address: %w", err)
 	}
@@ -268,7 +269,7 @@ func soroswapFeeToSetter(ctx context.Context, st *state.State, factoryContract s
 	if err != nil {
 		return "", err
 	}
-	return soroswap.ScValAccountAddress(result)
+	return sharedsoroban.ScValAccountAddress(result)
 }
 
 func uploadContractWasm(
@@ -424,9 +425,4 @@ func contractCodeExists(ctx context.Context, rpc interface {
 	}
 
 	return len(resp.Entries) > 0, nil
-}
-
-func bytesScVal(value []byte) xdr.ScVal {
-	b := xdr.ScBytes(value)
-	return xdr.ScVal{Type: xdr.ScValTypeScvBytes, Bytes: &b}
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
+	sharedsoroban "github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/soroban"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/soroswap"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
@@ -132,7 +133,7 @@ func createSoroswapPair(
 	if err != nil {
 		return err
 	}
-	args, err := soroswap.ContractAddressArgs(tokenA, tokenB)
+	args, err := sharedsoroban.ContractAddressArgs(tokenA, tokenB)
 	if err != nil {
 		return err
 	}
@@ -242,11 +243,11 @@ func addSoroswapLiquidity(
 	if err != nil {
 		return fmt.Errorf("decode router contract ID: %w", err)
 	}
-	provider, err := soroswap.AddressScVal(st.FeePayerKP.Address())
+	provider, err := sharedsoroban.AddressScVal(st.FeePayerKP.Address())
 	if err != nil {
 		return fmt.Errorf("encode LP address: %w", err)
 	}
-	tokenArgs, err := soroswap.ContractAddressArgs(tokenA, tokenB)
+	tokenArgs, err := sharedsoroban.ContractAddressArgs(tokenA, tokenB)
 	if err != nil {
 		return fmt.Errorf("encode token addresses: %w", err)
 	}
@@ -256,12 +257,12 @@ func addSoroswapLiquidity(
 	}
 
 	args := append(tokenArgs,
-		soroswap.I128ScVal(amount),
-		soroswap.I128ScVal(amount),
-		soroswap.I128ScVal(amount),
-		soroswap.I128ScVal(amount),
+		sharedsoroban.I128ScVal(amount),
+		sharedsoroban.I128ScVal(amount),
+		sharedsoroban.I128ScVal(amount),
+		sharedsoroban.I128ScVal(amount),
 		provider,
-		soroswap.U64ScVal(uint64(deadline)),
+		sharedsoroban.U64ScVal(uint64(deadline)),
 	)
 	invokeArgs := xdr.InvokeContractArgs{
 		ContractAddress: xdr.ScAddress{
@@ -276,7 +277,7 @@ func addSoroswapLiquidity(
 			Type:           xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
 			InvokeContract: &invokeArgs,
 		},
-		Auth:          sourceAccountContractAuth(invokeArgs),
+		Auth:          sharedsoroban.SourceAccountContractAuth(invokeArgs),
 		SourceAccount: st.FeePayerKP.Address(),
 	}
 	return state.SubmitSorobanAndWait(ctx, logger, st.RPCClient, networkPassphrase, st.FeePayerKP, op)

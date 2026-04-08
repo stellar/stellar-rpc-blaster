@@ -15,6 +15,7 @@ import (
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
+	sharedsoroban "github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/soroban"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
 
@@ -205,8 +206,8 @@ func deployOZTokenContract(
 			WasmHash: &wasmHash,
 		},
 		ConstructorArgs: []xdr.ScVal{
-			stringScVal(ozTokenName),
-			stringScVal(ozTokenSymbol),
+			sharedsoroban.StringScVal(ozTokenName),
+			sharedsoroban.StringScVal(ozTokenSymbol),
 			{
 				Type: xdr.ScValTypeScvAddress,
 				Address: &xdr.ScAddress{
@@ -260,7 +261,7 @@ func mintOZTokenBalances(
 
 		recipients := make(xdr.ScVec, 0, len(batch))
 		for _, kp := range batch {
-			addrVal, err := addressScVal(kp.Address())
+			addrVal, err := sharedsoroban.AddressScVal(kp.Address())
 			if err != nil {
 				return fmt.Errorf("batch %d: encode recipient address %s: %w", b+1, kp.Address(), err)
 			}
@@ -273,7 +274,7 @@ func mintOZTokenBalances(
 			FunctionName:    "mint_batch",
 			Args: xdr.ScVec{
 				{Type: xdr.ScValTypeScvVec, Vec: &recipientsRef},
-				i128ScVal(ozTokenInitialBalance),
+				sharedsoroban.I128ScVal(ozTokenInitialBalance),
 			},
 		}
 
@@ -282,7 +283,7 @@ func mintOZTokenBalances(
 				Type:           xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
 				InvokeContract: &invokeArgs,
 			},
-			Auth:          sourceAccountContractAuth(invokeArgs),
+			Auth:          sharedsoroban.SourceAccountContractAuth(invokeArgs),
 			SourceAccount: st.FeePayerKP.Address(),
 		}
 
@@ -314,54 +315,4 @@ func accountsMissingOZBalances(
 	}
 
 	return missing, nil
-}
-
-func sourceAccountContractAuth(invokeArgs xdr.InvokeContractArgs) []xdr.SorobanAuthorizationEntry {
-	return []xdr.SorobanAuthorizationEntry{{
-		Credentials: xdr.SorobanCredentials{
-			Type: xdr.SorobanCredentialsTypeSorobanCredentialsSourceAccount,
-		},
-		RootInvocation: xdr.SorobanAuthorizedInvocation{
-			Function: xdr.SorobanAuthorizedFunction{
-				Type:       xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn,
-				ContractFn: &invokeArgs,
-			},
-		},
-	}}
-}
-
-func stringScVal(s string) xdr.ScVal {
-	str := xdr.ScString(s)
-	return xdr.ScVal{Type: xdr.ScValTypeScvString, Str: &str}
-}
-
-func i128ScVal(amount int64) xdr.ScVal {
-	return xdr.ScVal{
-		Type: xdr.ScValTypeScvI128,
-		I128: &xdr.Int128Parts{Hi: 0, Lo: xdr.Uint64(amount)},
-	}
-}
-
-func addressScVal(address string) (xdr.ScVal, error) {
-	if accountID, err := xdr.AddressToAccountId(address); err == nil {
-		return xdr.ScVal{
-			Type: xdr.ScValTypeScvAddress,
-			Address: &xdr.ScAddress{
-				Type:      xdr.ScAddressTypeScAddressTypeAccount,
-				AccountId: &accountID,
-			},
-		}, nil
-	}
-
-	contractID, err := ledger.DecodeContractID(address)
-	if err != nil {
-		return xdr.ScVal{}, fmt.Errorf("decode address %s: not an account or contract address", address)
-	}
-	return xdr.ScVal{
-		Type: xdr.ScValTypeScvAddress,
-		Address: &xdr.ScAddress{
-			Type:       xdr.ScAddressTypeScAddressTypeContract,
-			ContractId: &contractID,
-		},
-	}, nil
 }
