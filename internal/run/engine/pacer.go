@@ -78,13 +78,22 @@ func (p SteppedPacer) Hits(elapsed time.Duration) float64 {
 
 // Pace implements vegeta.Pacer — returns wait time until next hit and whether to stop.
 func (p SteppedPacer) Pace(elapsed time.Duration, hits uint64) (time.Duration, bool) {
+	rate := p.Rate(elapsed)
+	if rate <= 0 {
+		// Rate is zero in this step (e.g. start_rps = 0); wait until the next step where rate > 0.
+		currentStep := int(elapsed / p.StepInterval)
+		nextStepStart := time.Duration(currentStep+1) * p.StepInterval
+		if nextStepStart > p.RampDuration && float64(p.MaxRPS) <= 0 {
+			return 0, true // max RPS is also zero — stop
+		}
+		return nextStepStart - elapsed, false
+	}
 	expectedHits := p.Hits(elapsed)
 	if hits < uint64(expectedHits) {
 		// Running behind, send now
 		return 0, false
 	}
 
-	rate := p.Rate(elapsed)
 	interval := float64(time.Second) / rate
 	delta := float64(hits+1) - expectedHits
 	wait := time.Duration(interval * delta)
