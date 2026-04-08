@@ -11,7 +11,6 @@ import (
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
-	sharedsoroban "github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/soroban"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
@@ -77,7 +76,7 @@ func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *sta
 		return nil, nil, fmt.Errorf("decode OZ token contract ID: %w", err)
 	}
 
-	simResources, simResourceFee, simFootprintTemplate, err := presimulateOZTransfer(state, contractID, txSourceAccounts[0], txSourceAccounts[1])
+	simTemplate, err := presimulateOZTransfer(state, contractID, txSourceAccounts[0], txSourceAccounts[1])
 	if err != nil {
 		return nil, nil, fmt.Errorf("pre-simulate OZ transfer: %w", err)
 	}
@@ -141,7 +140,7 @@ func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *sta
 			},
 		}
 
-		footprint, err := buildOZFootprintFromTemplate(simFootprintTemplate, contractID, srcKP.Address(), dstKP.Address())
+		footprint, err := buildOZFootprintFromTemplate(simTemplate.simulation.Footprint, contractID, srcKP.Address(), dstKP.Address())
 		if err != nil {
 			return fmt.Errorf("build OZ footprint: %w", err)
 		}
@@ -166,11 +165,11 @@ func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *sta
 			}},
 			Resources: xdr.SorobanResources{
 				Footprint:     footprint,
-				Instructions:  simResources.Instructions,
-				DiskReadBytes: simResources.DiskReadBytes,
-				WriteBytes:    simResources.WriteBytes,
+				Instructions:  simTemplate.simulation.Resources.Instructions,
+				DiskReadBytes: simTemplate.simulation.Resources.DiskReadBytes,
+				WriteBytes:    simTemplate.simulation.Resources.WriteBytes,
 			},
-			ResourceFee: simResourceFee,
+			ResourceFee: simTemplate.simulation.ResourceFee,
 		})
 		if err != nil {
 			return err
@@ -184,14 +183,14 @@ func presimulateOZTransfer(
 	state *state.State,
 	contractID xdr.ContractId,
 	srcKP, dstKP *keypair.Full,
-) (xdr.SorobanResources, xdr.Int64, xdr.LedgerFootprint, error) {
+) (simulatedInvocationTemplate, error) {
 	srcAccID, err := xdr.AddressToAccountId(srcKP.Address())
 	if err != nil {
-		return xdr.SorobanResources{}, 0, xdr.LedgerFootprint{}, err
+		return simulatedInvocationTemplate{}, err
 	}
 	dstAccID, err := xdr.AddressToAccountId(dstKP.Address())
 	if err != nil {
-		return xdr.SorobanResources{}, 0, xdr.LedgerFootprint{}, err
+		return simulatedInvocationTemplate{}, err
 	}
 
 	invokeArgs := xdr.InvokeContractArgs{
@@ -222,11 +221,7 @@ func presimulateOZTransfer(
 		},
 	}
 
-	sim, err := sharedsoroban.SimulatePaddedInvokeContract(state, srcKP, srcKP.Address(), invokeArgs, benchmarkBaseFee, resourcePadFactor)
-	if err != nil {
-		return xdr.SorobanResources{}, 0, xdr.LedgerFootprint{}, err
-	}
-	return sim.Resources, sim.ResourceFee, sim.Footprint, nil
+	return presimulateBenchmarkInvocation(state, srcKP, srcKP.Address(), invokeArgs)
 }
 
 func buildOZFootprintFromTemplate(
@@ -234,14 +229,21 @@ func buildOZFootprintFromTemplate(
 	contractID xdr.ContractId,
 	srcAddress, dstAddress string,
 ) (xdr.LedgerFootprint, error) {
-	srcKey, err := ledger.OZBalanceLedgerKey(contractID, srcAddress)
-	if err != nil {
-		return xdr.LedgerFootprint{}, fmt.Errorf("src balance key: %w", err)
-	}
-	dstKey, err := ledger.OZBalanceLedgerKey(contractID, dstAddress)
-	if err != nil {
-		return xdr.LedgerFootprint{}, fmt.Errorf("dst balance key: %w", err)
-	}
-
-	return sharedsoroban.ReplaceFootprintReadWriteKeys(tmpl, srcKey, dstKey), nil
+	return buildFootprintFromTemplate(
+		tmpl,
+		func() (xdr.LedgerKey, error) {
+			srcKey, err := ledger.OZBalanceLedgerKey(contractID, srcAddress)
+			if err != nil {
+				return xdr.LedgerKey{}, fmt.Errorf("src balance key: %w", err)
+			}
+			return srcKey, nil
+		},
+		func() (xdr.LedgerKey, error) {
+			dstKey, err := ledger.OZBalanceLedgerKey(contractID, dstAddress)
+			if err != nil {
+				return xdr.LedgerKey{}, fmt.Errorf("dst balance key: %w", err)
+			}
+			return dstKey, nil
+		},
+	)
 }

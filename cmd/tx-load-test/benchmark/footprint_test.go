@@ -1,6 +1,7 @@
 package benchmark
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stellar/go-stellar-sdk/keypair"
@@ -17,7 +18,44 @@ func mustAccountID(t *testing.T, address string) xdr.AccountId {
 	return accountID
 }
 
-func TestBuildFootprintFromTemplateReplacesTrustlineKeys(t *testing.T) {
+func mustBalanceKey(t *testing.T, contractID xdr.ContractId, address string) xdr.LedgerKey {
+	t.Helper()
+	key, err := ledger.OZBalanceLedgerKey(contractID, address)
+	require.NoError(t, err)
+	return key
+}
+
+func TestBuildFootprintFromTemplateReplacesReadWriteKeys(t *testing.T) {
+	account, err := keypair.Random()
+	require.NoError(t, err)
+	tmpl := xdr.LedgerFootprint{
+		ReadOnly: []xdr.LedgerKey{{Type: xdr.LedgerEntryTypeAccount, Account: &xdr.LedgerKeyAccount{AccountId: mustAccountID(t, account.Address())}}},
+	}
+	first := xdr.LedgerKey{Type: xdr.LedgerEntryTypeContractData}
+	second := xdr.LedgerKey{Type: xdr.LedgerEntryTypeContractCode}
+
+	footprint, err := buildFootprintFromTemplate(
+		tmpl,
+		func() (xdr.LedgerKey, error) { return first, nil },
+		func() (xdr.LedgerKey, error) { return second, nil },
+	)
+	require.NoError(t, err)
+	require.Equal(t, tmpl.ReadOnly, footprint.ReadOnly)
+	require.Equal(t, []xdr.LedgerKey{first, second}, footprint.ReadWrite)
+}
+
+func TestBuildFootprintFromTemplateReturnsBuilderError(t *testing.T) {
+	wantErr := errors.New("boom")
+
+	_, err := buildFootprintFromTemplate(
+		xdr.LedgerFootprint{},
+		func() (xdr.LedgerKey, error) { return xdr.LedgerKey{}, nil },
+		func() (xdr.LedgerKey, error) { return xdr.LedgerKey{}, wantErr },
+	)
+	require.ErrorIs(t, err, wantErr)
+}
+
+func TestBuildSACFootprintFromTemplateReplacesTrustlineKeys(t *testing.T) {
 	issuer, err := keypair.Random()
 	require.NoError(t, err)
 	src, err := keypair.Random()
@@ -39,7 +77,8 @@ func TestBuildFootprintFromTemplateReplacesTrustlineKeys(t *testing.T) {
 		},
 	}
 
-	footprint := buildFootprintFromTemplate(tmpl, asset, srcID, dstID)
+	footprint, err := buildSACFootprintFromTemplate(tmpl, asset, srcID, dstID)
+	require.NoError(t, err)
 
 	require.Equal(t, tmpl.ReadOnly, footprint.ReadOnly)
 	require.Len(t, footprint.ReadWrite, 2)
@@ -64,10 +103,15 @@ func TestBuildOZFootprintFromTemplateReplacesBalanceKeys(t *testing.T) {
 	footprint, err := buildOZFootprintFromTemplate(tmpl, contractID, src.Address(), dst.Address())
 	require.NoError(t, err)
 
-	expectedSrcKey, err := ledger.OZBalanceLedgerKey(contractID, src.Address())
-	require.NoError(t, err)
-	expectedDstKey, err := ledger.OZBalanceLedgerKey(contractID, dst.Address())
-	require.NoError(t, err)
+	expectedSrcKey := mustBalanceKey(t, contractID, src.Address())
+	expectedDstKey := mustBalanceKey(t, contractID, dst.Address())
 	require.Equal(t, tmpl.ReadOnly, footprint.ReadOnly)
 	require.Equal(t, []xdr.LedgerKey{expectedSrcKey, expectedDstKey}, footprint.ReadWrite)
+}
+
+func TestBuildOZFootprintFromTemplateReportsKeyErrors(t *testing.T) {
+	contractID := xdr.ContractId{1}
+	_, err := buildOZFootprintFromTemplate(xdr.LedgerFootprint{}, contractID, "not-an-address", "also-bad")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "src balance key")
 }

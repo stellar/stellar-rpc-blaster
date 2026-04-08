@@ -9,18 +9,13 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
-	sharedsoroban "github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/soroban"
 	sharedsoroswap "github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/soroswap"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
 
 type soroswapSwapTemplate struct {
 	traderAddress string
-	invokeArgs    xdr.InvokeContractArgs
-	authEntries   []xdr.SorobanAuthorizationEntry
-	resources     xdr.SorobanResources
-	resourceFee   xdr.Int64
-	footprint     xdr.LedgerFootprint
+	simulatedInvocationTemplate
 }
 
 func buildSoroswapSwapTemplates(ctx context.Context, st *state.State, txSourceAccounts []*keypair.Full) ([]soroswapSwapTemplate, error) {
@@ -77,17 +72,13 @@ func presimulateSoroswapSwap(
 	if err != nil {
 		return soroswapSwapTemplate{}, err
 	}
-	sim, err := sharedsoroban.SimulatePaddedInvokeContract(st, trader, trader.Address(), invokeArgs, benchmarkBaseFee, resourcePadFactor)
+	simTemplate, err := presimulateBenchmarkInvocation(st, trader, trader.Address(), invokeArgs)
 	if err != nil {
 		return soroswapSwapTemplate{}, err
 	}
 
 	return soroswapSwapTemplate{
-		traderAddress: trader.Address(),
-		invokeArgs:    invokeArgs,
-		authEntries:   sim.AuthEntries,
-		resources:     sim.Resources,
-		resourceFee:   sim.ResourceFee,
-		footprint:     sim.Footprint,
+		traderAddress:               trader.Address(),
+		simulatedInvocationTemplate: simTemplate,
 	}, nil
 }

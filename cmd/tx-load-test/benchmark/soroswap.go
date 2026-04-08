@@ -125,11 +125,11 @@ func (soroswapMode) NewTargeter(ctx context.Context, rpcURL string, st *state.St
 		if err != nil {
 			return fmt.Errorf("rewrite Soroswap invoke args: %w", err)
 		}
-		authEntries, err := sharedsoroswap.RewriteSorobanAuthEntriesAccount(tmpl.authEntries, tmpl.traderAddress, txSourceKP.Address())
+		authEntries, err := sharedsoroswap.RewriteSorobanAuthEntriesAccount(tmpl.simulation.AuthEntries, tmpl.traderAddress, txSourceKP.Address())
 		if err != nil {
 			return fmt.Errorf("rewrite Soroswap auth: %w", err)
 		}
-		footprint, err := sharedsoroswap.RewriteFootprintAccount(tmpl.footprint, tmpl.traderAddress, txSourceKP.Address())
+		footprint, err := sharedsoroswap.RewriteFootprintAccount(tmpl.simulation.Footprint, tmpl.traderAddress, txSourceKP.Address())
 		if err != nil {
 			return fmt.Errorf("rewrite Soroswap footprint: %w", err)
 		}
@@ -146,11 +146,11 @@ func (soroswapMode) NewTargeter(ctx context.Context, rpcURL string, st *state.St
 			AuthEntries:       authEntries,
 			Resources: xdr.SorobanResources{
 				Footprint:     footprint,
-				Instructions:  tmpl.resources.Instructions,
-				DiskReadBytes: tmpl.resources.DiskReadBytes,
-				WriteBytes:    tmpl.resources.WriteBytes,
+				Instructions:  tmpl.simulation.Resources.Instructions,
+				DiskReadBytes: tmpl.simulation.Resources.DiskReadBytes,
+				WriteBytes:    tmpl.simulation.Resources.WriteBytes,
 			},
-			ResourceFee: tmpl.resourceFee,
+			ResourceFee: tmpl.simulation.ResourceFee,
 		})
 		if err != nil {
 			return err
