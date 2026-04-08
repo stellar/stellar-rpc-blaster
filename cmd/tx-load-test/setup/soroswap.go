@@ -37,15 +37,16 @@ func (soroswapPoolsStep) Name() string { return "deploy Soroswap pools" }
 // reuses the benchmark pair contracts via the factory, storing the resulting
 // pair IDs in State.
 func (soroswapPoolsStep) Run(ctx context.Context, logger *log.Entry, cfg config.Config, st *state.State) error {
-	if cfg.Mode != config.ModeSoroswap {
-		return nil
+	factoryContract, routerContract := resolvedSoroswapContracts(cfg, st)
+	if factoryContract == "" || routerContract == "" {
+		return fmt.Errorf("soroswap core contracts are not configured")
 	}
 
-	factoryID, err := decodeContractID(cfg.SoroswapFactoryContract)
+	factoryID, err := decodeContractID(factoryContract)
 	if err != nil {
 		return fmt.Errorf("decode soroswap factory contract ID: %w", err)
 	}
-	routerID, err := decodeContractID(cfg.SoroswapRouterContract)
+	routerID, err := decodeContractID(routerContract)
 	if err != nil {
 		return fmt.Errorf("decode soroswap router contract ID: %w", err)
 	}
@@ -53,27 +54,27 @@ func (soroswapPoolsStep) Run(ctx context.Context, logger *log.Entry, cfg config.
 	if ok, err := contractInstanceExists(ctx, st.RPCClient, factoryID); err != nil {
 		return fmt.Errorf("check soroswap factory contract: %w", err)
 	} else if !ok {
-		return fmt.Errorf("soroswap factory contract %s is missing on-ledger", cfg.SoroswapFactoryContract)
+		return fmt.Errorf("soroswap factory contract %s is missing on-ledger", factoryContract)
 	}
 	if ok, err := contractInstanceExists(ctx, st.RPCClient, routerID); err != nil {
 		return fmt.Errorf("check soroswap router contract: %w", err)
 	} else if !ok {
-		return fmt.Errorf("soroswap router contract %s is missing on-ledger", cfg.SoroswapRouterContract)
+		return fmt.Errorf("soroswap router contract %s is missing on-ledger", routerContract)
 	}
 
-	reportedFactory, err := soroswapGetFactory(ctx, st, cfg.SoroswapRouterContract)
+	reportedFactory, err := soroswapGetFactory(ctx, st, routerContract)
 	if err != nil {
 		return fmt.Errorf("validate soroswap router -> factory link: %w", err)
 	}
-	if reportedFactory != cfg.SoroswapFactoryContract {
+	if reportedFactory != factoryContract {
 		return fmt.Errorf(
 			"soroswap router %s points to factory %s, not %s",
-			cfg.SoroswapRouterContract, reportedFactory, cfg.SoroswapFactoryContract,
+			routerContract, reportedFactory, factoryContract,
 		)
 	}
 
-	st.SoroswapFactoryContract = cfg.SoroswapFactoryContract
-	st.SoroswapRouterContract = cfg.SoroswapRouterContract
+	st.SoroswapFactoryContract = factoryContract
+	st.SoroswapRouterContract = routerContract
 	st.SoroswapPairContracts = st.SoroswapPairContracts[:0]
 
 	for i, pair := range soroswapPairDefs {
@@ -83,7 +84,7 @@ func (soroswapPoolsStep) Run(ctx context.Context, logger *log.Entry, cfg config.
 			return fmt.Errorf("soroswap pool %d requires SAC contract IDs for assets %d/%d", i, pair[0], pair[1])
 		}
 
-		pairContract, created, err := ensureSoroswapPair(ctx, logger, cfg, st, sacA, sacB)
+		pairContract, created, err := ensureSoroswapPair(ctx, logger, cfg.NetworkPassphrase, st, sacA, sacB)
 		if err != nil {
 			return fmt.Errorf("soroswap pool %d (%s/%s): %w", i, sacA, sacB, err)
 		}
@@ -97,23 +98,23 @@ func (soroswapPoolsStep) Run(ctx context.Context, logger *log.Entry, cfg config.
 func ensureSoroswapPair(
 	ctx context.Context,
 	logger *log.Entry,
-	cfg config.Config,
+	networkPassphrase string,
 	st *state.State,
 	tokenA string,
 	tokenB string,
 ) (string, bool, error) {
-	exists, err := soroswapPairExists(ctx, st, cfg.SoroswapFactoryContract, tokenA, tokenB)
+	exists, err := soroswapPairExists(ctx, st, st.SoroswapFactoryContract, tokenA, tokenB)
 	if err != nil {
 		return "", false, err
 	}
 	if !exists {
 		logger.Infof("creating Soroswap pair for %s / %s", tokenA, tokenB)
-		if err := createSoroswapPair(ctx, logger, st, cfg.NetworkPassphrase, cfg.SoroswapFactoryContract, tokenA, tokenB); err != nil {
+		if err := createSoroswapPair(ctx, logger, st, networkPassphrase, st.SoroswapFactoryContract, tokenA, tokenB); err != nil {
 			return "", false, fmt.Errorf("create pair: %w", err)
 		}
 	}
 
-	pairContract, err := soroswapGetPair(ctx, st, cfg.SoroswapFactoryContract, tokenA, tokenB)
+	pairContract, err := soroswapGetPair(ctx, st, st.SoroswapFactoryContract, tokenA, tokenB)
 	if err != nil {
 		return "", false, fmt.Errorf("fetch pair address: %w", err)
 	}
@@ -302,6 +303,34 @@ func decodeContractID(contractIDStr string) (xdr.ContractId, error) {
 	return contractID, nil
 }
 
+func resolvedSoroswapContracts(cfg config.Config, st *state.State) (string, string) {
+	factoryContract := cfg.SoroswapFactoryContract
+	if factoryContract == "" {
+		factoryContract = st.SoroswapFactoryContract
+	}
+	routerContract := cfg.SoroswapRouterContract
+	if routerContract == "" {
+		routerContract = st.SoroswapRouterContract
+	}
+	return factoryContract, routerContract
+}
+
+func scValAccountAddress(value xdr.ScVal) (string, error) {
+	address, ok := value.GetAddress()
+	if !ok {
+		return "", fmt.Errorf("expected address return value, got %s", value.Type.String())
+	}
+	accountID, ok := address.GetAccountId()
+	if !ok {
+		return "", fmt.Errorf("expected account address return value, got %s", address.Type.String())
+	}
+	encoded, err := accountID.GetAddress()
+	if err != nil {
+		return "", fmt.Errorf("encode account address: %w", err)
+	}
+	return encoded, nil
+}
+
 type liquidityStep struct{}
 
 func (liquidityStep) Name() string { return "inject Soroswap liquidity" }
@@ -310,11 +339,12 @@ func (liquidityStep) Name() string { return "inject Soroswap liquidity" }
 // SAC assets. The fee payer is the initial LP. Re-running setup is idempotent:
 // empty pools are seeded, while already-seeded pools are left untouched.
 func (liquidityStep) Run(ctx context.Context, logger *log.Entry, cfg config.Config, st *state.State) error {
-	if cfg.Mode != config.ModeSoroswap {
-		return nil
-	}
 	if cfg.LiquidityPerPool <= 0 {
 		return fmt.Errorf("liquidity-per-pool must be > 0 for soroswap setup")
+	}
+	_, routerContract := resolvedSoroswapContracts(cfg, st)
+	if routerContract == "" {
+		return fmt.Errorf("soroswap router contract is not configured")
 	}
 	if len(st.SoroswapPairContracts) != len(soroswapPairDefs) {
 		return fmt.Errorf("expected %d soroswap pair contracts, found %d", len(soroswapPairDefs), len(st.SoroswapPairContracts))
@@ -340,7 +370,7 @@ func (liquidityStep) Run(ctx context.Context, logger *log.Entry, cfg config.Conf
 		switch {
 		case i128IsZero(reserveA) && i128IsZero(reserveB):
 			logger.Infof("soroswap pool %d: seeding %d units per token into %s", i, cfg.LiquidityPerPool, pairContract)
-			if err := addSoroswapLiquidity(ctx, logger, st, cfg.NetworkPassphrase, cfg.SoroswapRouterContract, tokenA, tokenB, cfg.LiquidityPerPool); err != nil {
+			if err := addSoroswapLiquidity(ctx, logger, st, cfg.NetworkPassphrase, routerContract, tokenA, tokenB, cfg.LiquidityPerPool); err != nil {
 				return fmt.Errorf("pool %d seed liquidity: %w", i, err)
 			}
 		case !i128IsZero(reserveA) && !i128IsZero(reserveB):

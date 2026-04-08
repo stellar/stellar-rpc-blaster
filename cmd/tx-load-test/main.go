@@ -142,16 +142,18 @@ func commonConfig(cmd *cobra.Command, cfg *config.Config) error {
 }
 
 func validateSoroswapSetupConfig(cfg config.Config) error {
-	if cfg.Mode != config.ModeSoroswap {
+	factoryProvided := cfg.SoroswapFactoryContract != ""
+	routerProvided := cfg.SoroswapRouterContract != ""
+	if factoryProvided != routerProvided {
+		return fmt.Errorf("--soroswap-factory and --soroswap-router must either both be set or both be omitted")
+	}
+	if factoryProvided {
 		return nil
 	}
-	if cfg.SoroswapFactoryContract == "" {
-		return fmt.Errorf("--soroswap-factory is required when --mode=%s", config.ModeSoroswap)
+	if setup.SupportsSoroswapAutoBootstrap(cfg.NetworkPassphrase) {
+		return nil
 	}
-	if cfg.SoroswapRouterContract == "" {
-		return fmt.Errorf("--soroswap-router is required when --mode=%s", config.ModeSoroswap)
-	}
-	return nil
+	return fmt.Errorf("--soroswap-factory and --soroswap-router are required for setup on this network")
 }
 
 // ---------------------------------------------------------------------------
@@ -163,13 +165,14 @@ func buildSetupCmd() *cobra.Command {
 		Use:   "setup",
 		Short: "Create all required ledger state for the benchmark",
 		Long: `setup performs the full one-time initialization required before running
-a benchmark:
+	any benchmark mode:
 
   1. Verifies / funds the fee-payer account.
   2. Creates 3 classic benchmark assets (BLTA, BLTB, BLTC).
 	3. Creates participant accounts with XLM balance.
-	4. Adds trustlines and classic asset balances to the formula-derived holder subset needed for simple payments / SAC auth.
+		4. Adds trustlines and classic asset balances to the formula-derived holder subset needed for the superset of supported benchmark modes.
 	5. Deploys a SAC instance for each benchmark asset.
+		6. Resolves or bootstraps Soroswap core contracts, benchmark pools, and initial pool liquidity.
 	6. Deploys the OZ token contract and reconciles OZ balances for all participant accounts.
 
 The resulting state is written to a JSON file (default: state.json) which
@@ -186,12 +189,13 @@ minted before the command exits.`,
 
 	addCommonFlags(cmd)
 	cmd.Flags().String("mode", string(config.ModeSACTransfer),
-		fmt.Sprintf("Planned Soroban benchmark mode for sizing holder accounts: %s | %s | %s", config.ModeSACTransfer, config.ModeOZTransfer, config.ModeSoroswap))
+		fmt.Sprintf("Deprecated and ignored; setup now provisions the superset needed for %s, %s, and %s", config.ModeSACTransfer, config.ModeOZTransfer, config.ModeSoroswap))
+	_ = cmd.Flags().MarkDeprecated("mode", "setup now provisions all benchmark modes; this flag is ignored")
 	cmd.Flags().Duration("duration", 100*time.Second, "Planned benchmark duration used when sizing account partitions")
 	cmd.Flags().Int("target-rps", 50, "Planned Soroban steady-state requests per second used when sizing account partitions")
-	cmd.Flags().Int("classic-rps", config.DefaultClassicRPS, "Planned simple-payment steady-state operations per second used when sizing account partitions (must be a multiple of 100)")
-	cmd.Flags().String("soroswap-factory", "", "Soroswap factory contract ID (required when --mode=soroswap)")
-	cmd.Flags().String("soroswap-router", "", "Soroswap router contract ID (required when --mode=soroswap)")
+	cmd.Flags().Int("classic-rps", config.DefaultClassicRPS, "Planned simple-payment steady-state operations per second used when sizing account partitions across all benchmark modes (must be a multiple of 100)")
+	cmd.Flags().String("soroswap-factory", "", "Soroswap factory contract ID (required on testnet/mainnet; optional on standalone/futurenet, where setup can auto-deploy it)")
+	cmd.Flags().String("soroswap-router", "", "Soroswap router contract ID (required on testnet/mainnet; optional on standalone/futurenet, where setup can auto-deploy it)")
 	cmd.Flags().Int("accounts", 5_000, "Number of participant accounts to create")
 	cmd.Flags().Float64("base-reserve-xlm", 3.0, "XLM to fund each account (covers reserves, holder trustlines, and fee headroom)")
 	cmd.Flags().Int64("liquidity-per-pool", 1_000_000, "Token units to deposit into each Soroswap pool")
@@ -228,11 +232,6 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 	if cfg.SoroswapRouterContract, err = cmd.Flags().GetString("soroswap-router"); err != nil {
 		return err
 	}
-	modeStr, err := cmd.Flags().GetString("mode")
-	if err != nil {
-		return err
-	}
-	cfg.Mode = config.BenchmarkMode(modeStr)
 	if cfg.Duration, err = cmd.Flags().GetDuration("duration"); err != nil {
 		return err
 	}
@@ -245,8 +244,8 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 	if err = validateSoroswapSetupConfig(cfg); err != nil {
 		return err
 	}
-	if err = benchmark.ValidateConfig(cfg); err != nil {
-		return fmt.Errorf("planned benchmark shape is invalid for setup: %w", err)
+	if err = benchmark.ValidateSetupConfig(cfg); err != nil {
+		return fmt.Errorf("planned benchmark shape is invalid for all-mode setup: %w", err)
 	}
 
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
@@ -417,9 +416,6 @@ func runBench(cmd *cobra.Command, _ []string) error {
 	// Fail fast on obvious misconfig before starting the attack.
 	if err = benchmark.ValidateConfig(cfg); err != nil {
 		return err
-	}
-	if cfg.Mode == config.ModeSoroswap {
-		return fmt.Errorf("benchmark mode %q is not implemented yet", cfg.Mode)
 	}
 
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)

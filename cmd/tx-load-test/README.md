@@ -11,7 +11,7 @@ setup  -->  state.json  -->  bench  (repeatable)
                         -->  teardown
 ```
 
-- **`setup`** -- one-time ledger initialization: creates accounts, assets, trustlines, SAC contracts, and the OZ benchmark token. Re-running with a higher `--accounts` value adds accounts incrementally.
+- **`setup`** -- one-time ledger initialization: creates accounts, assets, trustlines, SAC contracts, Soroswap pools/liquidity, and the OZ benchmark token. Re-running with a higher `--accounts` value adds accounts incrementally.
 - **`bench`** -- drives load against the RPC endpoint using pre-built state. Run as many times as needed.
 - **`teardown`** -- merges all participant accounts back into the fee payer, recovering XLM. Deletes the state file on success.
 - **`sync`** -- reconciles the state file with on-chain reality (removes accounts that no longer exist).
@@ -49,12 +49,11 @@ Creates all required ledger state and writes `state.json`. If a state file alrea
 |---|---|---|
 | `--rpc-url` | *(required)* | Stellar RPC HTTP endpoint |
 | `--network` | *(required)* | Network shorthand: `testnet`, `futurenet`, `mainnet`, `standalone` |
-| `--mode` | `sac-transfer` | Planned Soroban benchmark mode for setup-time sizing: `sac-transfer`, `oz-transfer`, or `soroswap` |
 | `--duration` | `100s` | Planned benchmark duration used when sizing account partitions |
 | `--target-rps` | `50` | Planned Soroban steady-state requests per second used when sizing account partitions |
-| `--classic-rps` | `200` | Planned simple-payment steady-state operations per second used when sizing account partitions; `0` disables the companion stream; must be a multiple of 100 |
-| `--soroswap-factory` | *(required for `soroswap`)* | Soroswap factory contract ID |
-| `--soroswap-router` | *(required for `soroswap`)* | Soroswap router contract ID |
+| `--classic-rps` | `200` | Planned simple-payment steady-state operations per second used when sizing account partitions for the superset setup shape; `0` disables the companion stream; must be a multiple of 100 |
+| `--soroswap-factory` | *(required on `testnet`/`mainnet`)* | Soroswap factory contract ID; optional on `standalone`/`futurenet`, where setup can auto-deploy it |
+| `--soroswap-router` | *(required on `testnet`/`mainnet`)* | Soroswap router contract ID; optional on `standalone`/`futurenet`, where setup can auto-deploy it |
 | `--liquidity-per-pool` | `1000000` | Token units of each asset to seed into each Soroswap benchmark pool |
 | `--accounts` | `5000` | Target number of participant accounts |
 | `--base-reserve-xlm` | `3.0` | XLM to fund each account |
@@ -66,16 +65,17 @@ The fee-payer seed is read from the `TX_LOAD_TEST_FEE_PAYER_SEED` environment va
 If `setup` is re-run against an existing `state.json`, `TX_LOAD_TEST_FEE_PAYER_SEED` must be set and must match the hash recorded in the state file.
 Re-running `setup` requires the resolved network passphrase to match the value already recorded in `state.json`. The `--rpc-url` may change, but the chosen endpoint must report that same passphrase via `getNetwork`.
 
-If `--mode=soroswap`, `--soroswap-factory` and `--soroswap-router` are required. Setup validates that both contracts exist, checks that the router points at the supplied factory, creates or reuses the benchmark pair contracts for the benchmark SAC assets, and seeds empty benchmark pools with `--liquidity-per-pool` units of each asset.
+Setup now provisions the benchmark superset once so the resulting ledger state can run `sac-transfer`, `oz-transfer`, or `soroswap` without re-running setup. That means setup always validates the requested `--accounts`, `--target-rps`, `--classic-rps`, and `--duration` against all benchmark modes, always provisions the required trustlined holder subset, and always prepares Soroswap state. On testnet/mainnet, `--soroswap-factory` and `--soroswap-router` are therefore required. On standalone and futurenet, setup can auto-upload and deploy deterministic Soroswap pair/factory/router contracts from the local Wasm artifacts under `contracts/soroswap/...` when those flags are omitted. In both cases setup validates that the router points at the resolved factory, creates or reuses the benchmark pair contracts for the benchmark SAC assets, and seeds empty benchmark pools with `--liquidity-per-pool` units of each asset.
 
 **Setup steps (in order):**
 1. **Fee payer** -- verify/create/fund the fee-payer account. Auto-tops-up via friendbot if balance is insufficient.
 2. **Assets** -- register 3 benchmark classic assets (BLTA, BLTB, BLTC) with the fee payer as issuer.
-3. **Accounts** -- derive keypairs deterministically from the fee-payer seed. If a state file was loaded, only the delta accounts are created. A formula-derived prefix of the participant set is provisioned as the SAC-active subset when the planned benchmark shape needs it (currently 2 holders for `sac-transfer`): those accounts are created in batches of 19 (CreateAccount + 3 ChangeTrust, capped at 20 signatures) and minted in batches of 33. Remaining accounts are created as XLM-only participants.
+3. **Accounts** -- derive keypairs deterministically from the fee-payer seed. If a state file was loaded, only the delta accounts are created. A formula-derived prefix of the participant set is provisioned as the trustlined holder superset required to support every benchmark mode for the requested rates and duration: those accounts are created in batches of 19 (CreateAccount + 3 ChangeTrust, capped at 20 signatures) and minted in batches of 33. Remaining accounts are created as XLM-only participants.
 4. **SAC** -- deploy a Stellar Asset Contract for each of the 3 assets (idempotent; skips if already deployed).
-5. **Soroswap pairs** -- when `--mode=soroswap`, validate the supplied factory/router contracts and create or reuse the benchmark pair contracts.
-6. **Soroswap liquidity** -- when `--mode=soroswap`, seed each empty benchmark pair through the router using the fee payer as the initial LP. Re-running setup skips pools that already have liquidity.
-7. **OZ token** -- upload and deploy the upgradeable OpenZeppelin benchmark token, then mint balances to participant accounts in batches.
+5. **Soroswap core** -- resolve factory/router contract IDs. On standalone/futurenet this can auto-upload and deploy deterministic Soroswap core contracts from the vendored local Wasms.
+6. **Soroswap pairs** -- validate the resolved factory/router contracts and create or reuse the benchmark pair contracts.
+7. **Soroswap liquidity** -- seed each empty benchmark pair through the router using the fee payer as the initial LP. Re-running setup skips pools that already have liquidity.
+8. **OZ token** -- upload and deploy the upgradeable OpenZeppelin benchmark token, then mint balances to participant accounts in batches.
 
 If setup is interrupted, a best-effort cleanup merges whatever accounts exist and writes partial state so `teardown` can finish later.
 
@@ -115,7 +115,7 @@ Before the benchmark starts, the tool queries the chosen RPC endpoint (either `-
 **Available modes:**
 - **`sac-transfer`** -- SAC token transfers between random SAC-active participant accounts via `InvokeHostFunction`.
 - **`oz-transfer`** -- transfers on the upgradeable OpenZeppelin benchmark token contract.
-- **`soroswap`** -- reserved for upcoming Soroswap swap benchmarking; currently returns a not-yet-implemented error.
+- **`soroswap`** -- router-based exact-input swaps across the benchmark BLTA/BLTB and BLTB/BLTC pools.
 
 When `--classic-rps > 0`, bench also runs a parallel simple-payment companion stream that submits native XLM payments batched at 100 operations per transaction. `--classic-rps` is interpreted as operations/sec, not transactions/sec.
 
