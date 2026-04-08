@@ -36,6 +36,7 @@ Run bench as many times as needed.`,
 		RunE: runBench,
 	}
 
+	addRuntimeStatePreflightFlags(cmd)
 	cmd.Flags().String("log-level", "info", "Log verbosity: debug | info | warn | error")
 	cmd.Flags().String("rpc-url", "", "Override the RPC URL stored in the state JSON file")
 	cmd.Flags().String("state-file", state.DefaultStateFile, "Path to the state JSON file")
@@ -62,8 +63,19 @@ func runBench(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	skipAccountPreflight, err := cmd.Flags().GetBool("skip-account-preflight")
+	if err != nil {
+		return err
+	}
+	accountPreflightSample, err := cmd.Flags().GetInt("account-preflight-sample")
+	if err != nil {
+		return err
+	}
 
-	loaded, err := state.LoadRuntimeState(cmd.Context(), state.RuntimePhaseBench, stateFile, os.Getenv("TX_LOAD_TEST_FEE_PAYER_SEED"), rpcURL)
+	loaded, err := state.LoadRuntimeStateWithOptions(cmd.Context(), state.RuntimePhaseBench, stateFile, os.Getenv("TX_LOAD_TEST_FEE_PAYER_SEED"), rpcURL, state.RuntimeLoadOptions{
+		VerifyAccountsExist: !skipAccountPreflight,
+		AccountCheckSample:  accountPreflightSample,
+	})
 	if err != nil {
 		return err
 	}

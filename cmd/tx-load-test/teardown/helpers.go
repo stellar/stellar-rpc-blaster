@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/support/log"
@@ -46,7 +47,10 @@ func cleanupBatches(accountKPs []*keypair.Full, batchSize int) [][]*keypair.Full
 
 func runCleanupBatches(ctx context.Context, logger *log.Entry, cfg config.Config, st *state.State, stateFile string, toMerge []*keypair.Full) error {
 	batches := cleanupBatches(toMerge, mergeBatchSize)
+	logger.Infof("cleanup will run %d batches", len(batches))
 	for i, batch := range batches {
+		batchStarted := time.Now()
+		logger.Infof("batch %d/%d starting (%d accounts)", i+1, len(batches), len(batch))
 		if err := cleanupBatch(ctx, logger, cfg, st, i+1, len(batches), batch); err != nil {
 			logger.WithError(err).Warnf("batch %d/%d: skipping", i+1, len(batches))
 			continue
@@ -56,6 +60,7 @@ func runCleanupBatches(ctx context.Context, logger *log.Entry, cfg config.Config
 		if err := saveStateSnapshot(cfg, st, stateFile); err != nil {
 			return fmt.Errorf("save state after batch %d/%d: %w", i+1, len(batches), err)
 		}
+		logger.Infof("batch %d/%d snapshot saved (%d accounts remain, duration=%s)", i+1, len(batches), len(st.AccountKPs), time.Since(batchStarted).Round(time.Millisecond))
 	}
 	return nil
 }

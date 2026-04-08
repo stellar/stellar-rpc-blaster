@@ -1,6 +1,8 @@
 package benchmark
 
 import (
+	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -9,7 +11,27 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 	"github.com/stretchr/testify/require"
+	vegeta "github.com/tsenart/vegeta/v12/lib"
 )
+
+type fakeMode struct {
+	label     string
+	verifyErr error
+	verified  *[]string
+}
+
+func (m fakeMode) Label() string { return m.label }
+
+func (m fakeMode) VerifyReady(_ context.Context, _ *state.State) error {
+	if m.verified != nil {
+		*m.verified = append(*m.verified, m.label)
+	}
+	return m.verifyErr
+}
+
+func (m fakeMode) NewTargeter(_ context.Context, _ string, _ *state.State, _ []*keypair.Full) (vegeta.Targeter, SequenceResetFunc, error) {
+	return nil, nil, fmt.Errorf("not implemented in test")
+}
 
 func nilLogger() *log.Entry {
 	return log.New()
@@ -178,6 +200,23 @@ func TestValidateSetupConfig(t *testing.T) {
 		})
 		require.EqualError(t, err, "benchmark shape is not valid for mode=sac-transfer: account pool too small for configured benchmark: have 2019 accounts but need at least 2020 (2000 Soroban tx sources + 20 simple-payment tx sources)  -- increase --accounts, reduce --target-rps, reduce --classic-rps, or shorten --duration")
 	})
+}
+
+func TestVerifyReadyForModesChecksEveryModeInOrder(t *testing.T) {
+	var verified []string
+	err := verifyReadyForModes(context.Background(), &state.State{}, map[config.BenchmarkMode]Mode{
+		config.ModeSACTransfer: fakeMode{label: string(config.ModeSACTransfer), verified: &verified},
+		config.ModeOZTransfer:  fakeMode{label: string(config.ModeOZTransfer), verified: &verified},
+	}, []config.BenchmarkMode{config.ModeSACTransfer, config.ModeOZTransfer})
+	require.NoError(t, err)
+	require.Equal(t, []string{string(config.ModeSACTransfer), string(config.ModeOZTransfer)}, verified)
+}
+
+func TestVerifyReadyForModesWrapsModeFailure(t *testing.T) {
+	err := verifyReadyForModes(context.Background(), &state.State{}, map[config.BenchmarkMode]Mode{
+		config.ModeSACTransfer: fakeMode{label: string(config.ModeSACTransfer), verifyErr: fmt.Errorf("missing trustlines")},
+	}, []config.BenchmarkMode{config.ModeSACTransfer})
+	require.EqualError(t, err, "mode=sac-transfer: missing trustlines")
 }
 
 func TestPartitionSourceAccountsUsesRequiredSorobanSlice(t *testing.T) {
