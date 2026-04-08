@@ -14,9 +14,9 @@ import (
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/support/log"
-	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
+	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
 	"github.com/stellar/stellar-rpc-blaster/internal/run/engine"
 )
 
@@ -95,30 +95,6 @@ func (r *rejectionCounts) log(logger *log.Entry) {
 	for code, n := range r.counts {
 		logger.Infof("  ERROR breakdown: %s=%d", code, n)
 	}
-}
-
-// decodeResultCode unmarshals the base64 ErrorResultXDR from a
-// sendTransaction ERROR response and returns the TransactionResultCode as a
-// human-readable string (e.g. "TransactionResultCodeTxBadSeq").  For fee-bump
-// transactions that fail with TxFeeBumpInnerFailed the inner code is appended.
-// Returns "unknown" or "decode-error" on any decode failure so it is always
-// safe to log.
-func decodeResultCode(errorResultXDR string) string {
-	if errorResultXDR == "" {
-		return "unknown (no XDR)"
-	}
-	var result xdr.TransactionResult
-	if err := xdr.SafeUnmarshalBase64(errorResultXDR, &result); err != nil {
-		return "decode-error"
-	}
-	outer := result.Result.Code.String()
-	if result.Result.Code == xdr.TransactionResultCodeTxFeeBumpInnerFailed {
-		if inner, ok := result.Result.GetInnerResultPair(); ok {
-			innerCode := inner.Result.Result.Code.String()
-			return outer + " (inner: " + innerCode + ")"
-		}
-	}
-	return outer
 }
 
 // runVegetaAttack is the shared Vegeta harness used by all benchmark modes.
@@ -207,7 +183,7 @@ func runVegetaAttack(
 				case protocol.TransactionStatusFailed:
 					atomic.AddUint64(&onChainFail, 1)
 					e2eStats.observe(time.Since(item.submittedAt))
-					code := decodeResultCode(resp.ResultXDR)
+					code := ledger.DecodeTransactionResultCode(resp.ResultXDR)
 					entry := logger.WithField("hash", item.hash).WithField("resultCode", code)
 					entry.Debug("on-chain failure")
 					for i, ev := range resp.DiagnosticEventsXDR {
@@ -267,7 +243,7 @@ loop:
 			case "ERROR":
 				// Transaction was rejected pre-apply; sequence NOT consumed.
 				atomic.AddUint64(&submitErrors, 1)
-				errorCodes.inc(decodeResultCode(envelope.Result.ErrorResultXDR))
+				errorCodes.inc(ledger.DecodeTransactionResultCode(envelope.Result.ErrorResultXDR))
 				if resetSeq != nil && envelope.ID > 0 {
 					resetSeq(envelope.ID)
 				}
@@ -307,7 +283,7 @@ loop:
 			}
 		case "ERROR":
 			atomic.AddUint64(&submitErrors, 1)
-			errorCodes.inc(decodeResultCode(envelope.Result.ErrorResultXDR))
+			errorCodes.inc(ledger.DecodeTransactionResultCode(envelope.Result.ErrorResultXDR))
 			if resetSeq != nil && envelope.ID > 0 {
 				resetSeq(envelope.ID)
 			}

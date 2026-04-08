@@ -9,12 +9,12 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/network"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
-	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
+	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
 
@@ -178,7 +178,7 @@ func ensureContractDeployed(
 	preimage xdr.ContractIdPreimage,
 	wasmHash xdr.Hash,
 ) error {
-	exists, err := contractInstanceExists(ctx, st.RPCClient, contractID)
+	exists, err := ledger.ContractInstanceExists(ctx, st.RPCClient, contractID)
 	if err != nil {
 		return err
 	}
@@ -332,7 +332,7 @@ func invokeContractNoAuth(
 	functionName string,
 	args xdr.ScVec,
 ) error {
-	contractID, err := decodeContractID(contractIDStr)
+	contractID, err := ledger.DecodeContractID(contractIDStr)
 	if err != nil {
 		return err
 	}
@@ -389,7 +389,7 @@ func deterministicContractIdentity(
 	}
 
 	contractID := xdr.ContractId(sha256.Sum256(preimageBytes))
-	contractIDStr, err := strkey.Encode(strkey.VersionByteContract, contractID[:])
+	contractIDStr, err := ledger.EncodeContractID(contractID)
 	if err != nil {
 		return xdr.ContractId{}, "", xdr.ContractIdPreimage{}, fmt.Errorf("encode contract ID: %w", err)
 	}

@@ -10,12 +10,11 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/amount"
 	"github.com/stellar/go-stellar-sdk/keypair"
-	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
-	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
+	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
 
@@ -247,7 +246,7 @@ func cleanupBatch(
 	batch []*keypair.Full,
 ) error {
 	// Fetch trustline balances upfront.
-	tlBalances, err := fetchTrustlineBalances(ctx, st, batch)
+	tlBalances, err := ledger.FetchTrustlineBalances(ctx, st.RPCClient, st.Assets[:], batch, ledger.DefaultBatchSize)
 	if err != nil {
 		return fmt.Errorf("fetch trustline balances: %w", err)
 	}
@@ -353,83 +352,4 @@ func cleanupBatch(
 
 	logger.Infof("batch %d/%d merged (%d accounts)", batchNum, totalBatches, len(batch))
 	return nil
-}
-
-// fetchTrustlineBalances returns a nested map of accountAddress  ->  assetCode  ->
-// balance-in-stroops for every trustline that exists on-ledger for the given
-// batch of accounts. Trustlines not present on-ledger are simply absent from
-// the map. A single GetLedgerEntries call covers the whole batch.
-func fetchTrustlineBalances(
-	ctx context.Context,
-	st *state.State,
-	batch []*keypair.Full,
-) (map[string]map[string]xdr.Int64, error) {
-	type keyMeta struct{ account, assetCode string }
-
-	keys := make([]string, 0, len(batch)*len(st.Assets))
-	metas := make([]keyMeta, 0, len(batch)*len(st.Assets))
-
-	for _, kp := range batch {
-		accountID, err := xdr.AddressToAccountId(kp.Address())
-		if err != nil {
-			return nil, fmt.Errorf("parse account %s: %w", kp.Address(), err)
-		}
-		for _, asset := range st.Assets {
-			ax, err := asset.ToXDR()
-			if err != nil {
-				return nil, fmt.Errorf("asset %s to XDR: %w", asset.GetCode(), err)
-			}
-			lk := xdr.LedgerKey{
-				Type: xdr.LedgerEntryTypeTrustline,
-				TrustLine: &xdr.LedgerKeyTrustLine{
-					AccountId: accountID,
-					Asset: xdr.TrustLineAsset{
-						Type:       ax.Type,
-						AlphaNum4:  ax.AlphaNum4,
-						AlphaNum12: ax.AlphaNum12,
-					},
-				},
-			}
-			b64, err := xdr.MarshalBase64(lk)
-			if err != nil {
-				return nil, fmt.Errorf("marshal trustline key: %w", err)
-			}
-			keys = append(keys, b64)
-			metas = append(metas, keyMeta{kp.Address(), asset.GetCode()})
-		}
-	}
-
-	resp, err := st.RPCClient.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{Keys: keys})
-	if err != nil {
-		return nil, fmt.Errorf("get ledger entries: %w", err)
-	}
-
-	// Build a lookup from request key  ->  meta so we can match response entries
-	// (the server only returns entries that exist; they include KeyXDR for
-	// matching back to the original request key).
-	keyToMeta := make(map[string]keyMeta, len(keys))
-	for i, k := range keys {
-		keyToMeta[k] = metas[i]
-	}
-
-	result := make(map[string]map[string]xdr.Int64)
-	for _, entry := range resp.Entries {
-		meta, ok := keyToMeta[entry.KeyXDR]
-		if !ok {
-			continue
-		}
-		var data xdr.LedgerEntryData
-		if err := xdr.SafeUnmarshalBase64(entry.DataXDR, &data); err != nil {
-			continue
-		}
-		tl := data.TrustLine
-		if tl == nil {
-			continue
-		}
-		if result[meta.account] == nil {
-			result[meta.account] = make(map[string]xdr.Int64)
-		}
-		result[meta.account][meta.assetCode] = tl.Balance
-	}
-	return result, nil
 }

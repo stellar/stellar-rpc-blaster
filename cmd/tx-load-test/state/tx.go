@@ -15,6 +15,8 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
+
+	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
 )
 
 // InclusionFee is the per-operation base fee (in stroops) applied to every
@@ -154,7 +156,7 @@ func SubmitFeeBumpAndWait(
 				continue
 			}
 			logSendTransactionRejection(logger, resp)
-			code := decodeResultCode(resp.ErrorResultXDR)
+			code := ledger.DecodeTransactionResultCode(resp.ErrorResultXDR)
 			return fmt.Errorf("fee-bump rejected: resultCode=%s", code)
 		}
 
@@ -302,36 +304,13 @@ func isInsufficientFee(errorResultXDR string) bool {
 	return result.Result.Code == xdr.TransactionResultCodeTxInsufficientFee
 }
 
-// decodeResultCode unmarshals a base64 TransactionResult XDR and returns the
-// TransactionResultCode as a human-readable string.  For fee-bump transactions
-// that fail with TxFeeBumpInnerFailed the inner result code is appended so the
-// exact cause is visible without inspecting raw XDR.
-// Returns "unknown" on any decode error so it is always safe to log.
-func decodeResultCode(resultXDR string) string {
-	if resultXDR == "" {
-		return "unknown"
-	}
-	var result xdr.TransactionResult
-	if err := xdr.SafeUnmarshalBase64(resultXDR, &result); err != nil {
-		return "decode-error"
-	}
-	outer := result.Result.Code.String()
-	if result.Result.Code == xdr.TransactionResultCodeTxFeeBumpInnerFailed {
-		if inner, ok := result.Result.GetInnerResultPair(); ok {
-			innerCode := inner.Result.Result.Code.String()
-			return outer + " (inner: " + innerCode + ")"
-		}
-	}
-	return outer
-}
-
 // logTxFailure logs structured details for a failed on-chain transaction:
 // the result code decoded from resultXDR, per-operation result codes (for
 // TxFailed, which indicates one or more classic ops failed  -- e.g.
 // AccountMergeHasSubEntries when trustlines are still attached), and any
 // diagnostic events (particularly useful for Soroban contract failures).
 func logTxFailure(logger *log.Entry, hash, resultXDR string, diagnosticEventsXDR []string) {
-	l := logger.WithField("hash", hash).WithField("resultCode", decodeResultCode(resultXDR))
+	l := logger.WithField("hash", hash).WithField("resultCode", ledger.DecodeTransactionResultCode(resultXDR))
 	l.Error("transaction failed on-chain")
 	for i, s := range decodeOpResults(resultXDR) {
 		l.WithField("opIndex", i).Errorf("op result: %s", s)
@@ -439,7 +418,7 @@ func SubmitAllAndPoll(
 		}
 		if resp.ErrorResultXDR != "" {
 			logSendTransactionRejection(logger, resp)
-			code := decodeResultCode(resp.ErrorResultXDR)
+			code := ledger.DecodeTransactionResultCode(resp.ErrorResultXDR)
 			logger.WithError(fmt.Errorf("rejected: resultCode=%s", code)).Warnf("send transaction %d/%d", i+1, total)
 			submitFailed++
 			continue
@@ -489,7 +468,7 @@ func SubmitAllAndPoll(
 // sendTransaction for a rejected submission. This is especially useful for
 // Soroban pre-apply failures like TxSorobanInvalid.
 func logSendTransactionRejection(logger *log.Entry, resp protocol.SendTransactionResponse) {
-	l := logger.WithField("resultCode", decodeResultCode(resp.ErrorResultXDR))
+	l := logger.WithField("resultCode", ledger.DecodeTransactionResultCode(resp.ErrorResultXDR))
 	if resp.Hash != "" {
 		l = l.WithField("hash", resp.Hash)
 	}

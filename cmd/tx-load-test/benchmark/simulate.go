@@ -20,6 +20,8 @@ type simulatedInvocation struct {
 	authEntries []xdr.SorobanAuthorizationEntry
 }
 
+const simulateInvokeTimeout = 30 * time.Second
+
 func sourceAccountContractAuth(invokeArgs xdr.InvokeContractArgs) []xdr.SorobanAuthorizationEntry {
 	return []xdr.SorobanAuthorizationEntry{{
 		Credentials: xdr.SorobanCredentials{
@@ -47,13 +49,40 @@ func simulateInvokeContract(
 	return sim.resources, sim.resourceFee, sim.footprint, nil
 }
 
+func simulatePaddedInvokeContract(
+	st *state.State,
+	txSourceKP *keypair.Full,
+	opSourceAddress string,
+	invokeArgs xdr.InvokeContractArgs,
+) (xdr.SorobanResources, xdr.Int64, xdr.LedgerFootprint, error) {
+	sim, err := simulatePaddedInvokeContractDetailed(st, txSourceKP, opSourceAddress, invokeArgs)
+	if err != nil {
+		return xdr.SorobanResources{}, 0, xdr.LedgerFootprint{}, err
+	}
+	return sim.resources, sim.resourceFee, sim.footprint, nil
+}
+
+func simulatePaddedInvokeContractDetailed(
+	st *state.State,
+	txSourceKP *keypair.Full,
+	opSourceAddress string,
+	invokeArgs xdr.InvokeContractArgs,
+) (simulatedInvocation, error) {
+	sim, err := simulateInvokeContractDetailed(st, txSourceKP, opSourceAddress, invokeArgs)
+	if err != nil {
+		return simulatedInvocation{}, err
+	}
+	padSimulatedInvocation(&sim, resourcePadFactor)
+	return sim, nil
+}
+
 func simulateInvokeContractDetailed(
 	st *state.State,
 	txSourceKP *keypair.Full,
 	opSourceAddress string,
 	invokeArgs xdr.InvokeContractArgs,
 ) (simulatedInvocation, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), simulateInvokeTimeout)
 	defer cancel()
 
 	op := txnbuild.InvokeHostFunction{
@@ -110,4 +139,14 @@ func simulateInvokeContractDetailed(
 		footprint:   sorobanData.Resources.Footprint,
 		authEntries: authEntries,
 	}, nil
+}
+
+func padSimulatedInvocation(sim *simulatedInvocation, factor float64) {
+	if sim == nil || factor <= 1 {
+		return
+	}
+	sim.resources.Instructions = xdr.Uint32(float64(sim.resources.Instructions) * factor)
+	sim.resources.DiskReadBytes = xdr.Uint32(float64(sim.resources.DiskReadBytes) * factor)
+	sim.resources.WriteBytes = xdr.Uint32(float64(sim.resources.WriteBytes) * factor)
+	sim.resourceFee = xdr.Int64(float64(sim.resourceFee) * factor)
 }

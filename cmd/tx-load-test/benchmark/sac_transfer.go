@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net/http"
-	"sync"
 	"sync/atomic"
-	"time"
 
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 
@@ -59,23 +57,12 @@ func (sacTransferMode) VerifyReady(ctx context.Context, st *state.State) error {
 	}
 
 	for i, sacStr := range st.SACs {
-		if sacStr == "" {
-			return fmt.Errorf("SAC[%d] contract ID is empty -- run setup first", i)
-		}
-		contractID, err := decodeContractID(sacStr)
-		if err != nil {
-			return fmt.Errorf("decode SAC[%d] contract ID: %w", i, err)
-		}
-		exists, err := contractInstanceExists(ctx, st.RPCClient, contractID)
-		if err != nil {
-			return fmt.Errorf("check SAC[%d] contract instance: %w", i, err)
-		}
-		if !exists {
-			return fmt.Errorf("SAC[%d] contract %s is missing on-ledger -- rerun setup", i, sacStr)
+		if _, err := requireReadyContract(ctx, st, fmt.Sprintf("SAC[%d]", i), sacStr); err != nil {
+			return err
 		}
 	}
 
-	return verifyHolderTrustlinesReady(ctx, st, holderAccounts, "SAC")
+	return verifyTrustlineBalancesReady(ctx, st, holderAccounts, "SAC")
 }
 
 func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state.State, txSourceAccounts []*keypair.Full) (vegeta.Targeter, SequenceResetFunc, error) {
@@ -163,28 +150,10 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 	// Pre-load the on-ledger sequence numbers for every participant account.
 	// These serve as the base for per-account atomic counters that track
 	// sequence progress independently.
-	seqBase, err := loadSeqNums(ctx, st, txSourceAccounts)
+	seqs, err := newSequenceManager(ctx, st, txSourceAccounts, "SAC tx-source")
 	if err != nil {
-		return nil, nil, fmt.Errorf("load SAC tx-source sequence numbers: %w", err)
+		return nil, nil, err
 	}
-
-	// Per-account sequence counters.  Each counter holds the last sequence
-	// number assigned for that account (initialised to the on-ledger value).
-	// The targeter atomically increments a counter to obtain the next
-	// sequence; on a non-consuming failure the runner calls resetSeq to
-	// decrement it back so the sequence is reused on the next attempt.
-	seqCounters := make([]atomic.Int64, txSourceCount)
-	for i, base := range seqBase {
-		seqCounters[i].Store(base)
-	}
-
-	// resetSeq reverts the sequence counter for the account identified by
-	// the JSON-RPC ID.  The ID is set to slot+1 in the targeter and
-	// txSrcIdx = slot % txSourceCount, so we can recover the account index.
-	resetSeq := SequenceResetFunc(func(jsonRPCId int64) {
-		txSrcIdx := int((jsonRPCId - 1) % int64(txSourceCount))
-		seqCounters[txSrcIdx].Add(-1)
-	})
 
 	networkPassphrase := st.NetworkPassphrase
 
@@ -198,7 +167,7 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 		// Claim the next slot and derive the transaction source account from it.
 		slot := atomic.AddInt64(&slotCounter, 1) - 1
 		txSrcIdx := int(slot % int64(txSourceCount))
-		seq := seqCounters[txSrcIdx].Add(1)
+		seq := seqs.Next(txSrcIdx)
 
 		// Pick a random SAC and a source/destination holder pair.
 		sacIdx := rand.IntN(len(st.SACs))
@@ -325,7 +294,7 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 		t.Body = body
 		t.Header = http.Header{"Content-Type": {"application/json"}}
 		return nil
-	}, resetSeq, nil
+	}, seqs.ResetFunc(), nil
 }
 
 // presimulate calls SimulateTransaction with the given src/dst keypair and
@@ -365,52 +334,7 @@ func presimulate(
 		Args:         args,
 	}
 
-	return simulateInvokeContract(state, txSourceKP, srcKP.Address(), invokeArgs)
-}
-
-// loadSeqNums fetches the current on-ledger sequence number for every account
-// in accountKPs using up to 50 concurrent LoadAccount calls. The returned
-// slice is the same length/order as accountKPs and is used as the per-account
-// atomic counter seed in targeter closures.
-func loadSeqNums(ctx context.Context, state *state.State, accountKPs []*keypair.Full) ([]int64, error) {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
-
-	n := len(accountKPs)
-	seqNums := make([]int64, n)
-	errs := make([]error, n)
-
-	const concurrency = 50
-	sem := make(chan struct{}, concurrency)
-	var wg sync.WaitGroup
-
-	for i := range n {
-		i := i
-		wg.Go(func() {
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			acct, err := state.RPCClient.LoadAccount(ctx, accountKPs[i].Address())
-			if err != nil {
-				errs[i] = err
-				return
-			}
-			seq, err := acct.GetSequenceNumber()
-			if err != nil {
-				errs[i] = err
-				return
-			}
-			seqNums[i] = seq
-		})
-	}
-	wg.Wait()
-
-	for i, err := range errs {
-		if err != nil {
-			return nil, fmt.Errorf("account[%d] load sequence: %w", i, err)
-		}
-	}
-	return seqNums, nil
+	return simulatePaddedInvokeContract(state, txSourceKP, srcKP.Address(), invokeArgs)
 }
 
 // buildFootprintFromTemplate takes the footprint returned by the simulator for
