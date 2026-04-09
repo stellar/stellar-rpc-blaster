@@ -82,6 +82,27 @@ type workload struct {
 // consistent.  Call this before the expensive setup phase so that obvious
 // misconfigurations are caught immediately.
 func ValidateConfig(cfg config.Config) error {
+	if err := ValidateCLIConfig(cfg); err != nil {
+		return err
+	}
+
+	simpleRequired := state.SimplePaymentSourceAccountCount(cfg)
+	sorobanRequired := state.SorobanSourceAccountCount(cfg)
+	totalRequired := simpleRequired + sorobanRequired
+
+	if cfg.NumberOfAccounts < totalRequired {
+		return fmt.Errorf(
+			"account pool too small for configured benchmark: have %d accounts but need at least %d "+
+				"(%d Soroban tx sources + %d simple-payment tx sources)  -- increase --accounts, reduce --target-rps, reduce --classic-rps, or shorten --duration",
+			cfg.NumberOfAccounts, totalRequired, sorobanRequired, simpleRequired,
+		)
+	}
+	return nil
+}
+
+// ValidateCLIConfig checks benchmark settings that can be validated before any
+// state-file load or RPC interaction.
+func ValidateCLIConfig(cfg config.Config) error {
 	if _, ok := modes[cfg.Mode]; !ok {
 		return fmt.Errorf("unknown benchmark mode: %q", cfg.Mode)
 	}
@@ -95,18 +116,6 @@ func ValidateConfig(cfg config.Config) error {
 		return fmt.Errorf(
 			"classic-rps must be a multiple of %d when simple payments use fixed-size batches",
 			state.SimplePaymentOpsPerTransaction,
-		)
-	}
-
-	simpleRequired := state.SimplePaymentSourceAccountCount(cfg)
-	sorobanRequired := state.SorobanSourceAccountCount(cfg)
-	totalRequired := simpleRequired + sorobanRequired
-
-	if cfg.NumberOfAccounts < totalRequired {
-		return fmt.Errorf(
-			"account pool too small for configured benchmark: have %d accounts but need at least %d "+
-				"(%d Soroban tx sources + %d simple-payment tx sources)  -- increase --accounts, reduce --target-rps, reduce --classic-rps, or shorten --duration",
-			cfg.NumberOfAccounts, totalRequired, sorobanRequired, simpleRequired,
 		)
 	}
 	return nil

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -61,6 +62,49 @@ func makeLogger(cmd *cobra.Command, service string) (*log.Entry, error) {
 func addRuntimeStatePreflightFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("skip-account-preflight", false, "Skip the early on-chain existence check for a small sample of participant accounts")
 	cmd.Flags().Int("account-preflight-sample", state.DefaultRuntimeAccountPreflightSampleSize, "How many participant accounts to check on-chain during runtime state preflight")
+}
+
+func runtimeStateLoadOptionsFromCommand(cmd *cobra.Command) (string, string, state.RuntimeLoadOptions, error) {
+	stateFile, err := cmd.Flags().GetString("state-file")
+	if err != nil {
+		return "", "", state.RuntimeLoadOptions{}, err
+	}
+	rpcURL, err := cmd.Flags().GetString("rpc-url")
+	if err != nil {
+		return "", "", state.RuntimeLoadOptions{}, err
+	}
+	skipAccountPreflight, err := cmd.Flags().GetBool("skip-account-preflight")
+	if err != nil {
+		return "", "", state.RuntimeLoadOptions{}, err
+	}
+	accountPreflightSample, err := cmd.Flags().GetInt("account-preflight-sample")
+	if err != nil {
+		return "", "", state.RuntimeLoadOptions{}, err
+	}
+	return stateFile, rpcURL, state.RuntimeLoadOptions{
+		VerifyAccountsExist: !skipAccountPreflight,
+		AccountCheckSample:  accountPreflightSample,
+	}, nil
+}
+
+func loadRuntimeStateFromCommand(cmd *cobra.Command, phase state.RuntimePhase) (string, *state.LoadedRuntimeState, error) {
+	stateFile, rpcURL, options, err := runtimeStateLoadOptionsFromCommand(cmd)
+	if err != nil {
+		return "", nil, err
+	}
+	loaded, err := state.LoadRuntimeStateWithOptions(cmd.Context(), phase, stateFile, os.Getenv("TX_LOAD_TEST_FEE_PAYER_SEED"), rpcURL, options)
+	if err != nil {
+		return "", nil, err
+	}
+	return stateFile, loaded, nil
+}
+
+func signalCommandContext(cmd *cobra.Command, logger *log.Entry, forceExit bool) (context.Context, context.CancelFunc) {
+	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+	if forceExit {
+		forceExitOnSecondSignal(logger)
+	}
+	return ctx, cancel
 }
 
 func commonConfig(cmd *cobra.Command, cfg *config.Config) error {

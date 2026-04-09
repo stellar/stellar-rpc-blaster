@@ -32,10 +32,10 @@ func (soroswapMode) Label() string { return "soroswap" }
 
 func (soroswapMode) VerifyReady(ctx context.Context, st *state.State) error {
 	if st.SoroswapFactoryContract == "" {
-		return fmt.Errorf("soroswap factory contract ID is empty -- run setup first")
+		return benchmarkMissingContractIDError("Soroswap", "soroswap factory")
 	}
 	if st.SoroswapRouterContract == "" {
-		return fmt.Errorf("soroswap router contract ID is empty -- run setup first")
+		return benchmarkMissingContractIDError("Soroswap", "soroswap router")
 	}
 	if len(st.SoroswapPairContracts) != len(sharedsoroswap.BenchmarkPairs) {
 		return fmt.Errorf("need %d Soroswap pair contracts, got %d -- rerun setup", len(sharedsoroswap.BenchmarkPairs), len(st.SoroswapPairContracts))
@@ -46,7 +46,7 @@ func (soroswapMode) VerifyReady(ctx context.Context, st *state.State) error {
 		holderAccounts = state.DefaultSACHolderKPs(st.AccountKPs)
 	}
 	if len(holderAccounts) == 0 {
-		return fmt.Errorf("need trustlined participant accounts for Soroswap benchmark -- rerun setup")
+		return benchmarkStateCountError("Soroswap", 1, len(holderAccounts), "trustlined participant account")
 	}
 	if err := verifyTrustlineBalancesReady(ctx, st, holderAccounts, "Soroswap"); err != nil {
 		return err
@@ -90,10 +90,10 @@ func (soroswapMode) VerifyReady(ctx context.Context, st *state.State) error {
 
 func (soroswapMode) NewTargeter(ctx context.Context, rpcURL string, st *state.State, txSourceAccounts []*keypair.Full) (vegeta.Targeter, SequenceResetFunc, error) {
 	if len(txSourceAccounts) == 0 {
-		return nil, nil, fmt.Errorf("need at least 1 participant account for Soroswap tx sources")
+		return nil, nil, benchmarkTargeterCountError("Soroswap", 1, len(txSourceAccounts), "participant account")
 	}
 	if st.SoroswapRouterContract == "" {
-		return nil, nil, fmt.Errorf("soroswap router contract ID is empty -- run setup first")
+		return nil, nil, benchmarkMissingContractIDError("Soroswap", "soroswap router")
 	}
 	if len(st.SoroswapPairContracts) != len(sharedsoroswap.BenchmarkPairs) {
 		return nil, nil, fmt.Errorf("need %d Soroswap pair contracts, got %d -- rerun setup", len(sharedsoroswap.BenchmarkPairs), len(st.SoroswapPairContracts))

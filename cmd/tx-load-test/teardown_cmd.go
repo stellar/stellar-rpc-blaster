@@ -1,10 +1,6 @@
 package main
 
 import (
-	"os"
-	"os/signal"
-	"syscall"
-
 	"github.com/spf13/cobra"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
@@ -38,27 +34,7 @@ func runTeardown(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	stateFile, err := cmd.Flags().GetString("state-file")
-	if err != nil {
-		return err
-	}
-	rpcURL, err := cmd.Flags().GetString("rpc-url")
-	if err != nil {
-		return err
-	}
-	skipAccountPreflight, err := cmd.Flags().GetBool("skip-account-preflight")
-	if err != nil {
-		return err
-	}
-	accountPreflightSample, err := cmd.Flags().GetInt("account-preflight-sample")
-	if err != nil {
-		return err
-	}
-
-	loaded, err := state.LoadRuntimeStateWithOptions(cmd.Context(), state.RuntimePhaseTeardown, stateFile, os.Getenv("TX_LOAD_TEST_FEE_PAYER_SEED"), rpcURL, state.RuntimeLoadOptions{
-		VerifyAccountsExist: !skipAccountPreflight,
-		AccountCheckSample:  accountPreflightSample,
-	})
+	stateFile, loaded, err := loadRuntimeStateFromCommand(cmd, state.RuntimePhaseTeardown)
 	if err != nil {
 		return err
 	}
@@ -68,10 +44,8 @@ func runTeardown(cmd *cobra.Command, _ []string) error {
 	cfg.NetworkPassphrase = loaded.Persisted.NetworkPassphrase
 	cfg.NumberOfAccounts = len(loaded.Persisted.AccountIndices)
 
-	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := signalCommandContext(cmd, logger, true)
 	defer cancel()
-
-	forceExitOnSecondSignal(logger)
 
 	logger.Infof("loaded state from %s (%d accounts)", stateFile, cfg.NumberOfAccounts)
 	return teardown.Teardown(ctx, logger, cfg, loaded.Live, stateFile)
