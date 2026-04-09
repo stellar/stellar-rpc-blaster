@@ -215,24 +215,26 @@ func (a *Aggregator) ActivateEndpoint(endpointKey string) {
 	a.stats[endpointKey].startTime = time.Now()
 }
 
-// Computes the error percentage across all endpoints for the most recently completed window.
-// Requires at least 2 windows so we never evaluate a partially-filled window.
+// checkErrorPercent returns the highest error percentage of any single endpoint's
+// most recently completed window. Requires at least 2 windows per endpoint so we
+// never evaluate a partially-filled window.
 func (a *Aggregator) checkErrorPercent() int {
-	var totalSuccess uint64
-	var totalErrors uint64
+	var worst int
 	for _, stats := range a.stats {
 		if len(stats.windows) < 2 {
 			continue
 		}
-		lastCompleted := stats.windows[len(stats.windows)-2]
-		totalSuccess += lastCompleted.success
-		totalErrors += lastCompleted.errors
+		w := stats.windows[len(stats.windows)-2]
+		total := w.success + w.errors
+		if total == 0 {
+			continue
+		}
+		pct := int(float64(w.errors) / float64(total) * 100)
+		if pct > worst {
+			worst = pct
+		}
 	}
-	total := totalSuccess + totalErrors
-	if total == 0 {
-		return 0
-	}
-	return int(float64(totalErrors) / float64(total) * 100)
+	return worst
 }
 
 // constructs a logging string showing progress for all endpoints
