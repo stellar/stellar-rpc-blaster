@@ -4,7 +4,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"net/url"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -279,11 +279,11 @@ func (r *rejectionCounts) entries() []rejectionCountEntry {
 	for code, count := range r.counts {
 		entries = append(entries, rejectionCountEntry{code: code, count: count})
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].count != entries[j].count {
-			return entries[i].count > entries[j].count
+	slices.SortFunc(entries, func(a, b rejectionCountEntry) int {
+		if order := cmp.Compare(b.count, a.count); order != 0 {
+			return order
 		}
-		return cmp.Less(entries[i].code, entries[j].code)
+		return cmp.Compare(a.code, b.code)
 	})
 	return entries
 }
@@ -294,7 +294,7 @@ func logE2ELatencies(logger *log.Entry, latencies []time.Duration, timeouts uint
 		return
 	}
 
-	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
+	slices.Sort(latencies)
 	var total time.Duration
 	for _, d := range latencies {
 		total += d

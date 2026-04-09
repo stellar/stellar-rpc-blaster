@@ -41,8 +41,8 @@ func (a *Aggregator) Results() *Results {
 		Endpoints:       make(map[string]*EndpointResult, len(a.stats)),
 	}
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	for _, name := range a.orderedEndpoints {
 		stats := a.stats[name]
 		stats.refreshPercentiles() // compute final percentiles from histogram

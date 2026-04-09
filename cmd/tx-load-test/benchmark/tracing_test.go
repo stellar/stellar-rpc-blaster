@@ -18,9 +18,9 @@ import (
 )
 
 type rpcTraceEnvelope struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      any         `json:"id"`
-	Result  interface{} `json:"result"`
+	JSONRPC string `json:"jsonrpc"`
+	ID      any    `json:"id"`
+	Result  any    `json:"result"`
 }
 
 func readTraceRecords(t *testing.T, path string) []benchmarkTraceRecord {

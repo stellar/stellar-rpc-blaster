@@ -3,7 +3,7 @@ package blasterMetrics
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -83,7 +83,7 @@ func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
 		writeOutputPath: settings.TestOutputPath,
 	}
 	endpoints := settings.GetEndpoints()
-	sort.Strings(endpoints)
+	slices.Sort(endpoints)
 	a.orderedEndpoints = endpoints // maintain order for consistent output
 
 	for _, endpointKey := range endpoints {
@@ -146,8 +146,8 @@ func (a *Aggregator) String() string {
 
 	fmt.Fprintf(&line, "\n[%s / %s]", elapsed, a.duration)
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 
 	for _, endpointName := range a.orderedEndpoints {
 		endpointStats := a.stats[endpointName]
