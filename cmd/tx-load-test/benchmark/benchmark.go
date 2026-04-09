@@ -203,6 +203,9 @@ func Run(ctx context.Context, logger *log.Entry, cfg config.Config, st *state.St
 	if err := ValidateConfig(cfg); err != nil {
 		return err
 	}
+	if st == nil || st.FeePayerKP == nil {
+		return fmt.Errorf("benchmark state missing fee payer keypair")
+	}
 	if _, err := holderAccountsForBenchmark(cfg, st); err != nil {
 		return err
 	}

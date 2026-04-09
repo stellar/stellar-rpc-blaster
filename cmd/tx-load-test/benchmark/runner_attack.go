@@ -17,6 +17,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/log"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
+	txstate "github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
 
 // sendRespEnvelope is the minimal JSON-RPC response envelope needed to
@@ -41,7 +42,10 @@ type pollItem struct {
 type attackState struct {
 	hashes             chan pollItem
 	errorCodes         *rejectionCounts
+	submitOpResults    *rejectionCounts
+	submitDiagnostics  *rejectionCounts
 	onChainErrorCodes  *rejectionCounts
+	onChainOpResults   *rejectionCounts
 	onChainDiagnostics *rejectionCounts
 	e2eStats           e2eLatencyStats
 
@@ -60,7 +64,10 @@ func newAttackState(maxTx int) *attackState {
 	return &attackState{
 		hashes:             make(chan pollItem, maxTx),
 		errorCodes:         newRejectionCounts(),
+		submitOpResults:    newRejectionCounts(),
+		submitDiagnostics:  newRejectionCounts(),
 		onChainErrorCodes:  newRejectionCounts(),
+		onChainOpResults:   newRejectionCounts(),
 		onChainDiagnostics: newRejectionCounts(),
 	}
 }
@@ -96,6 +103,12 @@ func (s *attackState) handleSendTransactionEnvelope(envelope sendRespEnvelope, s
 	case "ERROR":
 		atomic.AddUint64(&s.submitErrors, 1)
 		s.errorCodes.inc(ledger.DecodeTransactionResultCode(envelope.Result.ErrorResultXDR))
+		for _, opResult := range txstate.DecodeOperationResults(envelope.Result.ErrorResultXDR) {
+			s.submitOpResults.inc(opResult)
+		}
+		if summary := summarizeDiagnosticEvents(envelope.Result.DiagnosticEventsXDR); summary != "" {
+			s.submitDiagnostics.inc(summary)
+		}
 		releaseRetryable(accounts, envelope.ID)
 		return true
 	default:
@@ -176,12 +189,13 @@ func drainAttackResults(results <-chan *vegeta.Result, metrics *vegeta.Metrics, 
 	}
 }
 
-func (s *attackState) submissionSnapshot() (submitted, httpErr, queued, tryAgainLater, submitErrors uint64) {
+func (s *attackState) submissionSnapshot() (submitted, httpErr, queued, tryAgainLater, submitErrors, ambiguous uint64) {
 	return atomic.LoadUint64(&s.submitted),
 		atomic.LoadUint64(&s.httpErr),
 		atomic.LoadUint64(&s.queued),
 		atomic.LoadUint64(&s.tryAgainLater),
-		atomic.LoadUint64(&s.submitErrors)
+		atomic.LoadUint64(&s.submitErrors),
+		atomic.LoadUint64(&s.ambiguous)
 }
 
 func requestIDFromResultURL(rawURL string) int64 {

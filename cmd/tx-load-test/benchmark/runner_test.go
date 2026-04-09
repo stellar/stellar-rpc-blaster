@@ -52,10 +52,11 @@ func TestHandleSendTransactionEnvelopeTracksStatuses(t *testing.T) {
 		Result: protocol.SendTransactionResponse{Status: "UNKNOWN"},
 	}, time.Unix(4, 0), leases))
 
-	_, _, queued, tryAgainLater, submitErrors := state.submissionSnapshot()
+	_, _, queued, tryAgainLater, submitErrors, ambiguous := state.submissionSnapshot()
 	require.Equal(t, uint64(1), queued)
 	require.Equal(t, uint64(1), tryAgainLater)
 	require.Equal(t, uint64(1), submitErrors)
+	require.Equal(t, uint64(1), ambiguous)
 	require.Equal(t, []int64{12, 13}, leases.retryableReleases)
 	require.Equal(t, []int64{14}, leases.ambiguousReleases)
 }
@@ -65,8 +66,9 @@ func TestProcessAttackResultCountsHTTPFailures(t *testing.T) {
 	state := newAttackState(1)
 	leases := &fakeLeaseManager{}
 	processAttackResult(&vegeta.Result{Code: 500, Error: "boom", URL: "https://rpc.example#blaster-rpc-id=77"}, &metrics, nilLogger(), state, leases, "simple-payment", nil)
-	_, httpErr, _, _, _ := state.submissionSnapshot()
+	_, httpErr, _, _, _, ambiguous := state.submissionSnapshot()
 	require.Equal(t, uint64(1), httpErr)
+	require.Equal(t, uint64(1), ambiguous)
 	require.Equal(t, uint64(1), metrics.Requests)
 	require.Equal(t, []int64{77}, leases.ambiguousReleases)
 }
