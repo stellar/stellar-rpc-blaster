@@ -12,12 +12,18 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
 
+	sharedsoroban "github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/soroban"
 	sharedsoroswap "github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/soroswap"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
 
 const (
 	soroswapSwapDeadlineWindow = 24 * time.Hour
+	// Soroswap adds classic trustline keys after presimulation, so reserve
+	// extra byte budget and fee headroom for each appended read-write key.
+	soroswapAdditionalDiskReadBytesPerKey = uint32(256)
+	soroswapAdditionalWriteBytesPerKey    = uint32(256)
+	soroswapAdditionalResourceFeePerKey   = int64(10_000)
 )
 
 // soroswapMode is the Soroswap-swap benchmark workload.
@@ -129,10 +135,17 @@ func (soroswapMode) NewTargeter(ctx context.Context, rpcURL string, st *state.St
 		if err != nil {
 			return fmt.Errorf("rewrite Soroswap auth: %w", err)
 		}
-		footprint, err := sharedsoroswap.RewriteFootprintAccount(tmpl.simulation.Footprint, tmpl.traderAddress, txSourceKP.Address())
+		footprint, err := buildSoroswapFootprint(
+			tmpl.simulation.Footprint,
+			tmpl.traderAddress,
+			txSourceKP.Address(),
+			tmpl.inputAsset,
+			tmpl.outputAsset,
+		)
 		if err != nil {
-			return fmt.Errorf("rewrite Soroswap footprint: %w", err)
+			return fmt.Errorf("build Soroswap footprint: %w", err)
 		}
+		resources, resourceFee := soroswapResourcesForFootprint(tmpl.simulation, footprint)
 
 		id := slot + 1
 		body, err := buildSorobanSendTransactionBody(sorobanSendTransactionParams{
@@ -144,13 +157,8 @@ func (soroswapMode) NewTargeter(ctx context.Context, rpcURL string, st *state.St
 			OpSourceAccount:   txSourceKP.Address(),
 			InvokeArgs:        invokeArgs,
 			AuthEntries:       authEntries,
-			Resources: xdr.SorobanResources{
-				Footprint:     footprint,
-				Instructions:  tmpl.simulation.Resources.Instructions,
-				DiskReadBytes: tmpl.simulation.Resources.DiskReadBytes,
-				WriteBytes:    tmpl.simulation.Resources.WriteBytes,
-			},
-			ResourceFee: tmpl.simulation.ResourceFee,
+			Resources:         resources,
+			ResourceFee:       resourceFee,
 		})
 		if err != nil {
 			return err
@@ -158,4 +166,87 @@ func (soroswapMode) NewTargeter(ctx context.Context, rpcURL string, st *state.St
 		populateJSONRPCTarget(t, rpcURL, body)
 		return nil
 	}, seqs.ResetFunc(), nil
+}
+
+func soroswapResourcesForFootprint(simulated sharedsoroban.SimulatedInvocation, footprint xdr.LedgerFootprint) (xdr.SorobanResources, xdr.Int64) {
+	resources := simulated.Resources
+	resources.Footprint = footprint
+	resourceFee := simulated.ResourceFee
+
+	additionalReadWriteKeys := len(footprint.ReadWrite) - len(simulated.Footprint.ReadWrite)
+	if additionalReadWriteKeys <= 0 {
+		return resources, resourceFee
+	}
+
+	resources.DiskReadBytes += xdr.Uint32(additionalReadWriteKeys) * xdr.Uint32(soroswapAdditionalDiskReadBytesPerKey)
+	resources.WriteBytes += xdr.Uint32(additionalReadWriteKeys) * xdr.Uint32(soroswapAdditionalWriteBytesPerKey)
+	resourceFee += xdr.Int64(additionalReadWriteKeys) * xdr.Int64(soroswapAdditionalResourceFeePerKey)
+	return resources, resourceFee
+}
+
+func buildSoroswapFootprint(
+	tmpl xdr.LedgerFootprint,
+	oldTraderAddress string,
+	newTraderAddress string,
+	inputAsset xdr.Asset,
+	outputAsset xdr.Asset,
+) (xdr.LedgerFootprint, error) {
+	footprint, err := sharedsoroswap.RewriteFootprintAccount(tmpl, oldTraderAddress, newTraderAddress)
+	if err != nil {
+		return xdr.LedgerFootprint{}, err
+	}
+
+	traderID, err := xdr.AddressToAccountId(newTraderAddress)
+	if err != nil {
+		return xdr.LedgerFootprint{}, fmt.Errorf("parse trader account: %w", err)
+	}
+	inputTrustline, err := trustlineLedgerKey(traderID, inputAsset)
+	if err != nil {
+		return xdr.LedgerFootprint{}, fmt.Errorf("build input trustline key: %w", err)
+	}
+	outputTrustline, err := trustlineLedgerKey(traderID, outputAsset)
+	if err != nil {
+		return xdr.LedgerFootprint{}, fmt.Errorf("build output trustline key: %w", err)
+	}
+
+	return appendReadWriteKeysIfMissing(footprint, inputTrustline, outputTrustline)
+}
+
+func appendReadWriteKeysIfMissing(footprint xdr.LedgerFootprint, keys ...xdr.LedgerKey) (xdr.LedgerFootprint, error) {
+	updated := xdr.LedgerFootprint{
+		ReadOnly:  append([]xdr.LedgerKey(nil), footprint.ReadOnly...),
+		ReadWrite: append([]xdr.LedgerKey(nil), footprint.ReadWrite...),
+	}
+	existing := make(map[string]struct{}, len(updated.ReadWrite))
+	for _, key := range updated.ReadWrite {
+		encoded, err := xdr.MarshalBase64(key)
+		if err != nil {
+			return xdr.LedgerFootprint{}, fmt.Errorf("marshal existing footprint key: %w", err)
+		}
+		existing[encoded] = struct{}{}
+	}
+	for _, key := range keys {
+		encoded, err := xdr.MarshalBase64(key)
+		if err != nil {
+			return xdr.LedgerFootprint{}, fmt.Errorf("marshal appended footprint key: %w", err)
+		}
+		if _, ok := existing[encoded]; ok {
+			continue
+		}
+		updated.ReadWrite = append(updated.ReadWrite, key)
+		existing[encoded] = struct{}{}
+	}
+	return updated, nil
+}
+
+func trustlineLedgerKey(accountID xdr.AccountId, asset xdr.Asset) (xdr.LedgerKey, error) {
+	if asset.Type != xdr.AssetTypeAssetTypeCreditAlphanum4 && asset.Type != xdr.AssetTypeAssetTypeCreditAlphanum12 {
+		return xdr.LedgerKey{}, fmt.Errorf("unsupported trustline asset type %s", asset.Type)
+	}
+	tla := xdr.TrustLineAsset{
+		Type:       asset.Type,
+		AlphaNum4:  asset.AlphaNum4,
+		AlphaNum12: asset.AlphaNum12,
+	}
+	return xdr.LedgerKey{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.LedgerKeyTrustLine{AccountId: accountID, Asset: tla}}, nil
 }
