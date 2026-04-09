@@ -83,6 +83,7 @@ loop:
 		included, onChainFail, pollErr)
 	if onChainFail > 0 {
 		state.onChainErrorCodes.log(logger, "on-chain failure breakdown")
+		state.onChainDiagnostics.log(logger, "on-chain diagnostic summary")
 	}
 
 	logE2ELatencies(logger, state.e2eStats.snapshot(), pollErr)

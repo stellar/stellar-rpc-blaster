@@ -1,6 +1,7 @@
 package benchmark
 
 import (
+	"cmp"
 	"encoding/json"
 	"sort"
 	"sync"
@@ -35,10 +36,11 @@ type pollItem struct {
 }
 
 type attackState struct {
-	hashes            chan pollItem
-	errorCodes        *rejectionCounts
-	onChainErrorCodes *rejectionCounts
-	e2eStats          e2eLatencyStats
+	hashes             chan pollItem
+	errorCodes         *rejectionCounts
+	onChainErrorCodes  *rejectionCounts
+	onChainDiagnostics *rejectionCounts
+	e2eStats           e2eLatencyStats
 
 	submitted     uint64
 	httpErr       uint64
@@ -52,9 +54,10 @@ type attackState struct {
 
 func newAttackState(maxTx int) *attackState {
 	return &attackState{
-		hashes:            make(chan pollItem, maxTx),
-		errorCodes:        newRejectionCounts(),
-		onChainErrorCodes: newRejectionCounts(),
+		hashes:             make(chan pollItem, maxTx),
+		errorCodes:         newRejectionCounts(),
+		onChainErrorCodes:  newRejectionCounts(),
+		onChainDiagnostics: newRejectionCounts(),
 	}
 }
 
@@ -202,14 +205,33 @@ func (r *rejectionCounts) inc(code string) {
 }
 
 func (r *rejectionCounts) log(logger *log.Entry, prefix string) {
+	for _, entry := range r.entries() {
+		logger.Infof("  %s: %s=%d", prefix, entry.code, entry.count)
+	}
+}
+
+type rejectionCountEntry struct {
+	code  string
+	count int64
+}
+
+func (r *rejectionCounts) entries() []rejectionCountEntry {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.counts) == 0 {
-		return
+		return nil
 	}
-	for code, n := range r.counts {
-		logger.Infof("  %s: %s=%d", prefix, code, n)
+	entries := make([]rejectionCountEntry, 0, len(r.counts))
+	for code, count := range r.counts {
+		entries = append(entries, rejectionCountEntry{code: code, count: count})
 	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].count != entries[j].count {
+			return entries[i].count > entries[j].count
+		}
+		return cmp.Less(entries[i].code, entries[j].code)
+	})
+	return entries
 }
 
 func logE2ELatencies(logger *log.Entry, latencies []time.Duration, timeouts uint64) {

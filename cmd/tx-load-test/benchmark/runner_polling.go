@@ -67,6 +67,9 @@ func handlePollResponse(logger *log.Entry, state *attackState, item pollItem, re
 		state.e2eStats.observe(time.Since(item.submittedAt))
 		code := ledger.DecodeTransactionResultCode(resp.ResultXDR)
 		state.onChainErrorCodes.inc(code)
+		if summary := summarizeDiagnosticEvents(resp.DiagnosticEventsXDR); summary != "" {
+			state.onChainDiagnostics.inc(summary)
+		}
 		entry := logger.WithField("hash", item.hash).WithField("resultCode", code)
 		entry.Debug("on-chain failure")
 		for i, ev := range resp.DiagnosticEventsXDR {
