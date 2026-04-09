@@ -1,5 +1,4 @@
-.DS_Store
-output/*
+.DS_Store/
 stellar-rpc-blaster
 tx-load-test
 *.seed
