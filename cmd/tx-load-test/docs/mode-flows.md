@@ -11,24 +11,21 @@ Setup is one shared superset flow, executed in this order in `cmd/tx-load-test/s
 7. Soroswap liquidity
 8. OZ token deployment and minting
 
-## Setup Flow By Mode
+## Specific Setup for Each Mode
 
 ### `sac-transfer`
 
 - Shared setup creates the fee payer and benchmark assets `BLTA`, `BLTB`, `BLTC`.
 - Accounts are provisioned, with a trustlined holder subset sized for SAC-style activity.
 - SAC instances are deployed for all three classic assets in `cmd/tx-load-test/setup/sac.go`.
-- No OZ- or Soroswap-specific state is required by the SAC mode itself, but shared setup still provisions them so one setup can serve all modes.
 
 ### `oz-transfer`
 
-- Shared setup does everything above.
 - OZ token Wasm is loaded, the OZ contract is deployed deterministically if missing, and participant balances are reconciled and minted in `cmd/tx-load-test/setup/oz_token.go`.
 - Result: every participant account should have a positive OZ balance.
 
 ### `soroswap`
 
-- Shared setup does everything above.
 - Soroswap factory and router are resolved or bootstrapped.
 - Exactly two benchmark pools are created or reused from `BenchmarkPairs` in `cmd/tx-load-test/soroswap/support.go` and `cmd/tx-load-test/setup/soroswap.go`:
 1. BLTA/BLTB
@@ -48,13 +45,13 @@ All benchmark runs share the same outer structure in `cmd/tx-load-test/benchmark
 6. submit via `sendTransaction`
 7. poll accepted hashes to terminal state
 8. log submission, on-chain, and latency summaries
-9. optionally run the parallel simple-payment companion stream if `classic-rps > 0`
+9. optionally run the parallel simple-payment companion stream
 
 ### `sac-transfer`
 
 - Picks a random SAC among the 3 deployed SACs.
 - Picks a random trustlined holder as logical sender and a different trustlined holder as receiver.
-- Uses a leased account as the tx source, with the holder account as the operation source when needed.
+- Uses a leased account as the tx source and holder account as the operation source.
 - Builds a SAC `transfer(src, dst, amount)` invocation and submits it fee-bumped.
 - This is the only mode where tx source and logical token sender are intentionally decoupled.
 
