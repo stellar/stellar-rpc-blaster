@@ -157,6 +157,9 @@ Flags:
 - `--duration`, default `100s`
 - `--ramp-up`, default `20s`
 - `--rpc-url`, optional override from state
+- `--trace-file`, optional NDJSON submit/poll trace output
+- `--skip-account-preflight`, optional; disables the sampled on-chain participant existence preflight
+- `--account-preflight-sample`, default `10`
 - `--state-file`, default `state.json`
 - `--log-level`, default `info`
 
@@ -187,6 +190,7 @@ Validation rules:
 - `--target-rps > 0`
 - `--classic-rps >= 0`
 - if `--classic-rps > 0`, it directly determines the simple-payment tx/s rate
+- bench should perform a small sampled on-chain participant-account existence preflight by default, and allow it to be disabled explicitly
 - account pool must be large enough for both the Soroban stream and the classic companion stream for the requested duration and rate
 - `sac-transfer` requires valid SAC holder subsets and trustlines in state
 
@@ -400,6 +404,7 @@ This is essential. Recreate both the sizing math and the runtime account-coordin
 
 - submit benchmark traffic through RPC using `sendTransaction`
 - wrap benchmark submissions in fee-bump envelopes paid by the fee payer
+- give benchmark transactions short time bounds and keep the poll timeout slightly longer than transaction expiry so late / evicted traffic is more likely to resolve as terminal failure than poll ambiguity
 - keep submission and result-polling concerns separate
 - capture both client-side submission outcomes and eventual on-chain outcomes
 - retain breakdowns for retryable RPC errors versus transaction-level failures
