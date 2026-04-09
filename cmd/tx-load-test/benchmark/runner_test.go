@@ -63,8 +63,24 @@ func TestHandleSendTransactionEnvelopeTracksStatuses(t *testing.T) {
 func TestProcessAttackResultCountsHTTPFailures(t *testing.T) {
 	metrics := vegeta.Metrics{}
 	state := newAttackState(1)
-	processAttackResult(&vegeta.Result{Code: 500, Error: "boom"}, &metrics, nilLogger(), state, nil)
+	processAttackResult(&vegeta.Result{Code: 500, Error: "boom"}, &metrics, nilLogger(), state, nil, "simple-payment", nil)
 	_, httpErr, _, _, _ := state.submissionSnapshot()
 	require.Equal(t, uint64(1), httpErr)
 	require.Equal(t, uint64(1), metrics.Requests)
+}
+
+func TestHandlePollResponseTracksOnChainFailureCodes(t *testing.T) {
+	state := newAttackState(1)
+	item := pollItem{hash: "abc", submittedAt: time.Now().Add(-time.Second)}
+	resp := &protocol.GetTransactionResponse{
+		TransactionDetails: protocol.TransactionDetails{Status: protocol.TransactionStatusFailed},
+	}
+
+	handlePollResponse(nilLogger(), state, item, resp)
+
+	included, onChainFail, pollErr := state.pollSnapshot()
+	require.Equal(t, uint64(0), included)
+	require.Equal(t, uint64(1), onChainFail)
+	require.Equal(t, uint64(0), pollErr)
+	require.Equal(t, int64(1), state.onChainErrorCodes.counts["unknown"])
 }

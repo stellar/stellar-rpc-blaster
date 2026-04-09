@@ -169,6 +169,16 @@ func partitionSourceAccounts(cfg config.Config, st *state.State) ([]*keypair.Ful
 }
 
 func runWorkloads(ctx context.Context, logger *log.Entry, baseCfg config.Config, st *state.State, httpClient *http.Client, workloads []workload) error {
+	recorder, err := openBenchmarkTraceRecorder(baseCfg.TraceFile)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if recorder != nil {
+			_ = recorder.Close()
+		}
+	}()
+
 	g, groupCtx := errgroup.WithContext(ctx)
 	for _, workload := range workloads {
 		wl := workload
@@ -177,7 +187,7 @@ func runWorkloads(ctx context.Context, logger *log.Entry, baseCfg config.Config,
 			runCfg.TargetRPS = wl.targetRPS
 			scoped := logger.WithField("phase", wl.label)
 			scoped.Infof("duration=%s ramp=%s %s", runCfg.Duration, runCfg.RampUp, wl.rateSummary)
-			if err := runVegetaAttack(groupCtx, scoped, runCfg, httpClient, st.RPCClient, wl.label, wl.targeter, wl.resetSeq); err != nil {
+			if err := runVegetaAttack(groupCtx, scoped, runCfg, httpClient, st.RPCClient, wl.label, wl.targeter, wl.resetSeq, recorder); err != nil {
 				return fmt.Errorf("%s: %w", wl.label, err)
 			}
 			return nil

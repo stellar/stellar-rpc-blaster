@@ -26,21 +26,26 @@ func pollWorkerCount(targetRPS int) int {
 const pollTimeout = 30 * time.Second
 
 func startPollWorkers(ctx context.Context, logger *log.Entry, cfg config.Config, rpc *rpcclient.Client, state *attackState, resetSeq SequenceResetFunc) (int, *sync.WaitGroup) {
+
+	return startPollWorkersWithTrace(ctx, logger, cfg, rpc, state, resetSeq, "", nil)
+}
+
+func startPollWorkersWithTrace(ctx context.Context, logger *log.Entry, cfg config.Config, rpc *rpcclient.Client, state *attackState, resetSeq SequenceResetFunc, workload string, recorder *benchmarkTraceRecorder) (int, *sync.WaitGroup) {
 	numPollWorkers := pollWorkerCount(cfg.TargetRPS)
 	logger.Infof("starting %d poll workers", numPollWorkers)
 	var pollWg sync.WaitGroup
 	for range numPollWorkers {
 		pollWg.Go(func() {
-			pollTransactions(ctx, logger, rpc, state, resetSeq)
+			pollTransactions(ctx, logger, rpc, state, resetSeq, workload, recorder)
 		})
 	}
 	return numPollWorkers, &pollWg
 }
 
-func pollTransactions(ctx context.Context, logger *log.Entry, rpc *rpcclient.Client, state *attackState, resetSeq SequenceResetFunc) {
+func pollTransactions(ctx context.Context, logger *log.Entry, rpc *rpcclient.Client, state *attackState, resetSeq SequenceResetFunc, workload string, recorder *benchmarkTraceRecorder) {
 	for item := range state.hashes {
 		pollCtx, pollCancel := context.WithTimeout(ctx, pollTimeout)
-		resp, err := rpc.PollTransaction(pollCtx, item.hash)
+		resp, err := pollTransactionWithTrace(pollCtx, rpc, item.hash, workload, recorder)
 		pollCancel()
 		if err != nil {
 			atomic.AddUint64(&state.pollErr, 1)
@@ -61,6 +66,7 @@ func handlePollResponse(logger *log.Entry, state *attackState, item pollItem, re
 		atomic.AddUint64(&state.onChainFail, 1)
 		state.e2eStats.observe(time.Since(item.submittedAt))
 		code := ledger.DecodeTransactionResultCode(resp.ResultXDR)
+		state.onChainErrorCodes.inc(code)
 		entry := logger.WithField("hash", item.hash).WithField("resultCode", code)
 		entry.Debug("on-chain failure")
 		for i, ev := range resp.DiagnosticEventsXDR {

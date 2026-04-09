@@ -29,6 +29,7 @@ func runVegetaAttack(
 	label string,
 	targeter vegeta.Targeter,
 	resetSeq SequenceResetFunc,
+	recorder *benchmarkTraceRecorder,
 ) error {
 	pacer := engine.RampToConstantPacer{
 		StartRPS:      1,
@@ -42,12 +43,12 @@ func runVegetaAttack(
 
 	maxTx := cfg.TargetRPS*int(cfg.Duration.Seconds()) + 1000
 	state := newAttackState(maxTx)
-	numPollWorkers, pollWg := startPollWorkers(ctx, logger, cfg, rpc, state, resetSeq)
+	numPollWorkers, pollWg := startPollWorkersWithTrace(ctx, logger, cfg, rpc, state, resetSeq, label, recorder)
 
 	var metrics vegeta.Metrics
 
 	attacker := vegeta.NewAttacker(vegeta.Client(httpClient))
-	results := attacker.Attack(targeter, pacer, cfg.Duration, label)
+	results := attacker.Attack(traceTargeter(label, targeter, recorder), pacer, cfg.Duration, label)
 
 loop:
 	for {
@@ -59,11 +60,11 @@ loop:
 			if !ok {
 				break loop
 			}
-			processAttackResult(res, &metrics, logger, state, resetSeq)
+			processAttackResult(res, &metrics, logger, state, resetSeq, label, recorder)
 		}
 	}
 
-	drainAttackResults(results, &metrics, logger, state, resetSeq)
+	drainAttackResults(results, &metrics, logger, state, resetSeq, label, recorder)
 
 	close(state.hashes)
 	metrics.Close()
@@ -72,7 +73,7 @@ loop:
 	logger.Infof("attack complete  -- submitted=%d httpErr=%d queued=%d tryAgainLater=%d submitErrors=%d  -- waiting for poll workers",
 		submitted, httpErr, queued, tryAgainLater, submitErrors)
 	if submitErrors > 0 {
-		state.errorCodes.log(logger)
+		state.errorCodes.log(logger, "submit ERROR breakdown")
 	}
 
 	waitForPollWorkers(logger, queued, numPollWorkers, pollWg, state)
@@ -80,6 +81,9 @@ loop:
 	included, onChainFail, pollErr := state.pollSnapshot()
 	logger.Infof("on-chain results  -- included=%d failed=%d pollErr=%d",
 		included, onChainFail, pollErr)
+	if onChainFail > 0 {
+		state.onChainErrorCodes.log(logger, "on-chain failure breakdown")
+	}
 
 	logE2ELatencies(logger, state.e2eStats.snapshot(), pollErr)
 	logVegetaMetrics(logger, metrics)

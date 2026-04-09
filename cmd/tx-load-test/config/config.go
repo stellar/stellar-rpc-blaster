@@ -68,6 +68,10 @@ type Config struct {
 	// ClassicRPS is the steady-state operations per second for the parallel
 	// simple-payment stream. A value of 0 disables simple payments.
 	ClassicRPS int
+
+	// TraceFile optionally captures per-request benchmark submit/poll traces as
+	// newline-delimited JSON for post-run inspection.
+	TraceFile string
 }
 
 // DefaultConfig returns a Config with sensible defaults.

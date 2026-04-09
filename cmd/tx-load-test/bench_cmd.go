@@ -46,6 +46,7 @@ Run bench as many times as needed.`,
 	cmd.Flags().Duration("ramp-up", 20*time.Second, "Ramp-up period (RPS increases linearly from 1 to target-rps)")
 	cmd.Flags().Int("target-rps", 50, "Steady-state requests per second after ramp-up")
 	cmd.Flags().Int("classic-rps", config.DefaultClassicRPS, "Steady-state simple-payment operations per second after ramp-up (must be a multiple of 100)")
+	cmd.Flags().String("trace-file", "", "Optional newline-delimited JSON file that captures every benchmark submit and poll request/response")
 	return cmd
 }
 
@@ -103,6 +104,9 @@ func runBench(cmd *cobra.Command, _ []string) error {
 	if cfg.ClassicRPS, err = cmd.Flags().GetInt("classic-rps"); err != nil {
 		return err
 	}
+	if cfg.TraceFile, err = cmd.Flags().GetString("trace-file"); err != nil {
+		return err
+	}
 
 	if err = benchmark.ValidateConfig(cfg); err != nil {
 		return err
@@ -114,6 +118,9 @@ func runBench(cmd *cobra.Command, _ []string) error {
 	forceExitOnSecondSignal(logger)
 
 	logger.Infof("loaded state from %s (%d accounts, rpc=%s)", stateFile, cfg.NumberOfAccounts, cfg.RPCURL)
+	if cfg.TraceFile != "" {
+		logger.Infof("benchmark trace file enabled: %s", cfg.TraceFile)
+	}
 
 	httpClient := &http.Client{
 		Timeout: 30 * time.Second,

@@ -35,9 +35,10 @@ type pollItem struct {
 }
 
 type attackState struct {
-	hashes     chan pollItem
-	errorCodes *rejectionCounts
-	e2eStats   e2eLatencyStats
+	hashes            chan pollItem
+	errorCodes        *rejectionCounts
+	onChainErrorCodes *rejectionCounts
+	e2eStats          e2eLatencyStats
 
 	submitted     uint64
 	httpErr       uint64
@@ -51,8 +52,9 @@ type attackState struct {
 
 func newAttackState(maxTx int) *attackState {
 	return &attackState{
-		hashes:     make(chan pollItem, maxTx),
-		errorCodes: newRejectionCounts(),
+		hashes:            make(chan pollItem, maxTx),
+		errorCodes:        newRejectionCounts(),
+		onChainErrorCodes: newRejectionCounts(),
 	}
 }
 
@@ -83,12 +85,22 @@ func (s *attackState) handleSendTransactionEnvelope(envelope sendRespEnvelope, s
 	}
 }
 
-func processAttackResult(res *vegeta.Result, metrics *vegeta.Metrics, logger *log.Entry, state *attackState, resetSeq SequenceResetFunc) {
+func processAttackResult(res *vegeta.Result, metrics *vegeta.Metrics, logger *log.Entry, state *attackState, resetSeq SequenceResetFunc, workload string, recorder *benchmarkTraceRecorder) {
 	metrics.Add(res)
 	atomic.AddUint64(&state.submitted, 1)
 
 	if res.Error != "" || res.Code < 200 || res.Code >= 300 {
 		atomic.AddUint64(&state.httpErr, 1)
+		if recorder != nil {
+			recorder.record(benchmarkTraceRecord{
+				Timestamp:    res.Timestamp,
+				Workload:     workload,
+				Event:        "submit_response",
+				HTTPStatus:   int(res.Code),
+				Error:        res.Error,
+				ResponseBody: string(res.Body),
+			})
+		}
 		logger.Debugf("HTTP error: code=%d err=%s", res.Code, res.Error)
 		return
 	}
@@ -96,8 +108,36 @@ func processAttackResult(res *vegeta.Result, metrics *vegeta.Metrics, logger *lo
 	var envelope sendRespEnvelope
 	if err := json.Unmarshal(res.Body, &envelope); err != nil {
 		atomic.AddUint64(&state.httpErr, 1)
+		if recorder != nil {
+			recorder.record(benchmarkTraceRecord{
+				Timestamp:    res.Timestamp,
+				Workload:     workload,
+				Event:        "submit_response",
+				HTTPStatus:   int(res.Code),
+				Error:        err.Error(),
+				ResponseBody: string(res.Body),
+			})
+		}
 		logger.Debugf("parse response body: %v", err)
 		return
+	}
+	if recorder != nil {
+		resultCode := ""
+		if envelope.Result.Status == "ERROR" {
+			resultCode = ledger.DecodeTransactionResultCode(envelope.Result.ErrorResultXDR)
+		}
+		recorder.record(benchmarkTraceRecord{
+			Timestamp:         res.Timestamp,
+			Workload:          workload,
+			Event:             "submit_response",
+			RPCID:             envelope.ID,
+			Method:            protocol.SendTransactionMethodName,
+			HTTPStatus:        int(res.Code),
+			TransactionStatus: envelope.Result.Status,
+			ResultCode:        resultCode,
+			Hash:              envelope.Result.Hash,
+			ResponseBody:      string(res.Body),
+		})
 	}
 	if !state.handleSendTransactionEnvelope(envelope, res.Timestamp, resetSeq) {
 		atomic.AddUint64(&state.httpErr, 1)
@@ -105,9 +145,9 @@ func processAttackResult(res *vegeta.Result, metrics *vegeta.Metrics, logger *lo
 	}
 }
 
-func drainAttackResults(results <-chan *vegeta.Result, metrics *vegeta.Metrics, logger *log.Entry, state *attackState, resetSeq SequenceResetFunc) {
+func drainAttackResults(results <-chan *vegeta.Result, metrics *vegeta.Metrics, logger *log.Entry, state *attackState, resetSeq SequenceResetFunc, workload string, recorder *benchmarkTraceRecorder) {
 	for res := range results {
-		processAttackResult(res, metrics, logger, state, resetSeq)
+		processAttackResult(res, metrics, logger, state, resetSeq, workload, recorder)
 	}
 }
 
@@ -161,14 +201,14 @@ func (r *rejectionCounts) inc(code string) {
 	r.mu.Unlock()
 }
 
-func (r *rejectionCounts) log(logger *log.Entry) {
+func (r *rejectionCounts) log(logger *log.Entry, prefix string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.counts) == 0 {
 		return
 	}
 	for code, n := range r.counts {
-		logger.Infof("  ERROR breakdown: %s=%d", code, n)
+		logger.Infof("  %s: %s=%d", prefix, code, n)
 	}
 }
 
