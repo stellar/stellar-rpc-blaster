@@ -4,7 +4,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stellar/go-stellar-sdk/keypair"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stretchr/testify/require"
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 )
@@ -73,7 +75,16 @@ func TestHandlePollResponseTracksOnChainFailureCodes(t *testing.T) {
 	state := newAttackState(1)
 	item := pollItem{hash: "abc", submittedAt: time.Now().Add(-time.Second)}
 	resp := &protocol.GetTransactionResponse{
-		TransactionDetails: protocol.TransactionDetails{Status: protocol.TransactionStatusFailed},
+		TransactionDetails: protocol.TransactionDetails{
+			Status: protocol.TransactionStatusFailed,
+			DiagnosticEventsXDR: []string{mustDiagnosticEventXDR(t, []xdr.ScVal{
+				mustScSymbol("error"),
+				mustScString("trying to access an archived contract data entry"),
+			}, mustScVec(
+				mustScSymbol("Balance"),
+				mustScAccountAddress(t, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"),
+			))},
+		},
 	}
 
 	handlePollResponse(nilLogger(), state, item, resp)
@@ -83,4 +94,85 @@ func TestHandlePollResponseTracksOnChainFailureCodes(t *testing.T) {
 	require.Equal(t, uint64(1), onChainFail)
 	require.Equal(t, uint64(0), pollErr)
 	require.Equal(t, int64(1), state.onChainErrorCodes.counts["unknown"])
+	require.Equal(t, int64(1), state.onChainDiagnostics.counts["trying to access an archived contract data entry | Balance"])
+}
+
+func TestSummarizeDiagnosticEventsUsesReadableTokens(t *testing.T) {
+	summary := summarizeDiagnosticEvents([]string{
+		mustDiagnosticEventXDR(t, []xdr.ScVal{
+			mustScSymbol("error"),
+			mustScString("trying to access an archived contract data entry"),
+		}, mustScVec(
+			mustScSymbol("Balance"),
+			mustScAccountAddress(t, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"),
+		)),
+	})
+	require.Equal(t, "trying to access an archived contract data entry | Balance", summary)
+}
+
+func TestSummarizeDiagnosticEventsIgnoresDynamicAddresses(t *testing.T) {
+	firstAddress := keypair.MustRandom().Address()
+	secondAddress := keypair.MustRandom().Address()
+
+	first := mustDiagnosticEventXDR(t, []xdr.ScVal{
+		mustScSymbol("error"),
+		mustScString("trying to access an archived contract data entry"),
+	}, mustScVec(
+		mustScSymbol("Balance"),
+		mustScAccountAddress(t, firstAddress),
+	))
+	second := mustDiagnosticEventXDR(t, []xdr.ScVal{
+		mustScSymbol("error"),
+		mustScString("trying to access an archived contract data entry"),
+	}, mustScVec(
+		mustScSymbol("Balance"),
+		mustScAccountAddress(t, secondAddress),
+	))
+
+	require.Equal(t, summarizeDiagnosticEvent(first), summarizeDiagnosticEvent(second))
+}
+
+func mustDiagnosticEventXDR(t *testing.T, topics []xdr.ScVal, data xdr.ScVal) string {
+	t.Helper()
+	body, err := xdr.NewContractEventBody(0, xdr.ContractEventV0{Topics: topics, Data: data})
+	require.NoError(t, err)
+
+	encoded, err := xdr.MarshalBase64(xdr.DiagnosticEvent{
+		InSuccessfulContractCall: false,
+		Event: xdr.ContractEvent{
+			Type: xdr.ContractEventTypeDiagnostic,
+			Body: body,
+		},
+	})
+	require.NoError(t, err)
+	return encoded
+}
+
+func mustScSymbol(value string) xdr.ScVal {
+	sym := xdr.ScSymbol(value)
+	return xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &sym}
+}
+
+func mustScString(value string) xdr.ScVal {
+	str := xdr.ScString(value)
+	return xdr.ScVal{Type: xdr.ScValTypeScvString, Str: &str}
+}
+
+func mustScAccountAddress(t *testing.T, address string) xdr.ScVal {
+	t.Helper()
+	accountID, err := xdr.AddressToAccountId(address)
+	require.NoError(t, err)
+	return xdr.ScVal{
+		Type: xdr.ScValTypeScvAddress,
+		Address: &xdr.ScAddress{
+			Type:      xdr.ScAddressTypeScAddressTypeAccount,
+			AccountId: &accountID,
+		},
+	}
+}
+
+func mustScVec(values ...xdr.ScVal) xdr.ScVal {
+	vec := xdr.ScVec(values)
+	vecRef := &vec
+	return xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &vecRef}
 }

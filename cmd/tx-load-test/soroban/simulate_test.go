@@ -79,3 +79,27 @@ func TestPadSimulatedInvocation(t *testing.T) {
 	PadSimulatedInvocation(&sim, 1)
 	require.Equal(t, xdr.Uint32(110), sim.Resources.Instructions)
 }
+
+func TestRestoreSorobanTransactionDataAppliesMinResourceFee(t *testing.T) {
+	data := xdr.SorobanTransactionData{
+		Resources:   xdr.SorobanResources{Instructions: 10},
+		ResourceFee: 25,
+	}
+	encodedData, err := xdr.MarshalBase64(data)
+	require.NoError(t, err)
+
+	restored, err := restoreSorobanTransactionData(&protocol.RestorePreamble{
+		TransactionDataXDR: encodedData,
+		MinResourceFee:     40,
+	})
+	require.NoError(t, err)
+	require.Equal(t, xdr.Int64(40), restored.ResourceFee)
+	require.Equal(t, data.Resources, restored.Resources)
+
+	restored, err = restoreSorobanTransactionData(&protocol.RestorePreamble{
+		TransactionDataXDR: encodedData,
+		MinResourceFee:     20,
+	})
+	require.NoError(t, err)
+	require.Equal(t, xdr.Int64(25), restored.ResourceFee)
+}
