@@ -103,12 +103,6 @@ func ValidateCLIConfig(cfg config.Config) error {
 	if cfg.ClassicRPS < 0 {
 		return fmt.Errorf("classic-rps must be >= 0")
 	}
-	if cfg.ClassicRPS%state.SimplePaymentOpsPerTransaction != 0 {
-		return fmt.Errorf(
-			"classic-rps must be a multiple of %d when simple payments use fixed-size batches",
-			state.SimplePaymentOpsPerTransaction,
-		)
-	}
 	return nil
 }
 
@@ -237,7 +231,7 @@ func Run(ctx context.Context, logger *log.Entry, cfg config.Config, st *state.St
 		workloads = append(workloads, workload{
 			label:       "simple-payment",
 			targetRPS:   state.SimplePaymentTransactionRate(cfg),
-			rateSummary: fmt.Sprintf("targetOps=%d ops/s targetRPS=%d tx/s opsPerTx=%d", cfg.ClassicRPS, state.SimplePaymentTransactionRate(cfg), state.SimplePaymentOpsPerTransaction),
+			rateSummary: fmt.Sprintf("targetRPS=%d tx/s paymentOpsPerTx=%d", state.SimplePaymentTransactionRate(cfg), state.SimplePaymentOpsPerTransaction),
 			targeter:    simpleTargeter,
 		})
 	}

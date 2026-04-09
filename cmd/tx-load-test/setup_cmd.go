@@ -49,7 +49,7 @@ minted before the command exits.`,
 	_ = cmd.Flags().MarkDeprecated("mode", "setup now provisions all benchmark modes; this flag is ignored")
 	cmd.Flags().Duration("duration", 100*time.Second, "Planned benchmark duration used when sizing account partitions")
 	cmd.Flags().Int("target-rps", 50, "Planned Soroban steady-state requests per second used when sizing account partitions")
-	cmd.Flags().Int("classic-rps", config.DefaultClassicRPS, "Planned simple-payment steady-state operations per second used when sizing account partitions across all benchmark modes (must be a multiple of 100)")
+	cmd.Flags().Int("classic-rps", config.DefaultClassicRPS, "Planned simple-payment steady-state transactions per second used when sizing account pools across all benchmark modes (1 payment op per tx)")
 	cmd.Flags().String("soroswap-factory", "", "Soroswap factory contract ID (required on testnet/mainnet; optional on standalone/futurenet, where setup can auto-deploy it)")
 	cmd.Flags().String("soroswap-router", "", "Soroswap router contract ID (required on testnet/mainnet; optional on standalone/futurenet, where setup can auto-deploy it)")
 	cmd.Flags().Int("accounts", 5_000, "Number of participant accounts to create")

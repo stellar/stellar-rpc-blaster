@@ -72,9 +72,8 @@ This is a major architectural decision and must be preserved.
 ### 2.5 Parallel classic companion stream
 
 - `bench` must optionally run a companion simple-payment stream in parallel with the Soroban benchmark stream.
-- `--classic-rps` is measured in operations per second, not transactions per second.
-- Simple payments must be batched at 100 operations per transaction.
-- Therefore, non-zero `--classic-rps` must be a multiple of 100.
+- `--classic-rps` is measured in transactions per second for the companion simple-payment stream.
+- Simple payments submit exactly 1 payment operation per transaction.
 
 ### 2.6 Contract artifact policy
 
@@ -185,7 +184,7 @@ Validation rules:
 - benchmark mode must be known
 - `--target-rps > 0`
 - `--classic-rps >= 0`
-- if `--classic-rps > 0`, it must be a multiple of 100
+- if `--classic-rps > 0`, it directly determines the simple-payment tx/s rate
 - account pool must be large enough for both the Soroban stream and the classic companion stream for the requested duration and rate
 - `sac-transfer` requires valid SAC holder subsets and trustlines in state
 
@@ -461,7 +460,7 @@ The recreated suite should cover at least these behaviors.
 - unknown mode rejected
 - undersized account pools rejected
 - dual-stream account math validated
-- invalid `classic-rps` batching rejected
+- `classic-rps` semantics validated for 1 payment op per transaction
 - setup all-mode validation tested separately from bench-mode validation
 
 ### 9.3 Shared tx-builder tests

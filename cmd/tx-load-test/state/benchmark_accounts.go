@@ -13,7 +13,7 @@ const (
 	BenchmarkLedgerCloseSeconds = 5
 	// SimplePaymentOpsPerTransaction is the fixed number of payment operations
 	// bundled into each classic simple-payment transaction.
-	SimplePaymentOpsPerTransaction = 100
+	SimplePaymentOpsPerTransaction = 1
 	// RecommendedSourceReuseLedgers is the target minimum source-account reuse
 	// interval used by the recommended pool-size formula.
 	RecommendedSourceReuseLedgers = 2
@@ -41,13 +41,13 @@ func SorobanSourceAccountCount(cfg config.Config) int {
 	return sourceAccountsForRun(cfg.TargetRPS, cfg.Duration)
 }
 
-// SimplePaymentTransactionRate returns the required simple-payment transaction
-// rate, derived from the configured operations/sec and fixed batch size.
+// SimplePaymentTransactionRate returns the simple-payment transaction rate.
+// With 1 payment op per transaction, classic-rps maps directly to tx/s.
 func SimplePaymentTransactionRate(cfg config.Config) int {
 	if cfg.ClassicRPS <= 0 {
 		return 0
 	}
-	return cfg.ClassicRPS / SimplePaymentOpsPerTransaction
+	return cfg.ClassicRPS
 }
 
 // SimplePaymentSourceAccountCount returns the source-account requirement for

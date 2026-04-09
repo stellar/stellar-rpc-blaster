@@ -26,6 +26,7 @@ type fakeLeaseManager struct {
 	retryableReleases  []int64
 	consumedReleases   []int64
 	ambiguousReleases  []int64
+	requestID          int64
 }
 
 func (m fakeMode) Label() string { return m.label }
@@ -46,7 +47,8 @@ func (m *fakeLeaseManager) Acquire(_ context.Context, requirement accountRequire
 	if len(accounts) == 0 {
 		return leasedAccount{}, fmt.Errorf("no eligible accounts")
 	}
-	return leasedAccount{RequestID: 1, Account: accounts[0], Sequence: 1}, nil
+	m.requestID++
+	return leasedAccount{RequestID: m.requestID, Account: accounts[0], Sequence: 1}, nil
 }
 
 func (m *fakeLeaseManager) Accounts(requirement accountRequirement) []*keypair.Full {
@@ -68,6 +70,10 @@ func (m *fakeLeaseManager) ReleaseConsumed(requestID int64) {
 
 func (m *fakeLeaseManager) ReleaseAmbiguous(requestID int64) {
 	m.ambiguousReleases = append(m.ambiguousReleases, requestID)
+}
+
+func (m *fakeLeaseManager) RequestID() int64 {
+	return m.requestID
 }
 
 func nilLogger() *log.Entry {
@@ -177,7 +183,7 @@ func TestValidateConfig(t *testing.T) {
 				TargetRPS:        200,
 				ClassicRPS:       200,
 				Duration:         2 * time.Minute,
-				NumberOfAccounts: 2_019,
+				NumberOfAccounts: 3_999,
 			},
 			wantErr: true,
 		},
@@ -188,20 +194,9 @@ func TestValidateConfig(t *testing.T) {
 				TargetRPS:        200,
 				ClassicRPS:       200,
 				Duration:         2 * time.Minute,
-				NumberOfAccounts: 2_020,
+				NumberOfAccounts: 4_000,
 			},
 			wantErr: false,
-		},
-		{
-			name: "rejects classic rate that cannot map to fixed-size batches",
-			cfg: config.Config{
-				Mode:             config.ModeSACTransfer,
-				TargetRPS:        50,
-				ClassicRPS:       150,
-				Duration:         2 * time.Minute,
-				NumberOfAccounts: 600,
-			},
-			wantErr: true,
 		},
 	}
 
@@ -222,7 +217,7 @@ func TestValidateCLIConfigRejectsInvalidFlagShape(t *testing.T) {
 	require.EqualError(t, err, `unknown benchmark mode: "unknown"`)
 
 	err = ValidateCLIConfig(config.Config{Mode: config.ModeSACTransfer, TargetRPS: 50, ClassicRPS: 150})
-	require.EqualError(t, err, "classic-rps must be a multiple of 100 when simple payments use fixed-size batches")
+	require.NoError(t, err)
 }
 
 func TestValidateSetupConfig(t *testing.T) {
@@ -231,7 +226,7 @@ func TestValidateSetupConfig(t *testing.T) {
 			TargetRPS:        200,
 			ClassicRPS:       200,
 			Duration:         2 * time.Minute,
-			NumberOfAccounts: 2_020,
+			NumberOfAccounts: 4_000,
 		})
 		require.NoError(t, err)
 	})
@@ -241,9 +236,9 @@ func TestValidateSetupConfig(t *testing.T) {
 			TargetRPS:        200,
 			ClassicRPS:       200,
 			Duration:         2 * time.Minute,
-			NumberOfAccounts: 2_019,
+			NumberOfAccounts: 3_999,
 		})
-		require.EqualError(t, err, "benchmark shape is not valid for mode=sac-transfer: account pool too small for configured benchmark: have 2019 accounts but need at least 2020 (2000 Soroban tx sources + 20 simple-payment tx sources)  -- increase --accounts, reduce --target-rps, reduce --classic-rps, or shorten --duration")
+		require.EqualError(t, err, "benchmark shape is not valid for mode=sac-transfer: account pool too small for configured benchmark: have 3999 accounts but need at least 4000 (2000 Soroban tx sources + 2000 simple-payment tx sources)  -- increase --accounts, reduce --target-rps, reduce --classic-rps, or shorten --duration")
 	})
 }
 
