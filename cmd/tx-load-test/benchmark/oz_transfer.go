@@ -21,10 +21,10 @@ func (ozTransferMode) Label() string { return "oz-transfer" }
 
 func (ozTransferMode) VerifyReady(ctx context.Context, st *state.State) error {
 	if len(st.AccountKPs) < 2 {
-		return fmt.Errorf("need at least 2 accounts for OZ transfer benchmark, got %d", len(st.AccountKPs))
+		return benchmarkStateCountError("OZ", 2, len(st.AccountKPs), "participant account")
 	}
 	if st.OZTokenContract == "" {
-		return fmt.Errorf("OZ token contract ID is empty -- run setup first")
+		return benchmarkMissingContractIDError("OZ", "OZ token")
 	}
 
 	contractID, err := requireReadyContract(ctx, st, "OZ token", st.OZTokenContract)
@@ -65,10 +65,10 @@ func (ozTransferMode) VerifyReady(ctx context.Context, st *state.State) error {
 
 func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *state.State, txSourceAccounts []*keypair.Full) (vegeta.Targeter, SequenceResetFunc, error) {
 	if len(txSourceAccounts) < 2 {
-		return nil, nil, fmt.Errorf("need at least 2 accounts for OZ transfer benchmark, got %d", len(txSourceAccounts))
+		return nil, nil, benchmarkTargeterCountError("OZ", 2, len(txSourceAccounts), "participant account")
 	}
 	if state.OZTokenContract == "" {
-		return nil, nil, fmt.Errorf("OZ token contract ID is empty -- run setup first")
+		return nil, nil, benchmarkMissingContractIDError("OZ", "OZ token")
 	}
 
 	contractID, err := ledger.DecodeContractID(state.OZTokenContract)

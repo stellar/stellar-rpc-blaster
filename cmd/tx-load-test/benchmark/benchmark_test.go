@@ -180,6 +180,14 @@ func TestValidateConfig(t *testing.T) {
 	}
 }
 
+func TestValidateCLIConfigRejectsInvalidFlagShape(t *testing.T) {
+	err := ValidateCLIConfig(config.Config{Mode: config.BenchmarkMode("unknown"), TargetRPS: 50, ClassicRPS: 0})
+	require.EqualError(t, err, `unknown benchmark mode: "unknown"`)
+
+	err = ValidateCLIConfig(config.Config{Mode: config.ModeSACTransfer, TargetRPS: 50, ClassicRPS: 150})
+	require.EqualError(t, err, "classic-rps must be a multiple of 100 when simple payments use fixed-size batches")
+}
+
 func TestValidateSetupConfig(t *testing.T) {
 	t.Run("accepts shape valid for all modes", func(t *testing.T) {
 		err := ValidateSetupConfig(config.Config{

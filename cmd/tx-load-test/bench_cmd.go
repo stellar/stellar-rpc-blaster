@@ -3,9 +3,6 @@ package main
 import (
 	"fmt"
 	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -24,12 +21,16 @@ ledger (created by 'setup'):
 
 	sac-transfer   -- SAC token transfers between random participant accounts.
 	oz-transfer    -- OpenZeppelin token transfers between random participant accounts.
+	soroswap       -- router-based swaps across the benchmark Soroswap pools.
 
 The load ramps linearly from 1 RPS to --target-rps over --ramp-up, then
 the selected Soroban workload and the parallel simple-payment stream hold
 constant for the remainder of --duration (~100 s / ~20 ledgers). The
 simple-payment stream uses native XLM payments batched at 100 operations per
 transaction, and --classic-rps is interpreted as operations/sec.
+
+Use --trace-file to capture every benchmark submit and poll request/response
+as NDJSON for post-run inspection.
 
 bench reads the state file produced by setup and does not modify ledger state.
 Run bench as many times as needed.`,
@@ -56,36 +57,7 @@ func runBench(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	stateFile, err := cmd.Flags().GetString("state-file")
-	if err != nil {
-		return err
-	}
-	rpcURL, err := cmd.Flags().GetString("rpc-url")
-	if err != nil {
-		return err
-	}
-	skipAccountPreflight, err := cmd.Flags().GetBool("skip-account-preflight")
-	if err != nil {
-		return err
-	}
-	accountPreflightSample, err := cmd.Flags().GetInt("account-preflight-sample")
-	if err != nil {
-		return err
-	}
-
-	loaded, err := state.LoadRuntimeStateWithOptions(cmd.Context(), state.RuntimePhaseBench, stateFile, os.Getenv("TX_LOAD_TEST_FEE_PAYER_SEED"), rpcURL, state.RuntimeLoadOptions{
-		VerifyAccountsExist: !skipAccountPreflight,
-		AccountCheckSample:  accountPreflightSample,
-	})
-	if err != nil {
-		return err
-	}
-
 	cfg := config.DefaultConfig()
-	cfg.RPCURL = loaded.RPCURL
-	cfg.NetworkPassphrase = loaded.Persisted.NetworkPassphrase
-	cfg.NumberOfAccounts = len(loaded.Persisted.AccountIndices)
-
 	modeStr, err := cmd.Flags().GetString("mode")
 	if err != nil {
 		return err
@@ -107,15 +79,24 @@ func runBench(cmd *cobra.Command, _ []string) error {
 	if cfg.TraceFile, err = cmd.Flags().GetString("trace-file"); err != nil {
 		return err
 	}
+	if err = benchmark.ValidateCLIConfig(cfg); err != nil {
+		return err
+	}
+
+	stateFile, loaded, err := loadRuntimeStateFromCommand(cmd, state.RuntimePhaseBench)
+	if err != nil {
+		return err
+	}
+	cfg.RPCURL = loaded.RPCURL
+	cfg.NetworkPassphrase = loaded.Persisted.NetworkPassphrase
+	cfg.NumberOfAccounts = len(loaded.Persisted.AccountIndices)
 
 	if err = benchmark.ValidateConfig(cfg); err != nil {
 		return err
 	}
 
-	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := signalCommandContext(cmd, logger, true)
 	defer cancel()
-
-	forceExitOnSecondSignal(logger)
 
 	logger.Infof("loaded state from %s (%d accounts, rpc=%s)", stateFile, cfg.NumberOfAccounts, cfg.RPCURL)
 	if cfg.TraceFile != "" {

@@ -46,10 +46,10 @@ func (sacTransferMode) VerifyReady(ctx context.Context, st *state.State) error {
 		holderAccounts = state.DefaultSACHolderKPs(st.AccountKPs)
 	}
 	if len(holderAccounts) < 2 {
-		return fmt.Errorf("need at least 2 SAC holder accounts, got %d", len(holderAccounts))
+		return benchmarkStateCountError("SAC", 2, len(holderAccounts), "trustlined holder account")
 	}
 	if len(st.AccountKPs) == 0 {
-		return fmt.Errorf("need at least 1 participant account for SAC tx sources")
+		return benchmarkStateCountError("SAC", 1, len(st.AccountKPs), "participant account")
 	}
 
 	for i, sacStr := range st.SACs {
@@ -67,14 +67,14 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 		holderAccounts = state.DefaultSACHolderKPs(st.AccountKPs)
 	}
 	if len(holderAccounts) < 2 {
-		return nil, nil, fmt.Errorf("need at least 2 SAC holder accounts for benchmark, got %d", len(holderAccounts))
+		return nil, nil, benchmarkTargeterCountError("SAC", 2, len(holderAccounts), "trustlined holder account")
 	}
 	if len(txSourceAccounts) == 0 {
-		return nil, nil, fmt.Errorf("need at least 1 participant account for SAC tx sources")
+		return nil, nil, benchmarkTargeterCountError("SAC", 1, len(txSourceAccounts), "participant account")
 	}
 	for i, sac := range st.SACs {
 		if sac == "" {
-			return nil, nil, fmt.Errorf("SAC[%d] contract ID is empty -- run setup first", i)
+			return nil, nil, benchmarkMissingContractIDError("SAC", fmt.Sprintf("SAC[%d]", i))
 		}
 	}
 
