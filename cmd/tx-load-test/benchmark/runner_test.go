@@ -28,10 +28,7 @@ func TestPercentileDurationEdges(t *testing.T) {
 
 func TestHandleSendTransactionEnvelopeTracksStatuses(t *testing.T) {
 	state := newAttackState(4)
-	var resetIDs []int64
-	resetSeq := func(id int64) {
-		resetIDs = append(resetIDs, id)
-	}
+	leases := &fakeLeaseManager{}
 
 	require.True(t, state.handleSendTransactionEnvelope(sendRespEnvelope{
 		ID: 11,
@@ -39,36 +36,39 @@ func TestHandleSendTransactionEnvelopeTracksStatuses(t *testing.T) {
 			Status: "PENDING",
 			Hash:   "abc",
 		},
-	}, time.Unix(1, 0), resetSeq))
+	}, time.Unix(1, 0), leases))
 	require.Len(t, state.hashes, 1)
 
 	require.True(t, state.handleSendTransactionEnvelope(sendRespEnvelope{
 		ID:     12,
 		Result: protocol.SendTransactionResponse{Status: "TRY_AGAIN_LATER"},
-	}, time.Unix(2, 0), resetSeq))
+	}, time.Unix(2, 0), leases))
 	require.True(t, state.handleSendTransactionEnvelope(sendRespEnvelope{
 		ID:     13,
 		Result: protocol.SendTransactionResponse{Status: "ERROR", ErrorResultXDR: "AAAA"},
-	}, time.Unix(3, 0), resetSeq))
+	}, time.Unix(3, 0), leases))
 	require.False(t, state.handleSendTransactionEnvelope(sendRespEnvelope{
 		ID:     14,
 		Result: protocol.SendTransactionResponse{Status: "UNKNOWN"},
-	}, time.Unix(4, 0), resetSeq))
+	}, time.Unix(4, 0), leases))
 
 	_, _, queued, tryAgainLater, submitErrors := state.submissionSnapshot()
 	require.Equal(t, uint64(1), queued)
 	require.Equal(t, uint64(1), tryAgainLater)
 	require.Equal(t, uint64(1), submitErrors)
-	require.Equal(t, []int64{12, 13, 14}, resetIDs)
+	require.Equal(t, []int64{12, 13}, leases.retryableReleases)
+	require.Equal(t, []int64{14}, leases.ambiguousReleases)
 }
 
 func TestProcessAttackResultCountsHTTPFailures(t *testing.T) {
 	metrics := vegeta.Metrics{}
 	state := newAttackState(1)
-	processAttackResult(&vegeta.Result{Code: 500, Error: "boom"}, &metrics, nilLogger(), state, nil, "simple-payment", nil)
+	leases := &fakeLeaseManager{}
+	processAttackResult(&vegeta.Result{Code: 500, Error: "boom", URL: "https://rpc.example#blaster-rpc-id=77"}, &metrics, nilLogger(), state, leases, "simple-payment", nil)
 	_, httpErr, _, _, _ := state.submissionSnapshot()
 	require.Equal(t, uint64(1), httpErr)
 	require.Equal(t, uint64(1), metrics.Requests)
+	require.Equal(t, []int64{77}, leases.ambiguousReleases)
 }
 
 func TestHandlePollResponseTracksOnChainFailureCodes(t *testing.T) {
@@ -87,7 +87,8 @@ func TestHandlePollResponseTracksOnChainFailureCodes(t *testing.T) {
 		},
 	}
 
-	handlePollResponse(nilLogger(), state, item, resp)
+	leases := &fakeLeaseManager{}
+	handlePollResponse(nilLogger(), state, item, resp, leases)
 
 	included, onChainFail, pollErr := state.pollSnapshot()
 	require.Equal(t, uint64(0), included)
@@ -95,6 +96,13 @@ func TestHandlePollResponseTracksOnChainFailureCodes(t *testing.T) {
 	require.Equal(t, uint64(0), pollErr)
 	require.Equal(t, int64(1), state.onChainErrorCodes.counts["unknown"])
 	require.Equal(t, int64(1), state.onChainDiagnostics.counts["trying to access an archived contract data entry | Balance"])
+	require.Empty(t, leases.consumedReleases)
+}
+
+func TestRequestIDFromResultURL(t *testing.T) {
+	require.Equal(t, int64(42), requestIDFromResultURL("https://rpc.example#blaster-rpc-id=42"))
+	require.Zero(t, requestIDFromResultURL("https://rpc.example"))
+	require.Zero(t, requestIDFromResultURL("://bad-url"))
 }
 
 func TestSummarizeDiagnosticEventsUsesReadableTokens(t *testing.T) {

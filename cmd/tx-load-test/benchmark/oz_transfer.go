@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
-	"sync/atomic"
 
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 
@@ -63,44 +62,51 @@ func (ozTransferMode) VerifyReady(ctx context.Context, st *state.State) error {
 	return nil
 }
 
-func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *state.State, txSourceAccounts []*keypair.Full) (vegeta.Targeter, SequenceResetFunc, error) {
+func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *state.State, accounts accountLeaseManager) (vegeta.Targeter, error) {
+	txSourceAccounts := accounts.Accounts(accountRequirementAnySource)
 	if len(txSourceAccounts) < 2 {
-		return nil, nil, benchmarkTargeterCountError("OZ", 2, len(txSourceAccounts), "participant account")
+		return nil, benchmarkTargeterCountError("OZ", 2, len(txSourceAccounts), "participant account")
 	}
 	if state.OZTokenContract == "" {
-		return nil, nil, benchmarkMissingContractIDError("OZ", "OZ token")
+		return nil, benchmarkMissingContractIDError("OZ", "OZ token")
 	}
 
 	contractID, err := ledger.DecodeContractID(state.OZTokenContract)
 	if err != nil {
-		return nil, nil, fmt.Errorf("decode OZ token contract ID: %w", err)
+		return nil, fmt.Errorf("decode OZ token contract ID: %w", err)
 	}
 
 	simTemplate, err := presimulateOZTransfer(state, contractID, txSourceAccounts[0], txSourceAccounts[1])
 	if err != nil {
-		return nil, nil, fmt.Errorf("pre-simulate OZ transfer: %w", err)
+		return nil, fmt.Errorf("pre-simulate OZ transfer: %w", err)
 	}
 
 	n := len(txSourceAccounts)
-	seqs, err := newSequenceManager(ctx, state, txSourceAccounts, "participant")
-	if err != nil {
-		return nil, nil, err
-	}
 
 	networkPassphrase := state.NetworkPassphrase
-	var slotCounter int64
 
 	return func(t *vegeta.Target) error {
-		slot := atomic.AddInt64(&slotCounter, 1) - 1
-		srcIdx := int(slot % int64(n))
-		seq := seqs.Next(srcIdx)
+		lease, err := accounts.Acquire(ctx, accountRequirementAnySource)
+		if err != nil {
+			return fmt.Errorf("lease OZ tx-source account: %w", err)
+		}
+		releaseLease := true
+		defer func() {
+			if releaseLease {
+				accounts.ReleaseRetryable(lease.RequestID)
+			}
+		}()
 
 		dstIdx := rand.IntN(n - 1)
-		if dstIdx >= srcIdx {
+		srcKP := lease.Account
+		srcAddress := srcKP.Address()
+		if txSourceAccounts[dstIdx].Address() == srcAddress {
 			dstIdx++
+			if dstIdx >= n {
+				dstIdx = 0
+			}
 		}
 
-		srcKP := txSourceAccounts[srcIdx]
 		dstKP := txSourceAccounts[dstIdx]
 
 		srcAccID, err := xdr.AddressToAccountId(srcKP.Address())
@@ -145,12 +151,11 @@ func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *sta
 			return fmt.Errorf("build OZ footprint: %w", err)
 		}
 
-		id := slot + 1
 		body, err := buildSorobanSendTransactionBody(sorobanSendTransactionParams{
-			RPCID:             id,
+			RPCID:             lease.RequestID,
 			NetworkPassphrase: networkPassphrase,
 			TxSource:          srcKP,
-			Sequence:          seq,
+			Sequence:          lease.Sequence,
 			Signers:           []*keypair.Full{srcKP},
 			OpSourceAccount:   srcKP.Address(),
 			InvokeArgs:        invokeArgs,
@@ -174,9 +179,10 @@ func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *sta
 		if err != nil {
 			return err
 		}
-		populateJSONRPCTarget(t, rpcURL, body)
+		populateJSONRPCTarget(t, rpcURL, body, lease.RequestID)
+		releaseLease = false
 		return nil
-	}, seqs.ResetFunc(), nil
+	}, nil
 }
 
 func presimulateOZTransfer(

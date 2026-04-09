@@ -94,37 +94,42 @@ func (soroswapMode) VerifyReady(ctx context.Context, st *state.State) error {
 	return nil
 }
 
-func (soroswapMode) NewTargeter(ctx context.Context, rpcURL string, st *state.State, txSourceAccounts []*keypair.Full) (vegeta.Targeter, SequenceResetFunc, error) {
+func (soroswapMode) NewTargeter(ctx context.Context, rpcURL string, st *state.State, accounts accountLeaseManager) (vegeta.Targeter, error) {
+	txSourceAccounts := accounts.Accounts(accountRequirementTrustlinedSource)
 	if len(txSourceAccounts) == 0 {
-		return nil, nil, benchmarkTargeterCountError("Soroswap", 1, len(txSourceAccounts), "participant account")
+		return nil, benchmarkTargeterCountError("Soroswap", 1, len(txSourceAccounts), "participant account")
 	}
 	if st.SoroswapRouterContract == "" {
-		return nil, nil, benchmarkMissingContractIDError("Soroswap", "soroswap router")
+		return nil, benchmarkMissingContractIDError("Soroswap", "soroswap router")
 	}
 	if len(st.SoroswapPairContracts) != len(sharedsoroswap.BenchmarkPairs) {
-		return nil, nil, fmt.Errorf("need %d Soroswap pair contracts, got %d -- rerun setup", len(sharedsoroswap.BenchmarkPairs), len(st.SoroswapPairContracts))
+		return nil, fmt.Errorf("need %d Soroswap pair contracts, got %d -- rerun setup", len(sharedsoroswap.BenchmarkPairs), len(st.SoroswapPairContracts))
 	}
 	if err := verifyTrustlineBalancesReady(ctx, st, txSourceAccounts, "Soroswap"); err != nil {
-		return nil, nil, err
-	}
-
-	seqs, err := newSequenceManager(ctx, st, txSourceAccounts, "Soroswap tx-source")
-	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	templates, err := buildSoroswapSwapTemplates(ctx, st, txSourceAccounts)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	var slotCounter int64
 	return func(t *vegeta.Target) error {
 		slot := atomic.AddInt64(&slotCounter, 1) - 1
-		srcIdx := int(slot % int64(len(txSourceAccounts)))
-		templateIdx := int((slot / int64(len(txSourceAccounts))) % int64(len(templates)))
-		txSourceKP := txSourceAccounts[srcIdx]
-		seq := seqs.Next(srcIdx)
+		lease, err := accounts.Acquire(ctx, accountRequirementTrustlinedSource)
+		if err != nil {
+			return fmt.Errorf("lease Soroswap tx-source account: %w", err)
+		}
+		releaseLease := true
+		defer func() {
+			if releaseLease {
+				accounts.ReleaseRetryable(lease.RequestID)
+			}
+		}()
+
+		templateIdx := int(slot % int64(len(templates)))
+		txSourceKP := lease.Account
 		tmpl := templates[templateIdx]
 
 		invokeArgs, err := sharedsoroswap.RewriteInvokeContractAccount(tmpl.invokeArgs, tmpl.traderAddress, txSourceKP.Address())
@@ -147,12 +152,11 @@ func (soroswapMode) NewTargeter(ctx context.Context, rpcURL string, st *state.St
 		}
 		resources, resourceFee := soroswapResourcesForFootprint(tmpl.simulation, footprint)
 
-		id := slot + 1
 		body, err := buildSorobanSendTransactionBody(sorobanSendTransactionParams{
-			RPCID:             id,
+			RPCID:             lease.RequestID,
 			NetworkPassphrase: st.NetworkPassphrase,
 			TxSource:          txSourceKP,
-			Sequence:          seq,
+			Sequence:          lease.Sequence,
 			Signers:           []*keypair.Full{txSourceKP},
 			OpSourceAccount:   txSourceKP.Address(),
 			InvokeArgs:        invokeArgs,
@@ -163,9 +167,10 @@ func (soroswapMode) NewTargeter(ctx context.Context, rpcURL string, st *state.St
 		if err != nil {
 			return err
 		}
-		populateJSONRPCTarget(t, rpcURL, body)
+		populateJSONRPCTarget(t, rpcURL, body, lease.RequestID)
+		releaseLease = false
 		return nil
-	}, seqs.ResetFunc(), nil
+	}, nil
 }
 
 func soroswapResourcesForFootprint(simulated sharedsoroban.SimulatedInvocation, footprint xdr.LedgerFootprint) (xdr.SorobanResources, xdr.Int64) {

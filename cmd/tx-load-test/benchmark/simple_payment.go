@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
-	"net/http"
-	"sync/atomic"
 
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 
@@ -23,28 +21,29 @@ func verifyHolderTrustlinesReady(ctx context.Context, st *state.State, holderAcc
 	return verifyTrustlineBalancesReady(ctx, st, holderAccounts, label)
 }
 
-func newSimplePaymentTargeter(ctx context.Context, rpcURL string, st *state.State, sourceAccounts, recipientAccounts []*keypair.Full) (vegeta.Targeter, SequenceResetFunc, error) {
-	if len(sourceAccounts) == 0 {
-		return nil, nil, fmt.Errorf("need at least 1 source account for simple payments")
+func newSimplePaymentTargeter(ctx context.Context, rpcURL string, st *state.State, accounts accountLeaseManager, recipientAccounts []*keypair.Full) (vegeta.Targeter, error) {
+	if len(accounts.Accounts(accountRequirementAnySource)) == 0 {
+		return nil, fmt.Errorf("need at least 1 source account for simple payments")
 	}
 	if len(recipientAccounts) < 2 {
-		return nil, nil, fmt.Errorf("need at least 2 participant accounts for simple payments, got %d", len(recipientAccounts))
+		return nil, fmt.Errorf("need at least 2 participant accounts for simple payments, got %d", len(recipientAccounts))
 	}
 
-	seqs, err := newSequenceManager(ctx, st, sourceAccounts, "simple-payment source")
-	if err != nil {
-		return nil, nil, err
-	}
-
-	var slotCounter int64
 	networkPassphrase := st.NetworkPassphrase
 
 	return func(t *vegeta.Target) error {
-		slot := atomic.AddInt64(&slotCounter, 1) - 1
-		srcIdx := int(slot % int64(len(sourceAccounts)))
-		seq := seqs.Next(srcIdx)
+		lease, err := accounts.Acquire(ctx, accountRequirementAnySource)
+		if err != nil {
+			return fmt.Errorf("lease simple-payment source account: %w", err)
+		}
+		releaseLease := true
+		defer func() {
+			if releaseLease {
+				accounts.ReleaseRetryable(lease.RequestID)
+			}
+		}()
 
-		srcKP := sourceAccounts[srcIdx]
+		srcKP := lease.Account
 		ops := make([]txnbuild.Operation, 0, state.SimplePaymentOpsPerTransaction)
 		for range state.SimplePaymentOpsPerTransaction {
 			dstIdx := rand.IntN(len(recipientAccounts) - 1)
@@ -62,7 +61,7 @@ func newSimplePaymentTargeter(ctx context.Context, rpcURL string, st *state.Stat
 		tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
 			SourceAccount: &txnbuild.SimpleAccount{
 				AccountID: srcKP.Address(),
-				Sequence:  seq,
+				Sequence:  lease.Sequence,
 			},
 			IncrementSequenceNum: false,
 			Operations:           ops,
@@ -83,10 +82,9 @@ func newSimplePaymentTargeter(ctx context.Context, rpcURL string, st *state.Stat
 			return fmt.Errorf("marshal transaction: %w", err)
 		}
 
-		id := slot + 1
 		body, err := json.Marshal(rpcJSONBody{
 			JSONRPC: "2.0",
-			ID:      id,
+			ID:      lease.RequestID,
 			Method:  protocol.SendTransactionMethodName,
 			Params:  map[string]string{"transaction": b64},
 		})
@@ -94,10 +92,8 @@ func newSimplePaymentTargeter(ctx context.Context, rpcURL string, st *state.Stat
 			return fmt.Errorf("marshal JSON-RPC body: %w", err)
 		}
 
-		t.Method = http.MethodPost
-		t.URL = rpcURL
-		t.Body = body
-		t.Header = http.Header{"Content-Type": {"application/json"}}
+		populateJSONRPCTarget(t, rpcURL, body, lease.RequestID)
+		releaseLease = false
 		return nil
-	}, seqs.ResetFunc(), nil
+	}, nil
 }

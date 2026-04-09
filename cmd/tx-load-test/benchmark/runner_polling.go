@@ -25,24 +25,24 @@ func pollWorkerCount(targetRPS int) int {
 // terminal state. Five ledgers at ~5 s each gives plenty of margin.
 const pollTimeout = 30 * time.Second
 
-func startPollWorkers(ctx context.Context, logger *log.Entry, cfg config.Config, rpc *rpcclient.Client, state *attackState, resetSeq SequenceResetFunc) (int, *sync.WaitGroup) {
+func startPollWorkers(ctx context.Context, logger *log.Entry, cfg config.Config, rpc *rpcclient.Client, state *attackState, accounts accountLeaseManager) (int, *sync.WaitGroup) {
 
-	return startPollWorkersWithTrace(ctx, logger, cfg, rpc, state, resetSeq, "", nil)
+	return startPollWorkersWithTrace(ctx, logger, cfg, rpc, state, accounts, "", nil)
 }
 
-func startPollWorkersWithTrace(ctx context.Context, logger *log.Entry, cfg config.Config, rpc *rpcclient.Client, state *attackState, resetSeq SequenceResetFunc, workload string, recorder *benchmarkTraceRecorder) (int, *sync.WaitGroup) {
+func startPollWorkersWithTrace(ctx context.Context, logger *log.Entry, cfg config.Config, rpc *rpcclient.Client, state *attackState, accounts accountLeaseManager, workload string, recorder *benchmarkTraceRecorder) (int, *sync.WaitGroup) {
 	numPollWorkers := pollWorkerCount(cfg.TargetRPS)
 	logger.Infof("starting %d poll workers", numPollWorkers)
 	var pollWg sync.WaitGroup
 	for range numPollWorkers {
 		pollWg.Go(func() {
-			pollTransactions(ctx, logger, rpc, state, resetSeq, workload, recorder)
+			pollTransactions(ctx, logger, rpc, state, accounts, workload, recorder)
 		})
 	}
 	return numPollWorkers, &pollWg
 }
 
-func pollTransactions(ctx context.Context, logger *log.Entry, rpc *rpcclient.Client, state *attackState, resetSeq SequenceResetFunc, workload string, recorder *benchmarkTraceRecorder) {
+func pollTransactions(ctx context.Context, logger *log.Entry, rpc *rpcclient.Client, state *attackState, accounts accountLeaseManager, workload string, recorder *benchmarkTraceRecorder) {
 	for item := range state.hashes {
 		pollCtx, pollCancel := context.WithTimeout(ctx, pollTimeout)
 		resp, err := pollTransactionWithTrace(pollCtx, rpc, item.hash, workload, recorder)
@@ -50,21 +50,24 @@ func pollTransactions(ctx context.Context, logger *log.Entry, rpc *rpcclient.Cli
 		if err != nil {
 			atomic.AddUint64(&state.pollErr, 1)
 			logger.WithError(err).Debugf("poll failed: hash=%s", item.hash)
-			state.resetSequence(resetSeq, item.rpcID)
+			atomic.AddUint64(&state.ambiguous, 1)
+			releaseAmbiguous(accounts, item.rpcID)
 			continue
 		}
-		handlePollResponse(logger, state, item, &resp)
+		handlePollResponse(logger, state, item, &resp, accounts)
 	}
 }
 
-func handlePollResponse(logger *log.Entry, state *attackState, item pollItem, resp *protocol.GetTransactionResponse) {
+func handlePollResponse(logger *log.Entry, state *attackState, item pollItem, resp *protocol.GetTransactionResponse, accounts accountLeaseManager) {
 	switch resp.Status {
 	case protocol.TransactionStatusSuccess:
 		atomic.AddUint64(&state.included, 1)
 		state.e2eStats.observe(time.Since(item.submittedAt))
+		releaseConsumed(accounts, item.rpcID)
 	case protocol.TransactionStatusFailed:
 		atomic.AddUint64(&state.onChainFail, 1)
 		state.e2eStats.observe(time.Since(item.submittedAt))
+		releaseConsumed(accounts, item.rpcID)
 		code := ledger.DecodeTransactionResultCode(resp.ResultXDR)
 		state.onChainErrorCodes.inc(code)
 		if summary := summarizeDiagnosticEvents(resp.DiagnosticEventsXDR); summary != "" {

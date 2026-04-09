@@ -40,12 +40,6 @@ func (m *sequenceManager) Reset(jsonRPCID int64) {
 	m.counters[index].Add(-1)
 }
 
-func (m *sequenceManager) ResetFunc() SequenceResetFunc {
-	return func(jsonRPCID int64) {
-		m.Reset(jsonRPCID)
-	}
-}
-
 func loadSequenceNumbers(ctx context.Context, st *state.State, accountKPs []*keypair.Full) ([]int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()

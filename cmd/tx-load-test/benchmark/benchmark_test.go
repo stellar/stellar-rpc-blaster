@@ -20,6 +20,14 @@ type fakeMode struct {
 	verified  *[]string
 }
 
+type fakeLeaseManager struct {
+	eligibleAny        []*keypair.Full
+	eligibleTrustlined []*keypair.Full
+	retryableReleases  []int64
+	consumedReleases   []int64
+	ambiguousReleases  []int64
+}
+
 func (m fakeMode) Label() string { return m.label }
 
 func (m fakeMode) VerifyReady(_ context.Context, _ *state.State) error {
@@ -29,8 +37,37 @@ func (m fakeMode) VerifyReady(_ context.Context, _ *state.State) error {
 	return m.verifyErr
 }
 
-func (m fakeMode) NewTargeter(_ context.Context, _ string, _ *state.State, _ []*keypair.Full) (vegeta.Targeter, SequenceResetFunc, error) {
-	return nil, nil, fmt.Errorf("not implemented in test")
+func (m fakeMode) NewTargeter(_ context.Context, _ string, _ *state.State, _ accountLeaseManager) (vegeta.Targeter, error) {
+	return nil, fmt.Errorf("not implemented in test")
+}
+
+func (m *fakeLeaseManager) Acquire(_ context.Context, requirement accountRequirement) (leasedAccount, error) {
+	accounts := m.Accounts(requirement)
+	if len(accounts) == 0 {
+		return leasedAccount{}, fmt.Errorf("no eligible accounts")
+	}
+	return leasedAccount{RequestID: 1, Account: accounts[0], Sequence: 1}, nil
+}
+
+func (m *fakeLeaseManager) Accounts(requirement accountRequirement) []*keypair.Full {
+	switch requirement {
+	case accountRequirementTrustlinedSource:
+		return m.eligibleTrustlined
+	default:
+		return m.eligibleAny
+	}
+}
+
+func (m *fakeLeaseManager) ReleaseRetryable(requestID int64) {
+	m.retryableReleases = append(m.retryableReleases, requestID)
+}
+
+func (m *fakeLeaseManager) ReleaseConsumed(requestID int64) {
+	m.consumedReleases = append(m.consumedReleases, requestID)
+}
+
+func (m *fakeLeaseManager) ReleaseAmbiguous(requestID int64) {
+	m.ambiguousReleases = append(m.ambiguousReleases, requestID)
 }
 
 func nilLogger() *log.Entry {

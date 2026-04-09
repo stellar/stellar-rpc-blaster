@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
-	"sync/atomic"
 
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 
@@ -61,24 +60,24 @@ func (sacTransferMode) VerifyReady(ctx context.Context, st *state.State) error {
 	return verifyTrustlineBalancesReady(ctx, st, holderAccounts, "SAC")
 }
 
-func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state.State, txSourceAccounts []*keypair.Full) (vegeta.Targeter, SequenceResetFunc, error) {
+func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state.State, accounts accountLeaseManager) (vegeta.Targeter, error) {
 	holderAccounts := st.SACHolderKPs
 	if len(holderAccounts) == 0 {
 		holderAccounts = state.DefaultSACHolderKPs(st.AccountKPs)
 	}
+	txSourceAccounts := accounts.Accounts(accountRequirementAnySource)
 	if len(holderAccounts) < 2 {
-		return nil, nil, benchmarkTargeterCountError("SAC", 2, len(holderAccounts), "trustlined holder account")
+		return nil, benchmarkTargeterCountError("SAC", 2, len(holderAccounts), "trustlined holder account")
 	}
 	if len(txSourceAccounts) == 0 {
-		return nil, nil, benchmarkTargeterCountError("SAC", 1, len(txSourceAccounts), "participant account")
+		return nil, benchmarkTargeterCountError("SAC", 1, len(txSourceAccounts), "participant account")
 	}
 	for i, sac := range st.SACs {
 		if sac == "" {
-			return nil, nil, benchmarkMissingContractIDError("SAC", fmt.Sprintf("SAC[%d]", i))
+			return nil, benchmarkMissingContractIDError("SAC", fmt.Sprintf("SAC[%d]", i))
 		}
 	}
 
-	txSourceCount := len(txSourceAccounts)
 	holderCount := len(holderAccounts)
 
 	// Decode SAC contract IDs from strkey C... to raw 32-byte arrays.
@@ -86,7 +85,7 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 	for i, sacStr := range st.SACs {
 		raw, err := strkey.Decode(strkey.VersionByteContract, sacStr)
 		if err != nil {
-			return nil, nil, fmt.Errorf("decode SAC[%d]: %w", i, err)
+			return nil, fmt.Errorf("decode SAC[%d]: %w", i, err)
 		}
 		copy(sacIDs[i][:], raw)
 	}
@@ -96,7 +95,7 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 	for i, a := range st.Assets {
 		ax, err := a.ToXDR()
 		if err != nil {
-			return nil, nil, fmt.Errorf("asset[%d] to XDR: %w", i, err)
+			return nil, fmt.Errorf("asset[%d] to XDR: %w", i, err)
 		}
 		assetsXDR[i] = ax
 	}
@@ -130,7 +129,7 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 			simTxSource, holderAccounts[0], holderAccounts[1],
 		)
 		if err != nil {
-			return nil, nil, fmt.Errorf("pre-simulate SAC[%d] transfer: %w", i, err)
+			return nil, fmt.Errorf("pre-simulate SAC[%d] transfer: %w", i, err)
 		}
 		simFootprintTemplates[i] = simTemplate.simulation.Footprint
 		// All three SACs share the same WASM and logic; use the last
@@ -142,24 +141,19 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 	// Pre-load the on-ledger sequence numbers for every participant account.
 	// These serve as the base for per-account atomic counters that track
 	// sequence progress independently.
-	seqs, err := newSequenceManager(ctx, st, txSourceAccounts, "SAC tx-source")
-	if err != nil {
-		return nil, nil, err
-	}
-
 	networkPassphrase := st.NetworkPassphrase
 
-	// slotCounter is a global round-robin position. Tx-source account index is
-	// slot % txSourceCount; this guarantees each transaction source appears at
-	// most once per txSourceCount consecutive requests, eliminating
-	// within-ledger sequence collisions.
-	var slotCounter int64
-
 	return func(t *vegeta.Target) error {
-		// Claim the next slot and derive the transaction source account from it.
-		slot := atomic.AddInt64(&slotCounter, 1) - 1
-		txSrcIdx := int(slot % int64(txSourceCount))
-		seq := seqs.Next(txSrcIdx)
+		lease, err := accounts.Acquire(ctx, accountRequirementAnySource)
+		if err != nil {
+			return fmt.Errorf("lease SAC tx-source account: %w", err)
+		}
+		releaseLease := true
+		defer func() {
+			if releaseLease {
+				accounts.ReleaseRetryable(lease.RequestID)
+			}
+		}()
 
 		// Pick a random SAC and a source/destination holder pair.
 		sacIdx := rand.IntN(len(st.SACs))
@@ -171,7 +165,7 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 		if dstIdx >= holderSrcIdx {
 			dstIdx++
 		}
-		txSourceKP := txSourceAccounts[txSrcIdx]
+		txSourceKP := lease.Account
 		holderSrcKP := holderAccounts[holderSrcIdx]
 		dstKP := holderAccounts[dstIdx]
 
@@ -216,12 +210,11 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 			signers = append(signers, holderSrcKP)
 		}
 
-		id := slot + 1
 		body, err := buildSorobanSendTransactionBody(sorobanSendTransactionParams{
-			RPCID:             id,
+			RPCID:             lease.RequestID,
 			NetworkPassphrase: networkPassphrase,
 			TxSource:          txSourceKP,
-			Sequence:          seq,
+			Sequence:          lease.Sequence,
 			Signers:           signers,
 			OpSourceAccount:   holderSrcKP.Address(),
 			InvokeArgs:        invokeArgs,
@@ -245,9 +238,10 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 		if err != nil {
 			return err
 		}
-		populateJSONRPCTarget(t, rpcURL, body)
+		populateJSONRPCTarget(t, rpcURL, body, lease.RequestID)
+		releaseLease = false
 		return nil
-	}, seqs.ResetFunc(), nil
+	}, nil
 }
 
 // presimulateSACTransfer builds a representative SAC transfer invocation and

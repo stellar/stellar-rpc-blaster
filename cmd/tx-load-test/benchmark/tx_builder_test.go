@@ -79,7 +79,7 @@ func TestBuildSorobanSendTransactionBodyBuildsSignedJSONRPCRequest(t *testing.T)
 func TestPopulateJSONRPCTargetSetsRequestFields(t *testing.T) {
 	target := &vegeta.Target{}
 	body := []byte(`{"ok":true}`)
-	populateJSONRPCTarget(target, "https://rpc.example", body)
+	populateJSONRPCTarget(target, "https://rpc.example", body, 0)
 	require.Equal(t, "POST", target.Method)
 	require.Equal(t, "https://rpc.example", target.URL)
 	require.Equal(t, body, target.Body)

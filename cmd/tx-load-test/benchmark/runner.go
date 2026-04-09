@@ -28,7 +28,7 @@ func runVegetaAttack(
 	rpc *rpcclient.Client,
 	label string,
 	targeter vegeta.Targeter,
-	resetSeq SequenceResetFunc,
+	accounts accountLeaseManager,
 	recorder *benchmarkTraceRecorder,
 ) error {
 	pacer := engine.RampToConstantPacer{
@@ -43,7 +43,7 @@ func runVegetaAttack(
 
 	maxTx := cfg.TargetRPS*int(cfg.Duration.Seconds()) + 1000
 	state := newAttackState(maxTx)
-	numPollWorkers, pollWg := startPollWorkersWithTrace(ctx, logger, cfg, rpc, state, resetSeq, label, recorder)
+	numPollWorkers, pollWg := startPollWorkersWithTrace(ctx, logger, cfg, rpc, state, accounts, label, recorder)
 
 	var metrics vegeta.Metrics
 
@@ -60,11 +60,11 @@ loop:
 			if !ok {
 				break loop
 			}
-			processAttackResult(res, &metrics, logger, state, resetSeq, label, recorder)
+			processAttackResult(res, &metrics, logger, state, accounts, label, recorder)
 		}
 	}
 
-	drainAttackResults(results, &metrics, logger, state, resetSeq, label, recorder)
+	drainAttackResults(results, &metrics, logger, state, accounts, label, recorder)
 
 	close(state.hashes)
 	metrics.Close()

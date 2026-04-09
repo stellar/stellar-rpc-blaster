@@ -3,7 +3,10 @@ package benchmark
 import (
 	"cmp"
 	"encoding/json"
+	"net/url"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,6 +50,7 @@ type attackState struct {
 	queued        uint64
 	tryAgainLater uint64
 	submitErrors  uint64
+	ambiguous     uint64
 	included      uint64
 	onChainFail   uint64
 	pollErr       uint64
@@ -61,13 +65,25 @@ func newAttackState(maxTx int) *attackState {
 	}
 }
 
-func (s *attackState) resetSequence(resetSeq SequenceResetFunc, rpcID int64) {
-	if resetSeq != nil && rpcID > 0 {
-		resetSeq(rpcID)
+func releaseRetryable(accounts accountLeaseManager, requestID int64) {
+	if accounts != nil && requestID > 0 {
+		accounts.ReleaseRetryable(requestID)
 	}
 }
 
-func (s *attackState) handleSendTransactionEnvelope(envelope sendRespEnvelope, submittedAt time.Time, resetSeq SequenceResetFunc) bool {
+func releaseConsumed(accounts accountLeaseManager, requestID int64) {
+	if accounts != nil && requestID > 0 {
+		accounts.ReleaseConsumed(requestID)
+	}
+}
+
+func releaseAmbiguous(accounts accountLeaseManager, requestID int64) {
+	if accounts != nil && requestID > 0 {
+		accounts.ReleaseAmbiguous(requestID)
+	}
+}
+
+func (s *attackState) handleSendTransactionEnvelope(envelope sendRespEnvelope, submittedAt time.Time, accounts accountLeaseManager) bool {
 	switch envelope.Result.Status {
 	case "PENDING", "DUPLICATE":
 		s.hashes <- pollItem{hash: envelope.Result.Hash, rpcID: envelope.ID, submittedAt: submittedAt}
@@ -75,25 +91,29 @@ func (s *attackState) handleSendTransactionEnvelope(envelope sendRespEnvelope, s
 		return true
 	case "TRY_AGAIN_LATER":
 		atomic.AddUint64(&s.tryAgainLater, 1)
-		s.resetSequence(resetSeq, envelope.ID)
+		releaseRetryable(accounts, envelope.ID)
 		return true
 	case "ERROR":
 		atomic.AddUint64(&s.submitErrors, 1)
 		s.errorCodes.inc(ledger.DecodeTransactionResultCode(envelope.Result.ErrorResultXDR))
-		s.resetSequence(resetSeq, envelope.ID)
+		releaseRetryable(accounts, envelope.ID)
 		return true
 	default:
-		s.resetSequence(resetSeq, envelope.ID)
+		atomic.AddUint64(&s.ambiguous, 1)
+		releaseAmbiguous(accounts, envelope.ID)
 		return false
 	}
 }
 
-func processAttackResult(res *vegeta.Result, metrics *vegeta.Metrics, logger *log.Entry, state *attackState, resetSeq SequenceResetFunc, workload string, recorder *benchmarkTraceRecorder) {
+func processAttackResult(res *vegeta.Result, metrics *vegeta.Metrics, logger *log.Entry, state *attackState, accounts accountLeaseManager, workload string, recorder *benchmarkTraceRecorder) {
 	metrics.Add(res)
 	atomic.AddUint64(&state.submitted, 1)
+	requestID := requestIDFromResultURL(res.URL)
 
 	if res.Error != "" || res.Code < 200 || res.Code >= 300 {
 		atomic.AddUint64(&state.httpErr, 1)
+		atomic.AddUint64(&state.ambiguous, 1)
+		releaseAmbiguous(accounts, requestID)
 		if recorder != nil {
 			recorder.record(benchmarkTraceRecord{
 				Timestamp:    res.Timestamp,
@@ -111,6 +131,8 @@ func processAttackResult(res *vegeta.Result, metrics *vegeta.Metrics, logger *lo
 	var envelope sendRespEnvelope
 	if err := json.Unmarshal(res.Body, &envelope); err != nil {
 		atomic.AddUint64(&state.httpErr, 1)
+		atomic.AddUint64(&state.ambiguous, 1)
+		releaseAmbiguous(accounts, requestID)
 		if recorder != nil {
 			recorder.record(benchmarkTraceRecord{
 				Timestamp:    res.Timestamp,
@@ -142,15 +164,15 @@ func processAttackResult(res *vegeta.Result, metrics *vegeta.Metrics, logger *lo
 			ResponseBody:      string(res.Body),
 		})
 	}
-	if !state.handleSendTransactionEnvelope(envelope, res.Timestamp, resetSeq) {
+	if !state.handleSendTransactionEnvelope(envelope, res.Timestamp, accounts) {
 		atomic.AddUint64(&state.httpErr, 1)
 		logger.Debugf("sendTransaction: unknown status %q", envelope.Result.Status)
 	}
 }
 
-func drainAttackResults(results <-chan *vegeta.Result, metrics *vegeta.Metrics, logger *log.Entry, state *attackState, resetSeq SequenceResetFunc, workload string, recorder *benchmarkTraceRecorder) {
+func drainAttackResults(results <-chan *vegeta.Result, metrics *vegeta.Metrics, logger *log.Entry, state *attackState, accounts accountLeaseManager, workload string, recorder *benchmarkTraceRecorder) {
 	for res := range results {
-		processAttackResult(res, metrics, logger, state, resetSeq, workload, recorder)
+		processAttackResult(res, metrics, logger, state, accounts, workload, recorder)
 	}
 }
 
@@ -160,6 +182,24 @@ func (s *attackState) submissionSnapshot() (submitted, httpErr, queued, tryAgain
 		atomic.LoadUint64(&s.queued),
 		atomic.LoadUint64(&s.tryAgainLater),
 		atomic.LoadUint64(&s.submitErrors)
+}
+
+func requestIDFromResultURL(rawURL string) int64 {
+	if rawURL == "" {
+		return 0
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return 0
+	}
+	if !strings.HasPrefix(parsed.Fragment, requestIDURLFragmentPrefix) {
+		return 0
+	}
+	requestID, err := strconv.ParseInt(strings.TrimPrefix(parsed.Fragment, requestIDURLFragmentPrefix), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return requestID
 }
 
 func (s *attackState) pollSnapshot() (included, onChainFail, pollErr uint64) {
