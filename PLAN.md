@@ -175,9 +175,11 @@ Mode semantics:
 Benchmark engine expectations:
 
 - use Vegeta-style attack generation with ramp-up pacing
-- submit traffic through the RPC endpoint using `soroban_sendTransaction`
+- submit traffic through the RPC endpoint using the RPC `sendTransaction` method
+- wrap benchmark submissions in fee-bump envelopes paid by the fee payer while preserving the inner workload transaction semantics
 - maintain a separate poll/drain stage to observe inclusion results
-- report submission counters, acceptance failures, on-chain inclusion/failure counts, Vegeta metrics, latency percentiles, byte counts, and HTTP code distribution
+- report submission counters, acceptance failures, ambiguous submission outcomes, on-chain inclusion/failure counts, Vegeta metrics, latency percentiles, byte counts, and HTTP code distribution
+- preserve submit-time and on-chain failure summaries, including result-code breakdowns, operation-result breakdowns, and normalized diagnostic summaries when available
 
 Validation rules:
 
@@ -300,7 +302,8 @@ Also preserve the account-oriented split that emerged from refactoring:
 Responsibilities:
 
 - benchmark config validation
-- account partitioning for traffic sources
+- source-account sizing math for the Soroban stream and the optional classic companion stream
+- shared source-account lease management for benchmark traffic, including unique request IDs, sequence assignment, and release semantics for retryable, consumed, and ambiguous outcomes
 - benchmark runners and attack orchestration
 - mode-specific payload generation
 - shared transaction building
@@ -380,21 +383,28 @@ These rules matter because they reflect the refactored shape, not just the featu
 
 ## 7. Benchmark Workload Details
 
-### 7.1 Account partitioning
+### 7.1 Account pool sizing and lease management
 
-This is essential. Recreate the math layer and test it.
+This is essential. Recreate both the sizing math and the runtime account-coordination model, and test them.
 
 - derive required Soroban source-account counts from requested rate and duration
 - derive required classic simple-payment source-account counts from requested classic rate and duration
 - validate total accounts against the combined requirement when both streams are enabled
 - preserve the idea that setup validates against the all-mode superset and bench validates against the chosen mode plus optional classic stream
+- use a shared source-account lease manager at runtime rather than static per-workload partitions
+- preserve capability-aware leasing so workloads that need trustlined-capable sources can require them while other workloads can draw from the broader pool
+- preserve explicit lease release semantics for retryable, consumed, and ambiguous outcomes so local sequence state is not blindly rewound
+- preserve background recovery of ambiguous or poisoned accounts by reloading on-chain sequence state before reuse
 
 ### 7.2 Transaction submission and polling
 
-- submit Soroban traffic through RPC
+- submit benchmark traffic through RPC using `sendTransaction`
+- wrap benchmark submissions in fee-bump envelopes paid by the fee payer
 - keep submission and result-polling concerns separate
 - capture both client-side submission outcomes and eventual on-chain outcomes
 - retain breakdowns for retryable RPC errors versus transaction-level failures
+- retain distinct visibility into ambiguous submission outcomes versus confirmed retryable or terminal failures
+- surface result-code, op-result, and diagnostic summaries at both submit time and final on-chain outcome time
 
 ### 7.3 Soroswap mode behavior
 
@@ -462,12 +472,15 @@ The recreated suite should cover at least these behaviors.
 - dual-stream account math validated
 - `classic-rps` semantics validated for 1 payment op per transaction
 - setup all-mode validation tested separately from bench-mode validation
+- shared lease-manager behavior validated for retryable, consumed, and ambiguous account releases
+- ambiguous-account recovery and sequence resynchronization validated
 
 ### 9.3 Shared tx-builder tests
 
 - Soroban transaction body construction is centralized and tested
 - auth entry fixtures are valid for the SDK version in use
 - fee/resource-fee handling is asserted correctly
+- benchmark transaction construction is fee-bumped and signed correctly
 
 ### 9.4 Shared Soroban helper tests
 
@@ -493,7 +506,7 @@ The recreated suite should cover at least these behaviors.
 
 - atomic load/save behavior
 - account derivation from indices
-- benchmark account-count helpers and partition math
+- benchmark account-count helpers and source-account sizing math
 - transaction result decoding/polling helpers
 
 ### 9.8 Teardown tests
@@ -557,11 +570,12 @@ Use this order to rebuild the tool with minimum rework.
 
 ### Phase 8: Bench runners
 
-1. SAC transfer mode
-2. OZ transfer mode
-3. Soroswap swap mode
-4. Parallel simple-payment companion stream
-5. Vegeta metrics and reporting
+1. Shared source-account lease manager and sequence coordination
+2. SAC transfer mode
+3. OZ transfer mode
+4. Soroswap swap mode
+5. Parallel simple-payment companion stream
+6. Vegeta metrics and reporting
 
 ### Phase 9: Cleanup and sync
 
