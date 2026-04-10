@@ -27,7 +27,7 @@ type BlastEngine struct {
 type EndpointBlastConfig struct {
 	EndpointKey string
 	Targeter    vegeta.Targeter
-	BlastPacer  RampToConstantPacer
+	BlastPacer  SteppedPacer
 }
 
 // Entry/exit point from app.go
@@ -61,7 +61,7 @@ func NewBlastEngine(
 	// Construct each endpoint's blast config
 	var endpointBlasts []EndpointBlastConfig
 	for _, endpointKey := range cfg.GetActiveEndpoints() {
-		pacer := NewRampToConstantPacer(endpointKey, cfg)
+		pacer := NewSteppedPacer(endpointKey, cfg)
 
 		maxNumBodies := pacer.Hits(cfg.Duration) // upper limit of how many request bodies we could possibly need
 		paramMaps, err := parameters.BuildEndpointParams(endpointKey, int(maxNumBodies), sharedParams)

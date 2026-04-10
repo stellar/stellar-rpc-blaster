@@ -28,6 +28,7 @@ type Config struct {
 	// Run mode settings
 	Duration       time.Duration
 	RampUp         time.Duration
+	StepInterval   time.Duration
 	Serial         bool   // run endpoints one at a time instead of concurrently
 	TestOutputPath string // path to write JSON results
 
@@ -68,6 +69,7 @@ type RuntimeSettings struct {
 	InputDataPath  string
 	Duration       time.Duration
 	RampUp         time.Duration
+	StepInterval   time.Duration
 	Serial         bool
 
 	// Generate mode settings
@@ -81,8 +83,8 @@ type RuntimeSettings struct {
 
 // Per-endpoint configuration
 type EndpointConfig struct {
-	RPS      int `toml:"rps"`                 // requests per second
-	StartRPS int `toml:"start_rps,omitempty"` // initial RPS to start at, must be <= RPS
+	RPS      int  `toml:"rps"`                 // requests per second
+	StartRPS *int `toml:"start_rps,omitempty"` // initial RPS to start at, must be <= RPS; nil means omitted
 }
 
 func NewConfig(
@@ -108,6 +110,7 @@ func NewConfig(
 	case Run:
 		cfg.Duration = settings.Duration
 		cfg.RampUp = settings.RampUp
+		cfg.StepInterval = settings.StepInterval
 		cfg.Serial = settings.Serial
 		cfg.TestOutputPath = settings.TestOutputPath
 		if err := cfg.processToml(settings.ConfigPath); err != nil {
@@ -151,6 +154,12 @@ func (c *Config) processToml(tomlPath string) error {
 
 // Ensure at least one endpoint is configured if launching a load test and data-dependent endpoints have input data
 func (c *Config) validateEndpointConfig() error {
+	if c.StepInterval < 0 || c.StepInterval%(5*time.Second) != 0 {
+		return fmt.Errorf("step-interval must be a positive multiple of 5s")
+	}
+	if c.StepInterval > c.RampUp {
+		return fmt.Errorf("step-interval cannot be greater than ramp-up duration")
+	}
 	hasValidEndpoint := false
 	hasStartRPS := false
 	for _, endpoint := range c.GetActiveEndpoints() {
@@ -161,18 +170,19 @@ func (c *Config) validateEndpointConfig() error {
 			return fmt.Errorf("endpoint %s requires input data, but no input-data-path was provided", endpoint)
 		}
 
-		if c.GetEndpointTargetRPS(endpoint) < c.GetEndpointStartRPS(endpoint) {
-			return fmt.Errorf("could not parse endpoint %s, need start_rps <= rps", endpoint)
-		}
-		if c.GetEndpointStartRPS(endpoint) > 1 {
+		startRPS := c.GetEndpointStartRPS(endpoint)
+		if startRPS >= 0 {
 			hasStartRPS = true
+			if c.GetEndpointTargetRPS(endpoint) < startRPS {
+				return fmt.Errorf("could not parse endpoint %s, need start_rps <= rps", endpoint)
+			}
 		}
 	}
 	if !hasValidEndpoint {
 		return fmt.Errorf("at least one endpoint must be configured with RPS > 0")
 	}
 	if hasStartRPS && c.RampUp == 0 {
-		return fmt.Errorf("at least one endpoint is configured with start_rps > 0, but ramp-up duration is not set")
+		return fmt.Errorf("at least one endpoint is configured with start_rps, but ramp-up duration is not set")
 	}
 	return nil
 }
@@ -188,11 +198,12 @@ func (c *Config) GetEndpointTargetRPS(key string) int {
 	return 0
 }
 
+// GetEndpointStartRPS returns the configured start RPS, or -1 if omitted.
 func (c *Config) GetEndpointStartRPS(key string) int {
-	if ep, ok := c.Endpoints[key]; ok {
-		return max(ep.StartRPS, 1)
+	if ep, ok := c.Endpoints[key]; ok && ep.StartRPS != nil {
+		return *ep.StartRPS
 	}
-	return 1
+	return -1
 }
 
 // GetActiveEndpoints returns the endpoints configured with RPS > 0.

@@ -41,7 +41,7 @@ func blastAtEndpoint(
 func flushBlastResults(
 	ctx context.Context,
 	endpointKey string,
-	pacer RampToConstantPacer,
+	pacer SteppedPacer,
 	start time.Time,
 	results <-chan *vegeta.Result,
 	out chan<- blasterMetrics.Sample,
