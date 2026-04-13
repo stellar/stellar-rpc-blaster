@@ -161,11 +161,13 @@ func (c *Config) validateEndpointConfig() error {
 		return fmt.Errorf("error-percent must be between 0 and 100")
 	}
 
-	if c.StepInterval < 0 || c.StepInterval%(5*time.Second) != 0 {
-		return fmt.Errorf("step-interval must be a positive multiple of 5s")
-	}
-	if c.StepInterval > c.RampUp {
-		return fmt.Errorf("step-interval cannot be greater than ramp-up duration")
+	if c.RampUp > 0 {
+		if c.StepInterval < 0 || c.StepInterval%(5*time.Second) != 0 {
+			return fmt.Errorf("step-interval must be a positive multiple of 5s")
+		}
+		if c.StepInterval > c.RampUp {
+			return fmt.Errorf("step-interval cannot be greater than ramp-up duration")
+		}
 	}
 	hasValidEndpoint := false
 	hasStartRPS := false
