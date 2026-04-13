@@ -117,10 +117,7 @@ func NewAggregator(logger *log.Entry, settings config.Config, cancel context.Can
 	sort.Strings(endpoints)
 	a.orderedEndpoints = endpoints // maintain order for consistent output
 
-	stepInterval := settings.StepInterval
-	if stepInterval <= 0 {
-		stepInterval = 5 * time.Second
-	}
+	stepInterval := max(5, settings.StepInterval)
 
 	for _, endpointKey := range endpoints {
 		a.stats[endpointKey] = &EndpointStats{
@@ -140,8 +137,8 @@ func NewAggregator(logger *log.Entry, settings config.Config, cancel context.Can
 // mergedHistogram builds a combined histogram from all windows.
 func (e *EndpointStats) mergedHistogram() *hdrhistogram.Histogram {
 	merged := hdrhistogram.New(1, 60000000, 3)
-	for i := range e.windows {
-		merged.Merge(e.windows[i].histogram)
+	for _, w := range e.windows {
+		merged.Merge(w.histogram)
 	}
 	return merged
 }
