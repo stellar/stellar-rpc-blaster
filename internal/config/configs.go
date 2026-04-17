@@ -13,6 +13,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/stellar-rpc-blaster/internal/run/parameters"
+	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
 type Config struct {
@@ -85,8 +86,9 @@ type RuntimeSettings struct {
 
 // Per-endpoint configuration
 type EndpointConfig struct {
-	RPS      int  `toml:"rps"`                 // requests per second
-	StartRPS *int `toml:"start_rps,omitempty"` // initial RPS to start at, must be <= RPS; nil means omitted
+	RPS      int    `toml:"rps"`                 // requests per second
+	StartRPS *int   `toml:"start_rps,omitempty"` // initial RPS to start at, must be <= RPS; nil means omitted
+	Limit    uint32 `toml:"limit,omitempty"`     // number of results per request
 }
 
 func NewConfig(
@@ -213,6 +215,22 @@ func (c *Config) GetEndpointStartRPS(key string) int {
 		return *ep.StartRPS
 	}
 	return -1
+}
+
+// GetEndpointLimit returns the configured limit, or 0 if omitted.
+func (c *Config) GetEndpointLimit(key string) uint32 {
+	if ep, ok := c.Endpoints[key]; ok && ep.Limit != 0 {
+		return ep.Limit
+	}
+	switch key {
+	case "getLedgers", "getTransactions":
+		// case where limit is set
+		return util.TxPageLimit // default limit for ledger-range endpoints
+	case "getEvents":
+		return util.EventsPageLimit // default limit for getEvents
+	default:
+		return 0 // for endpoints that don't support limits
+	}
 }
 
 // GetActiveEndpoints returns the endpoints configured with RPS > 0.
