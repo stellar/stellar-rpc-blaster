@@ -220,11 +220,10 @@ func (c *Config) GetEndpointStartRPS(key string) int {
 // GetEndpointLimit returns the configured limit, or 0 if omitted.
 func (c *Config) GetEndpointLimit(key string) uint32 {
 	if ep, ok := c.Endpoints[key]; ok && ep.Limit != 0 {
-		return ep.Limit
+		return ep.Limit // if limits are set in toml as non-zero, use them
 	}
 	switch key {
 	case "getLedgers", "getTransactions":
-		// case where limit is set
 		return util.TxPageLimit // default limit for ledger-range endpoints
 	case "getEvents":
 		return util.EventsPageLimit // default limit for getEvents

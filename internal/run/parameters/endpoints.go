@@ -19,13 +19,13 @@ func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 
 	switch endpointKey {
 	case "getTransaction":
-		txs := params.Output.TxHashes
-		var result []map[string]any
-		for _, hash := range txs[:min(len(txs), maxNeededNumBodies, util.MaxNumPrebuiltBodies)] {
-			result = append(result, map[string]any{
+		count := min(len(params.Output.TxHashes), maxNeededNumBodies, util.MaxNumPrebuiltBodies)
+		result := make([]map[string]any, count)
+		for i, hash := range params.Output.TxHashes[:count] {
+			result[i] = map[string]any{
 				"hash":      hash,
 				"xdrFormat": util.VaryFormat(),
-			})
+			}
 		}
 		return result, nil
 
@@ -50,7 +50,6 @@ func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 		if span <= 0 {
 			return nil, fmt.Errorf("empty ledger range for %s", endpointKey)
 		}
-		pageLimit := limit
 		count := min(span, maxNeededNumBodies, util.MaxNumPrebuiltBodies)
 
 		result := make([]map[string]any, count)
@@ -61,7 +60,7 @@ func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 				"startLedger": start,
 				"xdrFormat":   util.VaryFormat(),
 			}
-			entry["pagination"] = setPaginationMap(start, remaining, entry, endpointKey, pageLimit)
+			entry["pagination"] = setPaginationMap(start, remaining, entry, endpointKey, limit)
 			result[i] = entry
 		}
 		return result, nil
@@ -72,7 +71,6 @@ func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 		if span <= 0 {
 			return nil, fmt.Errorf("empty ledger range for %s", endpointKey)
 		}
-		pageLimit := limit
 		count := min(span, maxNeededNumBodies, util.MaxNumPrebuiltBodies)
 
 		result := make([]map[string]any, count)
@@ -83,7 +81,7 @@ func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 				"startLedger": start,
 				"xdrFormat":   util.VaryFormat(),
 			}
-			entry["pagination"] = setPaginationMap(start, remaining, entry, endpointKey, pageLimit)
+			entry["pagination"] = setPaginationMap(start, remaining, entry, endpointKey, limit)
 			result[i] = entry
 		}
 		return result, nil
@@ -94,7 +92,6 @@ func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 		if span <= 0 {
 			return nil, fmt.Errorf("empty ledger range for %s", endpointKey)
 		}
-		pageLimit := limit
 		eventBodies := params.Output.ContractEventData
 		count := min(maxNeededNumBodies, util.MaxNumPrebuiltBodies)
 
@@ -102,7 +99,7 @@ func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 		for i := range count {
 			filters := eventBodies.BuildEventsFilters()
 			start := lr.First + uint32(rand.IntN(span))
-			end := min(start+pageLimit, lr.Last)
+			end := min(start+limit, lr.Last)
 			remaining := lr.Last - start
 			entry := map[string]any{
 				"startLedger": start,
@@ -110,7 +107,7 @@ func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 				"xdrFormat":   util.VaryFormat(),
 				"filters":     []map[string]any{filters},
 			}
-			entry["pagination"] = setPaginationMap(start, remaining, entry, endpointKey, pageLimit)
+			entry["pagination"] = setPaginationMap(start, remaining, entry, endpointKey, limit)
 			result[i] = entry
 		}
 		return result, nil
