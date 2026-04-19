@@ -191,7 +191,7 @@ func (c *Config) validateEndpointConfig() error {
 		switch endpoint {
 		case "getTransactions", "getLedgers", "getEvents":
 			if c.GetEndpointLimit(endpoint) > c.GetEndpointMaxLimit(endpoint) {
-				return fmt.Errorf("endpoint %s requires a pagination limit under %d", endpoint, c.GetEndpointMaxLimit(endpoint))
+				return fmt.Errorf("pagination limit for %s must not exceed %d", endpoint, c.GetEndpointMaxLimit(endpoint))
 			}
 		default:
 			if c.GetEndpointLimit(endpoint) != 0 {
