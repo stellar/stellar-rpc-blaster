@@ -188,6 +188,25 @@ func (c *Config) validateEndpointConfig() error {
 				return fmt.Errorf("could not parse endpoint %s, need start_rps <= rps", endpoint)
 			}
 		}
+		switch endpoint {
+		case "getTransactions":
+			if c.GetEndpointLimit(endpoint) > util.MaxTxPageLimit {
+				return fmt.Errorf("endpoint %s requires a pagination limit under %d", endpoint, util.MaxTxPageLimit)
+			}
+		case "getLedgers":
+			if c.GetEndpointLimit(endpoint) > util.MaxLedgersPageLimit {
+				return fmt.Errorf("endpoint %s requires a pagination limit under %d", endpoint, util.MaxLedgersPageLimit)
+			}
+		case "getEvents":
+			if c.GetEndpointLimit(endpoint) > util.MaxEventsPageLimit {
+				return fmt.Errorf("endpoint %s requires a pagination limit under %d", endpoint, util.MaxEventsPageLimit)
+			}
+		default:
+			// for endpoints that don't support pagination, limit must be 0
+			if c.GetEndpointLimit(endpoint) != 0 {
+				return fmt.Errorf("endpoint %s does not support pagination, so limit must be omitted or 0", endpoint)
+			}
+		}
 	}
 	if !hasValidEndpoint {
 		return fmt.Errorf("at least one endpoint must be configured with RPS > 0")
@@ -224,9 +243,9 @@ func (c *Config) GetEndpointLimit(key string) uint32 {
 	}
 	switch key {
 	case "getLedgers", "getTransactions":
-		return util.TxPageLimit // default limit for ledger-range endpoints
+		return util.DefaultTxPageLimit // default limit for ledger-range endpoints
 	case "getEvents":
-		return util.EventsPageLimit // default limit for getEvents
+		return util.DefaultEventsPageLimit // default limit for getEvents
 	default:
 		return 0 // for endpoints that don't support limits
 	}
