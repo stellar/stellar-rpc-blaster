@@ -189,20 +189,11 @@ func (c *Config) validateEndpointConfig() error {
 			}
 		}
 		switch endpoint {
-		case "getTransactions":
-			if c.GetEndpointLimit(endpoint) > util.MaxTxPageLimit {
-				return fmt.Errorf("endpoint %s requires a pagination limit under %d", endpoint, util.MaxTxPageLimit)
-			}
-		case "getLedgers":
-			if c.GetEndpointLimit(endpoint) > util.MaxLedgersPageLimit {
-				return fmt.Errorf("endpoint %s requires a pagination limit under %d", endpoint, util.MaxLedgersPageLimit)
-			}
-		case "getEvents":
-			if c.GetEndpointLimit(endpoint) > util.MaxEventsPageLimit {
-				return fmt.Errorf("endpoint %s requires a pagination limit under %d", endpoint, util.MaxEventsPageLimit)
+		case "getTransactions", "getLedgers", "getEvents":
+			if c.GetEndpointLimit(endpoint) > c.GetEndpointMaxLimit(endpoint) {
+				return fmt.Errorf("endpoint %s requires a pagination limit under %d", endpoint, c.GetEndpointMaxLimit(endpoint))
 			}
 		default:
-			// for endpoints that don't support pagination, limit must be 0
 			if c.GetEndpointLimit(endpoint) != 0 {
 				return fmt.Errorf("endpoint %s does not support pagination, so limit must be omitted or 0", endpoint)
 			}
@@ -242,10 +233,25 @@ func (c *Config) GetEndpointLimit(key string) uint32 {
 		return ep.Limit // if limits are set in toml as non-zero, use them
 	}
 	switch key {
-	case "getLedgers", "getTransactions":
-		return util.DefaultTxPageLimit // default limit for ledger-range endpoints
+	case "getTransactions":
+		return util.DefaultTxPageLimit
+	case "getLedgers":
+		return util.DefaultLedgersPageLimit
 	case "getEvents":
-		return util.DefaultEventsPageLimit // default limit for getEvents
+		return util.DefaultEventsPageLimit
+	default:
+		return 0 // for endpoints that don't support limits
+	}
+}
+
+func (c *Config) GetEndpointMaxLimit(key string) uint32 {
+	switch key {
+	case "getTransactions":
+		return util.MaxTxPageLimit
+	case "getLedgers":
+		return util.MaxLedgersPageLimit
+	case "getEvents":
+		return util.MaxEventsPageLimit
 	default:
 		return 0 // for endpoints that don't support limits
 	}
