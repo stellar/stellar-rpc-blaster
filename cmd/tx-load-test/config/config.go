@@ -16,7 +16,7 @@ const (
 	// DefaultClassicRPS is the default steady-state transaction rate for the
 	// parallel simple-payment stream that accompanies the selected Soroban
 	// benchmark mode.
-	DefaultClassicRPS = 200
+	DefaultClassicRPS = 100
 )
 
 // Config holds all parameters for setting up and running the tx-load-test.

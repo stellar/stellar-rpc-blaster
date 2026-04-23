@@ -110,7 +110,7 @@ Flags:
 - `--network` required; support `testnet`, `futurenet`, `mainnet`, `standalone`
 - `--duration` default `100s`
 - `--target-rps` default `50`
-- `--classic-rps` default `200`
+- `--classic-rps` default `100`
 - `--soroswap-factory` optional on standalone/futurenet, required on public networks
 - `--soroswap-router` optional on standalone/futurenet, required on public networks
 - `--liquidity-per-pool` default `1000000`
@@ -153,7 +153,7 @@ Flags:
 
 - `--mode`, default `sac-transfer`
 - `--target-rps`, default `50`
-- `--classic-rps`, default `200`
+- `--classic-rps`, default `100`
 - `--duration`, default `100s`
 - `--ramp-up`, default `20s`
 - `--rpc-url`, optional override from state

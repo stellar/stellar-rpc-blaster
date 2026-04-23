@@ -51,7 +51,7 @@ Creates all required ledger state and writes `state.json`. If a state file alrea
 | `--network` | *(required)* | Network shorthand: `testnet`, `futurenet`, `mainnet`, `standalone` |
 | `--duration` | `100s` | Planned benchmark duration used when sizing account partitions |
 | `--target-rps` | `50` | Planned Soroban steady-state requests per second used when sizing account partitions |
-| `--classic-rps` | `200` | Planned simple-payment steady-state transactions per second used when sizing account pools for the superset setup shape; `0` disables the companion stream; each transaction carries one payment op |
+| `--classic-rps` | `100` | Planned simple-payment steady-state transactions per second used when sizing account pools for the superset setup shape; `0` disables the companion stream; each transaction carries one payment op |
 | `--soroswap-factory` | *(required on `testnet`/`mainnet`)* | Soroswap factory contract ID; optional on `standalone`/`futurenet`, where setup can auto-deploy it |
 | `--soroswap-router` | *(required on `testnet`/`mainnet`)* | Soroswap router contract ID; optional on `standalone`/`futurenet`, where setup can auto-deploy it |
 | `--liquidity-per-pool` | `1000000` | Token units of each asset to seed into each Soroswap benchmark pool |
@@ -99,7 +99,7 @@ Before the benchmark starts, the tool queries the chosen RPC endpoint (either `-
 |---|---|---|
 | `--mode` | `sac-transfer` | Workload: `sac-transfer`, `oz-transfer`, or `soroswap` |
 | `--target-rps` | `50` | Steady-state requests per second |
-| `--classic-rps` | `200` | Steady-state simple-payment transactions per second; `0` disables the companion stream; each transaction carries one payment op |
+| `--classic-rps` | `100` | Steady-state simple-payment transactions per second; `0` disables the companion stream; each transaction carries one payment op |
 | `--duration` | `100s` | Total benchmark duration |
 | `--ramp-up` | `20s` | Linear ramp from 1 RPS to target |
 | `--rpc-url` | *(from state file)* | Override the RPC URL stored in `state.json` |

@@ -66,7 +66,7 @@ type workload struct {
 	label       string
 	targetRPS   int
 	rateSummary string
-	targeter    vegeta.Targeter
+	newTargeter func(context.Context) (vegeta.Targeter, error)
 }
 
 // ValidateConfig checks that the benchmark configuration is internally
@@ -77,15 +77,13 @@ func ValidateConfig(cfg config.Config) error {
 		return err
 	}
 
-	simpleRequired := state.SimplePaymentSourceAccountCount(cfg)
-	sorobanRequired := state.SorobanSourceAccountCount(cfg)
-	totalRequired := simpleRequired + sorobanRequired
+	totalRequired := state.AnySourceAccountCount(cfg)
 
 	if cfg.NumberOfAccounts < totalRequired {
 		return fmt.Errorf(
 			"account pool too small for configured benchmark: have %d accounts but need at least %d "+
-				"(%d Soroban tx sources + %d simple-payment tx sources)  -- increase --accounts, reduce --target-rps, reduce --classic-rps, or shorten --duration",
-			cfg.NumberOfAccounts, totalRequired, sorobanRequired, simpleRequired,
+				"for the shared tx-source pool  -- increase --accounts, reduce --target-rps, reduce --classic-rps, or shorten --duration",
+			cfg.NumberOfAccounts, totalRequired,
 		)
 	}
 	return nil
@@ -145,23 +143,6 @@ func holderAccountsForBenchmark(cfg config.Config, st *state.State) ([]*keypair.
 	return holderAccounts, nil
 }
 
-func partitionSourceAccounts(cfg config.Config, st *state.State) ([]*keypair.Full, []*keypair.Full, error) {
-	simpleSourceCount := state.SimplePaymentSourceAccountCount(cfg)
-	partitionIdx := len(st.AccountKPs) - simpleSourceCount
-	simpleSources := st.AccountKPs[partitionIdx:]
-	sorobanPool := st.AccountKPs[:partitionIdx]
-	sorobanRequired := state.SorobanSourceAccountCount(cfg)
-	if len(sorobanPool) < sorobanRequired {
-		return nil, nil, fmt.Errorf(
-			"need at least %d Soroban tx-source accounts after reserving %d simple-payment sources, got %d  -- rerun setup with more --accounts or lower the configured rates/duration",
-			sorobanRequired, simpleSourceCount, len(sorobanPool),
-		)
-	}
-	sorobanSources := sorobanPool[:sorobanRequired]
-
-	return simpleSources, sorobanSources, nil
-}
-
 func runWorkloads(ctx context.Context, logger *log.Entry, baseCfg config.Config, st *state.State, httpClient *http.Client, accounts accountLeaseManager, workloads []workload) error {
 	recorder, err := openBenchmarkTraceRecorder(baseCfg.TraceFile)
 	if err != nil {
@@ -181,7 +162,7 @@ func runWorkloads(ctx context.Context, logger *log.Entry, baseCfg config.Config,
 			runCfg.TargetRPS = wl.targetRPS
 			scoped := logger.WithField("phase", wl.label)
 			scoped.Infof("duration=%s ramp=%s %s", runCfg.Duration, runCfg.RampUp, wl.rateSummary)
-			if err := runVegetaAttack(groupCtx, scoped, runCfg, httpClient, st.RPCClient, wl.label, wl.targeter, accounts, recorder); err != nil {
+			if err := runVegetaAttack(groupCtx, scoped, runCfg, httpClient, st.RPCClient, wl.label, wl.newTargeter, accounts, recorder); err != nil {
 				return fmt.Errorf("%s: %w", wl.label, err)
 			}
 			return nil
@@ -212,27 +193,23 @@ func Run(ctx context.Context, logger *log.Entry, cfg config.Config, st *state.St
 	if err := m.VerifyReady(ctx, st); err != nil {
 		return fmt.Errorf("%s: verify ready: %w", m.Label(), err)
 	}
-	targeter, err := m.NewTargeter(ctx, cfg.RPCURL, st, accounts)
-	if err != nil {
-		return fmt.Errorf("%s: build targeter: %w", m.Label(), err)
-	}
 
 	workloads := []workload{{
 		label:       m.Label(),
 		targetRPS:   cfg.TargetRPS,
 		rateSummary: fmt.Sprintf("targetRPS=%d tx/s", cfg.TargetRPS),
-		targeter:    targeter,
+		newTargeter: func(runCtx context.Context) (vegeta.Targeter, error) {
+			return m.NewTargeter(runCtx, cfg.RPCURL, st, accounts)
+		},
 	}}
 	if cfg.ClassicRPS > 0 {
-		simpleTargeter, err := newSimplePaymentTargeter(ctx, cfg.RPCURL, st, accounts, st.AccountKPs)
-		if err != nil {
-			return fmt.Errorf("simple-payment: build targeter: %w", err)
-		}
 		workloads = append(workloads, workload{
 			label:       "simple-payment",
 			targetRPS:   state.SimplePaymentTransactionRate(cfg),
 			rateSummary: fmt.Sprintf("targetRPS=%d tx/s paymentOpsPerTx=%d", state.SimplePaymentTransactionRate(cfg), state.SimplePaymentOpsPerTransaction),
-			targeter:    simpleTargeter,
+			newTargeter: func(runCtx context.Context) (vegeta.Targeter, error) {
+				return newSimplePaymentTargeter(runCtx, cfg.RPCURL, st, accounts, st.AccountKPs)
+			},
 		})
 	}
 	return runWorkloads(ctx, logger, cfg, st, httpClient, accounts, workloads)

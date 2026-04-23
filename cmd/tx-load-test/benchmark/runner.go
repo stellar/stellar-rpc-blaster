@@ -3,6 +3,7 @@ package benchmark
 import (
 	"context"
 	"net/http"
+	"time"
 
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 
@@ -27,7 +28,7 @@ func runVegetaAttack(
 	httpClient *http.Client,
 	rpc *rpcclient.Client,
 	label string,
-	targeter vegeta.Targeter,
+	newTargeter func(context.Context) (vegeta.Targeter, error),
 	accounts accountLeaseManager,
 	recorder *benchmarkTraceRecorder,
 ) error {
@@ -41,11 +42,19 @@ func runVegetaAttack(
 	attackCtx, cancel := context.WithTimeout(ctx, cfg.Duration)
 	defer cancel()
 
+	targeter, err := newTargeter(attackCtx)
+	if err != nil {
+		return err
+	}
+
 	maxTx := cfg.TargetRPS*int(cfg.Duration.Seconds()) + 1000
 	state := newAttackState(maxTx)
 	numPollWorkers, pollWg := startPollWorkersWithTrace(ctx, logger, cfg, rpc, state, accounts, label, recorder)
 
 	var metrics vegeta.Metrics
+	attackStartedAt := time.Now()
+	progressTicker := time.NewTicker(43 * time.Second)
+	defer progressTicker.Stop()
 
 	attacker := vegeta.NewAttacker(vegeta.Client(httpClient))
 	results := attacker.Attack(traceTargeter(label, targeter, recorder), pacer, cfg.Duration, label)
@@ -56,6 +65,10 @@ loop:
 		case <-attackCtx.Done():
 			attacker.Stop()
 			break loop
+		case <-progressTicker.C:
+			submitted, httpErr, queued, tryAgainLater, submitErrors, ambiguous := state.submissionSnapshot()
+			logger.Infof("attack progress -- elapsed=%s submitted=%d httpErr=%d queued=%d tryAgainLater=%d submitErrors=%d ambiguous=%d",
+				time.Since(attackStartedAt).Round(time.Second), submitted, httpErr, queued, tryAgainLater, submitErrors, ambiguous)
 		case res, ok := <-results:
 			if !ok {
 				break loop

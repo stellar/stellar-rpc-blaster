@@ -238,7 +238,7 @@ func TestValidateSetupConfig(t *testing.T) {
 			Duration:         2 * time.Minute,
 			NumberOfAccounts: 3_999,
 		})
-		require.EqualError(t, err, "benchmark shape is not valid for mode=sac-transfer: account pool too small for configured benchmark: have 3999 accounts but need at least 4000 (2000 Soroban tx sources + 2000 simple-payment tx sources)  -- increase --accounts, reduce --target-rps, reduce --classic-rps, or shorten --duration")
+		require.EqualError(t, err, "benchmark shape is not valid for mode=sac-transfer: account pool too small for configured benchmark: have 3999 accounts but need at least 4000 for the shared tx-source pool  -- increase --accounts, reduce --target-rps, reduce --classic-rps, or shorten --duration")
 	})
 }
 
@@ -259,18 +259,3 @@ func TestVerifyReadyForModesWrapsModeFailure(t *testing.T) {
 	require.EqualError(t, err, "mode=sac-transfer: missing trustlines")
 }
 
-func TestPartitionSourceAccountsUsesRequiredSorobanSlice(t *testing.T) {
-	cfg := config.Config{
-		Mode:             config.ModeSoroswap,
-		TargetRPS:        1,
-		ClassicRPS:       0,
-		Duration:         10 * time.Second,
-		NumberOfAccounts: 2000,
-	}
-	st := &state.State{AccountKPs: make([]*keypair.Full, 2000)}
-
-	simpleSources, sorobanSources, err := partitionSourceAccounts(cfg, st)
-	require.NoError(t, err)
-	require.Len(t, simpleSources, 0)
-	require.Len(t, sorobanSources, state.SorobanSourceAccountCount(cfg))
-}

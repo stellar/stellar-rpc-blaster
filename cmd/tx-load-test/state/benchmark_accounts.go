@@ -19,8 +19,11 @@ const (
 	RecommendedSourceReuseLedgers = 2
 	// SourceAccountRunBudget is the maximum number of transactions one source
 	// account should ideally submit over a single benchmark run before we size a
-	// larger source-account pool.
-	SourceAccountRunBudget = 12
+	// larger source-account pool. With a 5 second ledger cadence and a
+	// 2-ledger preferred reuse gap, a 5 minute run naturally reuses each source
+	// account about 30 times, so runs longer than 5 minutes are where the
+	// duration-based budget starts growing the recommended pool size.
+	SourceAccountRunBudget = 30
 )
 
 func sourceAccountsForRun(rps int, duration time.Duration) int {
@@ -33,6 +36,12 @@ func sourceAccountsForRun(rps int, duration time.Duration) int {
 		budget = int(math.Ceil(float64(rps) * duration.Seconds() / SourceAccountRunBudget))
 	}
 	return max(concurrency, budget)
+}
+
+// AnySourceAccountCount returns the shared source-account requirement for all
+// workloads that can draw from the general participant-account pool.
+func AnySourceAccountCount(cfg config.Config) int {
+	return sourceAccountsForRun(cfg.TargetRPS+SimplePaymentTransactionRate(cfg), cfg.Duration)
 }
 
 // SorobanSourceAccountCount returns the source-account requirement for the
