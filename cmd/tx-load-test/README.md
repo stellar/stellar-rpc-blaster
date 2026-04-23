@@ -25,17 +25,17 @@ This separation means setup's expensive on-chain work is done once, benchmarks c
 go build -o tx-load-test ./cmd/tx-load-test/
 
 # 1. Set up ledger state (testnet, 3000 accounts)
-export TX_LOAD_TEST_FEE_PAYER_SEED="S..."  # optional; omit to auto-generate via friendbot
+export FEE_PAYER="S..."  # optional; omit to auto-generate via friendbot
 ./tx-load-test setup --rpc-url https://soroban-testnet.stellar.org --network testnet --accounts 3000
 
 # 2. Run a benchmark (requires the same fee-payer seed used for setup)
-export TX_LOAD_TEST_FEE_PAYER_SEED="S..."
+export FEE_PAYER="S..."
 ./tx-load-test bench --mode sac-transfer --target-rps 300 --duration 60s
 
 # 3. Need more accounts? Just re-run setup with a higher target.
 ./tx-load-test setup --rpc-url https://soroban-testnet.stellar.org --network testnet --accounts 5000
 
-# 4. Clean up (also requires TX_LOAD_TEST_FEE_PAYER_SEED)
+# 4. Clean up (also requires FEE_PAYER)
 ./tx-load-test teardown
 ```
 
@@ -60,9 +60,9 @@ Creates all required ledger state and writes `state.json`. If a state file alrea
 | `--state-file` | `state.json` | Output state file path |
 | `--log-level` | `info` | `debug`, `info`, `warn`, `error` |
 
-The fee-payer seed is read from the `TX_LOAD_TEST_FEE_PAYER_SEED` environment variable. If unset, a temporary keypair is generated and funded via friendbot (testnet/futurenet only).
+The fee-payer seed is read from the `FEE_PAYER` environment variable. If unset, a temporary keypair is generated and funded via friendbot (testnet/futurenet only).
 
-If `setup` is re-run against an existing `state.json`, `TX_LOAD_TEST_FEE_PAYER_SEED` must be set and must match the hash recorded in the state file.
+If `setup` is re-run against an existing `state.json`, `FEE_PAYER` must be set and must match the hash recorded in the state file.
 Re-running `setup` requires the resolved network passphrase to match the value already recorded in `state.json`. The `--rpc-url` may change, but the chosen endpoint must report that same passphrase via `getNetwork`.
 
 Setup now provisions the benchmark superset once so the resulting ledger state can run `sac-transfer`, `oz-transfer`, or `soroswap` without re-running setup. That means setup always validates the requested `--accounts`, `--target-rps`, `--classic-rps`, and `--duration` against all benchmark modes, always provisions the required trustlined holder subset, and always prepares Soroswap state. On testnet/mainnet, `--soroswap-factory` and `--soroswap-router` are therefore required. On standalone and futurenet, setup can auto-upload and deploy deterministic Soroswap pair/factory/router contracts from the local Wasm artifacts under `contracts/` when those flags are omitted. In both cases setup validates that the router points at the resolved factory, creates or reuses the benchmark pair contracts for the benchmark SAC assets, and seeds empty benchmark pools with `--liquidity-per-pool` units of each asset. Run `contracts/update-wasms.sh` to refresh the local OZ and Soroswap artifacts.
@@ -92,7 +92,7 @@ If setup is interrupted, a best-effort cleanup merges whatever accounts exist an
 
 Runs a load-test workload against an already-initialized ledger.
 
-`bench` requires `TX_LOAD_TEST_FEE_PAYER_SEED` to be set. The supplied seed is not written to disk; it is hashed and checked against `fee_payer_hash` in `state.json` before participant accounts are re-derived from `account_indices`.
+`bench` requires `FEE_PAYER` to be set. The supplied seed is not written to disk; it is hashed and checked against `fee_payer_hash` in `state.json` before participant accounts are re-derived from `account_indices`.
 Before the benchmark starts, the tool queries the chosen RPC endpoint (either `--rpc-url` or the stored `rpc_url`) and verifies that it reports the same `network_passphrase` recorded in the state file.
 
 | Flag | Default | Description |
@@ -146,7 +146,7 @@ When `--trace-file` is enabled, bench also writes every submit and poll request/
 
 Merges all participant accounts back into the fee payer.
 
-`teardown` requires `TX_LOAD_TEST_FEE_PAYER_SEED` to be set so the fee payer and participant accounts can be re-derived from the state file.
+`teardown` requires `FEE_PAYER` to be set so the fee payer and participant accounts can be re-derived from the state file.
 Before teardown starts, the tool queries the chosen RPC endpoint (either `--rpc-url` or the stored `rpc_url`) and verifies that it reports the same `network_passphrase` recorded in the state file.
 
 | Flag | Default | Description |
@@ -165,7 +165,7 @@ On full success, deletes the state file. On partial failure, updates the state f
 
 Reconciles the state file with on-chain account existence.
 
-`sync` also requires `TX_LOAD_TEST_FEE_PAYER_SEED` to be set so participant accounts can be re-derived from the stored indices.
+`sync` also requires `FEE_PAYER` to be set so participant accounts can be re-derived from the stored indices.
 Before sync starts, the tool queries the chosen RPC endpoint (either `--rpc-url` or the stored `rpc_url`) and verifies that it reports the same `network_passphrase` recorded in the state file.
 
 ```bash

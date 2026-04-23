@@ -61,7 +61,7 @@ func LoadExistingSetupState(
 	}
 	if feePayerSeed == "" {
 		return nil, fmt.Errorf(
-			"TX_LOAD_TEST_FEE_PAYER_SEED is required when re-running setup " +
+			"FEE_PAYER is required when re-running setup " +
 				"with an existing state file")
 	}
 
@@ -99,7 +99,7 @@ func LoadRuntimeStateWithOptions(
 	}
 	if feePayerSeed == "" {
 		return nil, fmt.Errorf(
-			"TX_LOAD_TEST_FEE_PAYER_SEED is required -- set it to the fee-payer secret key")
+			"FEE_PAYER is required -- set it to the fee-payer secret key")
 	}
 	st, err := FromPersistedState(ps, feePayerSeed, rpcURL)
 	if err != nil {
