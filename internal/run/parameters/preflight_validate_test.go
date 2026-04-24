@@ -48,8 +48,8 @@ func TestValidatorSkipsStaticEndpoints(t *testing.T) {
 func TestValidatorRejectsStaleStart(t *testing.T) {
 	client := util.NewMockRPCClient(t, func(method string, _ json.RawMessage) any {
 		return protocol.GetHealthResponse{
-			LatestLedger: 500,
-			OldestLedger: 100,
+			LatestLedger: 400,
+			OldestLedger: 300,
 		}
 	})
 	params := &Parameters{Output: seed.SeedData{LedgerRange: seed.Range{First: 123, Last: 350}}}
