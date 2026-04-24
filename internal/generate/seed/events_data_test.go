@@ -46,9 +46,9 @@ func captureEvents(t *testing.T, respond func() protocol.GetEventsResponse) (*rp
 	return client, func() []protocol.GetEventsRequest { return calls }
 }
 
-// TestEventDataSeeder_SingleLedger verifies that the events seeder finds exactly one ledger given
+// TestEventDataSeederSingleLedger verifies that the events seeder finds exactly one ledger given
 // the one-ledger range {N, N}
-func TestEventDataSeeder_SingleLedger(t *testing.T) {
+func TestEventDataSeederSingleLedger(t *testing.T) {
 	client, calls := captureEvents(t, func() protocol.GetEventsResponse { return protocol.GetEventsResponse{} })
 	seeder := newTestEventDataSeeder(client)
 
@@ -61,9 +61,9 @@ func TestEventDataSeeder_SingleLedger(t *testing.T) {
 		"endLedger must be exclusive (startLedger+1) so ledger N is actually queried")
 }
 
-// TestEventDataSeeder_MultiLedgerSinglePage verifies that a range smaller than
+// TestEventDataSeederMultiLedgerSinglePage verifies that a range smaller than
 // DefaultDefaultEventsPageLimit produces one getEvents call covering [First, Last+1).
-func TestEventDataSeeder_MultiLedgerSinglePage(t *testing.T) {
+func TestEventDataSeederMultiLedgerSinglePage(t *testing.T) {
 	client, calls := captureEvents(t, func() protocol.GetEventsResponse { return protocol.GetEventsResponse{} })
 	seeder := newTestEventDataSeeder(client)
 
@@ -76,9 +76,9 @@ func TestEventDataSeeder_MultiLedgerSinglePage(t *testing.T) {
 		"endLedger = Last+1 so the final ledger is included under RPC exclusive-end semantics")
 }
 
-// TestEventDataSeeder_ChunksAcrossPages verifies that a range larger than
+// TestEventDataSeederChunksAcrossPages verifies that a range larger than
 // the page limit is split into precisely contiguous getEvents calls
-func TestEventDataSeeder_ChunksAcrossPages(t *testing.T) {
+func TestEventDataSeederChunksAcrossPages(t *testing.T) {
 	client, calls := captureEvents(t, func() protocol.GetEventsResponse { return protocol.GetEventsResponse{} })
 	seeder := newTestEventDataSeeder(client)
 
@@ -95,9 +95,9 @@ func TestEventDataSeeder_ChunksAcrossPages(t *testing.T) {
 	require.EqualValues(t, 1250, got[2].EndLedger)
 }
 
-// TestEventDataSeeder_AccumulatesEvents verifies that events returned by the RPC flow into
+// TestEventDataSeederAccumulatesEvents verifies that events returned by the RPC flow into
 // the seeder's ContractEvents accumulator, keyed by contract ID and topic.
-func TestEventDataSeeder_AccumulatesEvents(t *testing.T) {
+func TestEventDataSeederAccumulatesEvents(t *testing.T) {
 	const (
 		contractA = "contract-A"
 		contractB = "contract-B"
@@ -121,10 +121,10 @@ func TestEventDataSeeder_AccumulatesEvents(t *testing.T) {
 	require.Len(t, seeder.contractEvents.ContractIds[contractB].Topic[topic].Params, 1)
 }
 
-// TestEventDataSeeder_FollowsCursor verifies the inner pagination loop by ensuring
-// that when seeding two ranges, the first range-based request correctly returns a
+// TestEventDataSeederFollowsCursor verifies the inner pagination loop by ensuring
+// that when seeding >1 range, the first range-based request correctly returns a
 // cursor that's used by the second request to exhaust the rest of the range
-func TestEventDataSeeder_FollowsCursor(t *testing.T) {
+func TestEventDataSeederFollowsCursor(t *testing.T) {
 	firstCursor := protocol.Cursor{Ledger: 400, Tx: 1, Op: 1, Event: 1}
 	call := 0
 	client, calls := captureEvents(t, func() protocol.GetEventsResponse {

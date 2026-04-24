@@ -30,9 +30,7 @@ func mkContractCodeKey(tag byte) xdr.LedgerKey {
 }
 
 // mkResultMetaXDR builds a base64-encoded TransactionMeta V0 whose single operation
-// contains a Removed change for each supplied key. Removed is the only change variant
-// that carries a LedgerKey directly, so this avoids having to construct full
-// LedgerEntry values with account sequences, balances, etc.
+// contains a Removed change for each supplied key (uses Removed for simplicity)
 func mkResultMetaXDR(t *testing.T, keys ...xdr.LedgerKey) string {
 	t.Helper()
 	changes := make(xdr.LedgerEntryChanges, len(keys))
@@ -61,9 +59,9 @@ func stubTxWithMeta(ledger uint32, hash, resultMetaXDR string) protocol.Transact
 	}
 }
 
-// TestLedgerKeySeeder_ExtractsSupportedKeys verifies that LedgerKeys present in a
+// TestLedgerKeySeederExtractsOnlySupportedKeys verifies that LedgerKeys present in a
 // transaction's ResultMetaXDR are decoded and accumulated.
-func TestLedgerKeySeeder_ExtractsOnlySupportedKeys(t *testing.T) {
+func TestLedgerKeySeederExtractsOnlySupportedKeys(t *testing.T) {
 	keyA := mkContractCodeKey(0xAA)
 	keyB := mkContractCodeKey(0xBB)
 	expectA, err := xdr.MarshalBase64(keyA)
@@ -100,9 +98,9 @@ func TestLedgerKeySeeder_ExtractsOnlySupportedKeys(t *testing.T) {
 	require.NotContains(t, seeder.keys.Slice(), ttlKey, "ttlKey should be filtered!")
 }
 
-// TestLedgerKeySeeder_Deduplicates verifies that the same key appearing in multiple
+// TestLedgerKeySeederDeduplicates verifies that the same key appearing in multiple
 // transactions collapses to a single entry (accumulator is a set keyed by XDR bytes).
-func TestLedgerKeySeeder_Deduplicates(t *testing.T) {
+func TestLedgerKeySeederDeduplicates(t *testing.T) {
 	key := mkContractCodeKey(0xDD)
 	expect, err := xdr.MarshalBase64(key)
 	require.NoError(t, err)

@@ -10,10 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// captureTransactions wires NewMockRPCClient for getTransactions: assert the method,
-// decode into GetTransactionsRequest, record, delegate the response. The returned
-// accessor returns the current slice each time it's called — read it after the
-// seeder has finished running. Shared with ledger_keys_test.go.
+// captureTransactions wires NewMockRPCClient for getTransactions
 func captureTransactions(t *testing.T, respond func() protocol.GetTransactionsResponse) (*rpcclient.Client, func() []protocol.GetTransactionsRequest) {
 	var calls []protocol.GetTransactionsRequest
 	client := util.NewMockRPCClient(t, func(method string, params json.RawMessage) any {
@@ -36,9 +33,9 @@ func stubTx(ledger uint32, hash string) protocol.TransactionInfo {
 	}
 }
 
-// TestTxHashSeeder_CapturesHashesAndUsesCursor verifies the two-call happy path:
+// TestTxHashSeederCapturesHashesAndUsesCursor verifies the two-call happy path:
 // involving an initial range-driven getTxs call and then a cursor driven one
-func TestTxHashSeeder_CapturesHashesAndUsesCursor(t *testing.T) {
+func TestTxHashSeederCapturesHashesAndUsesCursor(t *testing.T) {
 	page := 0
 	client, calls := captureTransactions(t, func() protocol.GetTransactionsResponse {
 		page++
@@ -68,9 +65,9 @@ func TestTxHashSeeder_CapturesHashesAndUsesCursor(t *testing.T) {
 	require.Equal(t, []string{"hash-A", "hash-B", "hash-C"}, seeder.data)
 }
 
-// TestTxHashSeeder_StopsAtRangeUpperBound verifies out of range txs aren't captured,
+// TestTxHashSeederStopsAtRangeUpperBound verifies out of range txs aren't captured,
 // even when the response contains in-range txs before it.
-func TestTxHashSeeder_StopsAtRangeUpperBound(t *testing.T) {
+func TestTxHashSeederStopsAtRangeUpperBound(t *testing.T) {
 	client, calls := captureTransactions(t, func() protocol.GetTransactionsResponse {
 		return protocol.GetTransactionsResponse{
 			Transactions: []protocol.TransactionInfo{
