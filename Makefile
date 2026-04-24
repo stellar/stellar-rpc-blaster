@@ -1,5 +1,5 @@
 STELLAR_RPC_BLASTER_BINARY := stellar-rpc-blaster
-CMD_PKG := .
+CMD_PKG := ./cmd/stellar-rpc-blaster
 BIN := $(STELLAR_RPC_BLASTER_BINARY)
 
 REPOSITORY_COMMIT_HASH := "$(shell git rev-parse HEAD)"
@@ -18,10 +18,10 @@ ifeq ($(shell command -v jq 2>/dev/null),)
 endif
 
 BUILD_TIMESTAMP ?= $(shell date '+%Y-%m-%dT%H:%M:%S')
-GOLDFLAGS :=	-X 'github.com/stellar/stellar-rpc-blaster/internal/config.Version=${REPOSITORY_VERSION}' \
-				-X 'github.com/stellar/stellar-rpc-blaster/internal/config.CommitHash=${REPOSITORY_COMMIT_HASH}' \
-				-X 'github.com/stellar/stellar-rpc-blaster/internal/config.BuildTimestamp=${BUILD_TIMESTAMP}' \
-				-X 'github.com/stellar/stellar-rpc-blaster/internal/config.Branch=${REPOSITORY_BRANCH}'
+GOLDFLAGS :=	-X 'github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/config.Version=${REPOSITORY_VERSION}' \
+				-X 'github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/config.CommitHash=${REPOSITORY_COMMIT_HASH}' \
+				-X 'github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/config.BuildTimestamp=${BUILD_TIMESTAMP}' \
+				-X 'github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/config.Branch=${REPOSITORY_BRANCH}'
 
 .PHONY: all build run test lint fmt tidy clean
 
@@ -30,7 +30,7 @@ all: build-rpc-blaster
 build: build-rpc-blaster
 
 build-rpc-blaster:
-	go build -ldflags="${GOLDFLAGS}" -o ${STELLAR_RPC_BLASTER_BINARY} -trimpath -v .
+	go build -ldflags="${GOLDFLAGS}" -o ${STELLAR_RPC_BLASTER_BINARY} -trimpath -v ${CMD_PKG}
 
 run: build
 	$(BIN) $(ARGS)

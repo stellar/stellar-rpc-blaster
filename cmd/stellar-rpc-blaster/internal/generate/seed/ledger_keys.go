@@ -8,7 +8,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/collections/set"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/stellar/stellar-rpc-blaster/internal/util"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
 )
 
 // LedgerKeySeeder collects XDR-encoded ledger keys from transaction metadata.

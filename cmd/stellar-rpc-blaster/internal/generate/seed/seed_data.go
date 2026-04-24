@@ -7,7 +7,7 @@ import (
 
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/support/collections/set"
-	"github.com/stellar/stellar-rpc-blaster/internal/util"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
 )
 
 // SeedData is the unified struct for writing and reading seed data across run and generate

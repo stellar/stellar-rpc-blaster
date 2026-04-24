@@ -1,4 +1,4 @@
-package cmd
+package cli
 
 import (
 	"context"
@@ -11,8 +11,8 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stellar/go-stellar-sdk/support/strutils"
 
-	blaster "github.com/stellar/stellar-rpc-blaster/internal"
-	"github.com/stellar/stellar-rpc-blaster/internal/config"
+	blaster "github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/config"
 )
 
 var blasterCmdRunner = func(blasterSettings config.RuntimeSettings) error {

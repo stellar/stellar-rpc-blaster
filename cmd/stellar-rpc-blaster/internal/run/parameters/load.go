@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/stellar/stellar-rpc-blaster/internal/generate/seed"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/generate/seed"
 )
 
 type Parameters struct {

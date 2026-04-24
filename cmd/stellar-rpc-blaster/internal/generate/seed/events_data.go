@@ -7,7 +7,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 
-	"github.com/stellar/stellar-rpc-blaster/internal/util"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
 )
 
 // EventDataSeeder collects per-contract event topic associations with a shared topic dictionary.

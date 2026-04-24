@@ -14,11 +14,11 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/support/log"
 
-	"github.com/stellar/stellar-rpc-blaster/internal/config"
-	"github.com/stellar/stellar-rpc-blaster/internal/generate"
-	"github.com/stellar/stellar-rpc-blaster/internal/run/engine"
-	blasterMetrics "github.com/stellar/stellar-rpc-blaster/internal/run/metrics"
-	"github.com/stellar/stellar-rpc-blaster/internal/util"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/config"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/generate"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/run/engine"
+	blasterMetrics "github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/run/metrics"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
 )
 
 const (

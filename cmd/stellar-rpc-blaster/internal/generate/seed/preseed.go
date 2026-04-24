@@ -7,7 +7,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	checkpoint "github.com/stellar/go-stellar-sdk/historyarchive"
-	"github.com/stellar/stellar-rpc-blaster/internal/util"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
 )
 
 type PreseedParameters struct {

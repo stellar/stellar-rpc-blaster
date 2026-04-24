@@ -12,7 +12,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/support/log"
-	"github.com/stellar/stellar-rpc-blaster/internal/run/parameters"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/run/parameters"
 )
 
 type Config struct {

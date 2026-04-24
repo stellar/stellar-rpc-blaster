@@ -1,0 +1,40 @@
+# stellar-blaster configuration example
+# Each endpoint can be configured with:
+# [endpoints.ENDPOINT_NAME]
+#   rps          - requests per second
+# Specify the seed data input path for data dependent endpoints with:
+# data_path = "PATH/TO/INPUTDATA.json"
+# Using the default seed data output path, this is "./output/seed.json"
+input_data_path = "./seed.json"
+
+# Optional: secret seed (S...) for the origin account that funds worker accounts for sendTransaction.
+# Required for pubnet. On testnet, if omitted, a new account is created and funded via friendbot.
+# origin_account_secret = "S..."
+
+[endpoints.getFeeStats]
+rps = 150
+# [endpoints.getHealth]
+# rps = 120
+# [endpoints.getLatestLedger]
+# rps = 23
+# [endpoints.getNetwork]
+# rps = 120
+# [endpoints.getVersionInfo]
+# rps = 125
+
+# # Data endpoints
+# [endpoints.getEvents]
+# rps = 130
+
+# # Fragile endpoints
+# [endpoints.getLedgerEntries]
+# rps = 1000
+# [endpoints.getTransaction]
+# rps = 120
+
+
+# These two had the sharpest cliffs on futurenet
+# [endpoints.getLedgers]
+# rps = 1
+# [endpoints.getTransactions]
+# rps = 26

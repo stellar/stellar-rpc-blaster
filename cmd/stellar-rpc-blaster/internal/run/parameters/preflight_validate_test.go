@@ -9,7 +9,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
-	"github.com/stellar/stellar-rpc-blaster/internal/generate/seed"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/generate/seed"
 	"github.com/stretchr/testify/require"
 )
 

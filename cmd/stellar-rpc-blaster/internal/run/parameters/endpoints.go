@@ -6,7 +6,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/toid"
 
-	"github.com/stellar/stellar-rpc-blaster/internal/util"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
 )
 
 // Builds a list of params maps for a data-dependent endpoint to vary request payloads.

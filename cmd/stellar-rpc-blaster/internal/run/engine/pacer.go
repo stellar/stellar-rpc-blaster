@@ -3,7 +3,7 @@ package engine
 import (
 	"time"
 
-	"github.com/stellar/stellar-rpc-blaster/internal/config"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/config"
 )
 
 // Steps from StartRPS to MaxRPS over RampDuration in fixed 5-second steps, then holds constant at MaxRPS.

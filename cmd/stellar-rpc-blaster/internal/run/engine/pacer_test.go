@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/stellar/stellar-rpc-blaster/internal/config"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/config"
 )
 
 func newTestPacer(startRPS *int, maxRPS int, rampUp, duration, stepInterval time.Duration) SteppedPacer {

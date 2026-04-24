@@ -11,7 +11,7 @@ import (
 
 	"github.com/HdrHistogram/hdrhistogram-go"
 
-	"github.com/stellar/stellar-rpc-blaster/internal/config"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/config"
 
 	"github.com/stellar/go-stellar-sdk/support/log"
 )
