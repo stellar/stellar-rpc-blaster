@@ -31,6 +31,7 @@ type Config struct {
 	StepInterval   time.Duration
 	Serial         bool   // run endpoints one at a time instead of concurrently
 	TestOutputPath string // path to write JSON results
+	ErrorPercent   int    // threshold for error percentage to kill the test (e.g. 50 means 50%)
 
 	// Generate mode settings
 	OutputPath   string
@@ -71,6 +72,7 @@ type RuntimeSettings struct {
 	RampUp         time.Duration
 	StepInterval   time.Duration
 	Serial         bool
+	ErrorPercent   int
 
 	// Generate mode settings
 	OutputPath   string
@@ -126,6 +128,7 @@ func NewConfig(
 			return Config{}, err
 		}
 		logger.Infof("Successfully loaded seed data from %s", cfg.InputDataPath)
+		cfg.ErrorPercent = settings.ErrorPercent
 	case Generate:
 		cfg.OutputPath = settings.OutputPath
 		cfg.LedgerWindow = settings.LedgerWindow
@@ -154,11 +157,17 @@ func (c *Config) processToml(tomlPath string) error {
 
 // Ensure at least one endpoint is configured if launching a load test and data-dependent endpoints have input data
 func (c *Config) validateEndpointConfig() error {
-	if c.StepInterval < 0 || c.StepInterval%(5*time.Second) != 0 {
-		return fmt.Errorf("step-interval must be a positive multiple of 5s")
+	if c.ErrorPercent < 0 || c.ErrorPercent > 100 {
+		return fmt.Errorf("error-percent must be between 0 and 100")
 	}
-	if c.StepInterval > c.RampUp {
-		return fmt.Errorf("step-interval cannot be greater than ramp-up duration")
+
+	if c.RampUp > 0 {
+		if c.StepInterval < 0 || c.StepInterval%(5*time.Second) != 0 {
+			return fmt.Errorf("step-interval must be a positive multiple of 5s")
+		}
+		if c.StepInterval > c.RampUp {
+			return fmt.Errorf("step-interval cannot be greater than ramp-up duration")
+		}
 	}
 	hasValidEndpoint := false
 	hasStartRPS := false

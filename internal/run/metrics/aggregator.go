@@ -22,27 +22,37 @@ var capturedPercentiles = []float64{50, 95, 99, 99.9} // treat as const
 type Aggregator struct {
 	logger          *log.Entry
 	writeOutputPath string
+	cancel          context.CancelFunc
 
 	stats            map[string]*EndpointStats
 	orderedEndpoints []string
 
-	done     bool
-	start    time.Time
-	duration time.Duration
-	mu       sync.RWMutex
+	done         bool
+	start        time.Time
+	duration     time.Duration
+	errorPercent int
+	mu           sync.RWMutex
 }
 
 // EndpointStats collects stats for all vegeta workers of an endpoint
 type EndpointStats struct {
-	histogram   *hdrhistogram.Histogram
-	success     uint64
-	errors      uint64
-	errorTypes  map[string]ErrorResult
-	percentiles map[float64]time.Duration
-	startRPS    float64
-	targetRPS   float64
-	duration    time.Duration // configured run duration for this endpoint
-	startTime   time.Time     // set on first sample (fixes serial mode)
+	success      uint64
+	errors       uint64
+	errorTypes   map[string]ErrorResult
+	percentiles  map[float64]time.Duration
+	startRPS     float64
+	targetRPS    float64
+	startTime    time.Time     // set on activation; zero means inactive
+	stepInterval time.Duration // window size for timeline snapshots
+	windows      []windowStats // per-step-interval accumulators
+}
+
+// windowStats tracks metrics for a single step-interval window
+type windowStats struct {
+	histogram *hdrhistogram.Histogram
+	success   uint64
+	errors    uint64
+	targetRPS float64
 }
 
 // Main driver function; consumes samples from the channel and prints progress every 5 seconds.
@@ -68,6 +78,15 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 			}
 		case <-ticker.C:
 			a.logger.Info(a)
+			if a.checkErrorPercent() > a.errorPercent {
+				a.logger.Warnf("Error percentage exceeded threshold of %d%%. Ending test early.", a.errorPercent)
+				a.done = true
+				if err := WriteOutput(a); err != nil {
+					a.logger.Error(err)
+				}
+				a.cancel()
+				return
+			}
 		case <-ctx.Done():
 			if err := ctx.Err(); err != nil {
 				a.logger.Error(fmt.Errorf("aggregator.Run terminating due to context error: %w", err))
@@ -80,7 +99,7 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 	}
 }
 
-func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
+func NewAggregator(logger *log.Entry, settings config.Config, cancel context.CancelFunc) *Aggregator {
 	endpoints := settings.GetActiveEndpoints()
 	duration := settings.Duration
 	if settings.Serial {
@@ -88,21 +107,24 @@ func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
 	}
 	a := Aggregator{
 		logger:          logger,
+		cancel:          cancel,
 		stats:           make(map[string]*EndpointStats),
 		start:           time.Now(),
 		duration:        duration,
+		errorPercent:    settings.ErrorPercent,
 		writeOutputPath: settings.TestOutputPath,
 	}
 	sort.Strings(endpoints)
 	a.orderedEndpoints = endpoints // maintain order for consistent output
 
+	stepInterval := max(5, settings.StepInterval)
+
 	for _, endpointKey := range endpoints {
 		a.stats[endpointKey] = &EndpointStats{
-			histogram:   hdrhistogram.New(1, 60000000, 3),
-			percentiles: make(map[float64]time.Duration),
-			errorTypes:  make(map[string]ErrorResult),
-			duration:    settings.Duration,
-			startRPS:    float64(max(settings.GetEndpointStartRPS(endpointKey), 0)),
+			percentiles:  make(map[float64]time.Duration),
+			errorTypes:   make(map[string]ErrorResult),
+			startRPS:     float64(max(settings.GetEndpointStartRPS(endpointKey), 0)),
+			stepInterval: stepInterval,
 		}
 		if !settings.Serial {
 			a.stats[endpointKey].startTime = time.Now()
@@ -112,10 +134,20 @@ func NewAggregator(logger *log.Entry, settings config.Config) *Aggregator {
 	return &a
 }
 
-// computes and stores percentiles from the histogram
+// mergedHistogram builds a combined histogram from all windows.
+func (e *EndpointStats) mergedHistogram() *hdrhistogram.Histogram {
+	merged := hdrhistogram.New(1, 60000000, 3)
+	for _, w := range e.windows {
+		merged.Merge(w.histogram)
+	}
+	return merged
+}
+
+// computes and stores percentiles from the merged window histograms
 func (e *EndpointStats) refreshPercentiles() {
+	merged := e.mergedHistogram()
 	for _, p := range capturedPercentiles {
-		e.percentiles[p] = time.Duration(e.histogram.ValueAtPercentile(p)) * time.Microsecond
+		e.percentiles[p] = time.Duration(merged.ValueAtPercentile(p)) * time.Microsecond
 	}
 }
 
@@ -128,6 +160,9 @@ func (a *Aggregator) Record(sample Sample) error {
 	}
 
 	epStats := a.stats[sample.Endpoint]
+	if epStats.startTime.IsZero() {
+		return nil
+	}
 	epStats.targetRPS = sample.CurrentRPS
 	if sample.OK {
 		epStats.success++
@@ -141,27 +176,33 @@ func (a *Aggregator) Record(sample Sample) error {
 		} else {
 			errKey = strconv.Itoa(int(sample.Code))
 		}
-		now := time.Now()
+
 		if existing, ok := epStats.errorTypes[errKey]; ok {
 			existing.Count++
-			existing.TimeSeen.LastSeen = now
+			existing.LastSeen = time.Now()
 			epStats.errorTypes[errKey] = existing
 		} else {
-			epStats.errorTypes[errKey] = ErrorResult{
-				ErrorMsg:  sample.Err,
-				ErrorCode: int(sample.Code),
-				Count:     1,
-				TimeSeen: struct {
-					FirstSeen time.Time `json:"time_first_seen"`
-					LastSeen  time.Time `json:"time_last_seen"`
-				}{
-					FirstSeen: now,
-					LastSeen:  now,
-				},
-			}
+			epStats.errorTypes[errKey] = newErrorResult(sample)
 		}
 	}
-	epStats.histogram.RecordValue(int64(sample.Latency / time.Microsecond))
+	// Bucket into per-step-interval window (windows are the source of truth for histograms)
+	latencyMicros := int64(sample.Latency / time.Microsecond)
+	elapsed := time.Since(epStats.startTime)
+	idx := int(elapsed / epStats.stepInterval)
+	for len(epStats.windows) <= idx {
+		epStats.windows = append(epStats.windows, windowStats{
+			histogram: hdrhistogram.New(1, 60000000, 3),
+		})
+	}
+	w := &epStats.windows[idx]
+	w.targetRPS = sample.CurrentRPS
+	w.histogram.RecordValue(latencyMicros)
+	if sample.OK {
+		w.success++
+	} else {
+		w.errors++
+	}
+
 	return nil
 }
 
@@ -169,6 +210,28 @@ func (a *Aggregator) ActivateEndpoint(endpointKey string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.stats[endpointKey].startTime = time.Now()
+}
+
+// checkErrorPercent returns the highest error percentage of any single endpoint's
+// most recently completed window. Requires at least 2 windows per endpoint so we
+// never evaluate a partially-filled window.
+func (a *Aggregator) checkErrorPercent() int {
+	var worst int
+	for _, stats := range a.stats {
+		if len(stats.windows) < 2 {
+			continue
+		}
+		w := stats.windows[len(stats.windows)-2]
+		total := w.success + w.errors
+		if total == 0 {
+			continue
+		}
+		pct := int(float64(w.errors) / float64(total) * 100)
+		if pct > worst {
+			worst = pct
+		}
+	}
+	return worst
 }
 
 // constructs a logging string showing progress for all endpoints
@@ -218,6 +281,17 @@ func (e *EndpointStats) String() string {
 	}
 
 	return out[:len(out)-2] // trim trailing ", "
+}
+
+func newErrorResult(sample Sample) ErrorResult {
+	now := time.Now()
+	return ErrorResult{
+		ErrorMsg:  sample.Err,
+		ErrorCode: int(sample.Code),
+		Count:     1,
+		FirstSeen: now,
+		LastSeen:  now,
+	}
 }
 
 // Formats duration into microseconds, milliseconds or seconds
