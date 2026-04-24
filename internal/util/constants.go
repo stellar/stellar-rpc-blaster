@@ -8,17 +8,17 @@ const (
 	// Maximum time to wait for a single RPC response for most endpoints
 	RequestTimeout = 15 * time.Second // (this isn't accessible from outside stellar-rpc)
 
-	MaxTxPageLimit      uint32 = 200   // max limit for getTransactions (hard-coded into RPC)
-	MaxLedgersPageLimit uint32 = 200   // max limit for getLedgers (hard-coded into RPC)
-	MaxEventsPageLimit  uint32 = 10000 // max limit for getEvents (hard-coded into RPC)
+	// Hard-coded RPC endpoint pagination limits
+	MaxTxPageLimit      uint32 = 200
+	MaxLedgersPageLimit uint32 = 200
+	MaxEventsPageLimit  uint32 = 10000
 )
 
 // Configurable limits for generate
 const (
 	// Default pagination limits that occur in RPC when pagination is used without a limit
-	DefaultTxPageLimit      uint32 = 50
-	DefaultLedgersPageLimit uint32 = 50
-	DefaultEventsPageLimit  uint32 = 100
+	DefaultTxPageLimit     uint32 = 50
+	DefaultEventsPageLimit uint32 = 100
 
 	DefaultSeedSliceSize uint32 = 64 // starting size for slices of bootstrapped seed data
 )

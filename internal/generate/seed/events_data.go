@@ -35,7 +35,7 @@ func (s *EventDataSeeder) WriteResults(w *SeedWriter) {
 // SeedDataForRange implements Seeder for EventDataSeeder.
 // It fetches events for the given ledger range and accumulates per-contract topic associations.
 func (s *EventDataSeeder) SeedDataForRange(ctx context.Context, r Range) error {
-	r.Last++ // treat as exclusive range for getEvents
+	r.Last++ // treat as inclusive range for getEvents
 	limit := min(util.DefaultEventsPageLimit, r.Last-r.First)
 
 	for start := r.First; start < r.Last; start += limit {

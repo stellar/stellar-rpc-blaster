@@ -26,9 +26,8 @@ func SharedHTTPClient() *http.Client {
 	}
 }
 
-// newMockRPCClient stands up an httptest server that dispatches every JSON-RPC
-// request to `respond`, wraps the return value as the result field, and returns
-// an rpcclient pointing at it. Tests own their own capture via closure.
+// NewMockRPCClient creates an httptest server that serves RPC responses for one method
+// Used in testing across the repo
 func NewMockRPCClient(t *testing.T, respond func(method string, params json.RawMessage) any) *rpcclient.Client {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var env struct {
