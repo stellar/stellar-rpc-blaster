@@ -1,4 +1,4 @@
 .DS_Store
-cmd/stellar-rpc-blaster/output/*
-!cmd/stellar-rpc-blaster/output/.gitkeep
+/cmd/stellar-rpc-blaster/output/*
+!/cmd/stellar-rpc-blaster/output/.gitkeep
 /stellar-rpc-blaster
