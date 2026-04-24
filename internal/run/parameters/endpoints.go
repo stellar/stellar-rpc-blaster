@@ -86,17 +86,17 @@ func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 
 	case "getEvents":
 		lr := params.Output.LedgerRange
-		span := int(lr.Last - lr.First)
-		if span <= 0 {
+		if lr.Last <= lr.First {
 			return nil, fmt.Errorf("empty ledger range for %s", endpointKey)
 		}
-
+		lr.Last++ // treat as exclusive bound for getEvents
+		span := lr.Last - lr.First
 		eventBodies := params.Output.ContractEventData
 		count := min(maxNeededNumBodies, util.MaxNumPrebuiltBodies)
 		result := make([]map[string]any, count)
 		for i := range count {
 			filters := eventBodies.BuildEventsFilters()
-			start := lr.First + uint32(rand.IntN(span))
+			start := lr.First + uint32(rand.IntN(int(span)))
 			end := start + uint32(rand.IntN(int(lr.Last-start))) + 1
 			remaining := lr.Last - start
 			entry := map[string]any{
@@ -129,18 +129,18 @@ func EndpointNeedsData(endpointKey string) (bool, error) {
 func setPaginationMap(start uint32, remaining uint32, entry map[string]any, endpoint string) map[string]any {
 	switch endpoint {
 	case "getTransactions":
-		limit := util.VaryLimit(uint(min(util.TxPageLimit, remaining)))
+		limit := util.VaryLimit(uint(min(util.DefaultTxPageLimit, remaining)))
 		cursor := toid.New(int32(start), 1, 1).String() // getTransactions cursor is a TOID
 		return setPaginationMapWithCursor(limit, cursor, entry)
 	case "getLedgers":
-		limit := util.VaryLimit(uint(min(util.TxPageLimit, remaining)))
+		limit := util.VaryLimit(uint(min(util.DefaultTxPageLimit, remaining)))
 		cursor := fmt.Sprintf("%d", start) // getLedgers cursor is a ledger sequence number
 		return setPaginationMapWithCursor(limit, cursor, entry)
 	case "getEvents":
-		limit := util.VaryLimit(uint(min(util.EventsPageLimit, remaining)))
+		limit := util.VaryLimit(uint(min(util.DefaultEventsPageLimit, remaining)))
 		return setPaginationMapForEvents(start, limit, entry)
 	default:
-		return map[string]any{"limit": util.VaryLimit(uint(min(util.TxPageLimit, remaining)))}
+		return map[string]any{"limit": util.VaryLimit(uint(min(util.DefaultTxPageLimit, remaining)))}
 	}
 }
 
