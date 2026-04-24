@@ -3,58 +3,20 @@ package parameters
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
-	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/stellar-rpc-blaster/internal/generate/seed"
+	"github.com/stellar/stellar-rpc-blaster/internal/util"
 	"github.com/stretchr/testify/require"
 )
 
-type jsonRPCRequest struct {
-	ID     any    `json:"id"`
-	Method string `json:"method"`
-}
-
-func newPreflightValidationClient(
-	t *testing.T,
-	healthResponse protocol.GetHealthResponse,
-) endpointSeedValidationClient {
-	t.Helper()
-
-	getHealthHttpHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, http.MethodPost, r.Method)
-
-		defer r.Body.Close()
-
-		var req jsonRPCRequest
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&req)) // store r's body in req for assertion
-		require.Equal(t, protocol.GetHealthMethodName, req.Method)
-
-		w.Header().Set("Content-Type", "application/json")
-		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-			"jsonrpc": "2.0",
-			"id":      req.ID,
-			"result":  healthResponse,
-		}))
-	})
-	server := httptest.NewServer(getHealthHttpHandler)
-	client := rpcclient.NewClient(server.URL, server.Client())
-	// close the server and client when the test finishes
-	t.Cleanup(func() {
-		server.Close()
-		require.NoError(t, client.Close())
-	})
-
-	return client
-}
-
 func TestValidatorChecksSeedStartForSeededEndpoints(t *testing.T) {
-	client := newPreflightValidationClient(t, protocol.GetHealthResponse{
-		LatestLedger: 500,
-		OldestLedger: 100,
+	client := util.NewMockRPCClient(t, func(method string, _ json.RawMessage) any {
+		return protocol.GetHealthResponse{
+			LatestLedger: 500,
+			OldestLedger: 100,
+		}
 	})
 	params := &Parameters{Output: seed.SeedData{LedgerRange: seed.Range{First: 123, Last: 456}}}
 
@@ -67,9 +29,11 @@ func TestValidatorChecksSeedStartForSeededEndpoints(t *testing.T) {
 }
 
 func TestValidatorSkipsStaticEndpoints(t *testing.T) {
-	client := newPreflightValidationClient(t, protocol.GetHealthResponse{
-		LatestLedger: 5000,
-		OldestLedger: 1000,
+	client := util.NewMockRPCClient(t, func(method string, _ json.RawMessage) any {
+		return protocol.GetHealthResponse{
+			LatestLedger: 500,
+			OldestLedger: 100,
+		}
 	})
 	params := &Parameters{Output: seed.SeedData{LedgerRange: seed.Range{First: 123, Last: 456}}}
 
@@ -82,9 +46,11 @@ func TestValidatorSkipsStaticEndpoints(t *testing.T) {
 }
 
 func TestValidatorRejectsStaleStart(t *testing.T) {
-	client := newPreflightValidationClient(t, protocol.GetHealthResponse{
-		LatestLedger: 400,
-		OldestLedger: 300,
+	client := util.NewMockRPCClient(t, func(method string, _ json.RawMessage) any {
+		return protocol.GetHealthResponse{
+			LatestLedger: 500,
+			OldestLedger: 100,
+		}
 	})
 	params := &Parameters{Output: seed.SeedData{LedgerRange: seed.Range{First: 123, Last: 350}}}
 
@@ -98,8 +64,10 @@ func TestValidatorRejectsStaleStart(t *testing.T) {
 }
 
 func TestValidatorRejectsMissingLatestLedger(t *testing.T) {
-	client := newPreflightValidationClient(t, protocol.GetHealthResponse{
-		OldestLedger: 100,
+	client := util.NewMockRPCClient(t, func(method string, _ json.RawMessage) any {
+		return protocol.GetHealthResponse{
+			OldestLedger: 100,
+		}
 	})
 	params := &Parameters{Output: seed.SeedData{LedgerRange: seed.Range{First: 123, Last: 456}}}
 

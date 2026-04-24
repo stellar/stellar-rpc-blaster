@@ -10,7 +10,7 @@ func MakeGetTransactionsRequest(start uint32, cursor string) protocol.GetTransac
 	req := protocol.GetTransactionsRequest{
 		StartLedger: start,
 		Pagination: &protocol.LedgerPaginationOptions{
-			Limit: uint(TxPageLimit),
+			Limit: uint(DefaultTxPageLimit),
 		},
 	}
 	if cursor != "" {
