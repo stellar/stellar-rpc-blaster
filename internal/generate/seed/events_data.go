@@ -50,6 +50,9 @@ func (s *EventDataSeeder) SeedDataForRange(ctx context.Context, r Range) error {
 			}
 
 			for _, event := range eventsResponse.Events {
+				if uint32(event.Ledger) >= r.Last {
+					return nil // events sorted ascending, nothing useful past here
+				}
 				s.contractEvents.AddEventData(event)
 			}
 
