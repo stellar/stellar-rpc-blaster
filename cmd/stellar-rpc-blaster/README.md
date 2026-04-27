@@ -10,7 +10,7 @@ Two modes:
 
 ```bash
 # 1. Build
-make build
+make build-rpc-blaster
 
 # 2. Generate seed data (only needed for data-dependent endpoints)
 ./stellar-rpc-blaster generate --rpc-url http://127.0.0.1:8000
@@ -29,7 +29,6 @@ Results are written to `./cmd/stellar-rpc-blaster/output/test-results-<timestamp
 
 ```bash
 make build-rpc-blaster          # compile binary with version info from git
-make build                      # alias for build-rpc-blaster
 make test                       # run tests
 ```
 
@@ -113,7 +112,7 @@ start_rps = 10
 - `step-interval` must be a positive multiple of 5s to align with the live logs
 - `step-interval` cannot exceed `ramp-up`
 - At least one endpoint must have `rps > 0`
-- `start_rps` must be ≤ `rps` when set
+- `start_rps` must be less than or equal to `rps` when set
 - If any endpoint sets `start_rps`, `--ramp-up` must be provided
 - Data-dependent endpoints require `input_data_path`
 
