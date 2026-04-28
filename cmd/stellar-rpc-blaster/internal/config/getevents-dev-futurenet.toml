@@ -1,4 +1,0 @@
-input_data_path = "./seed.json"
-
-[endpoints.getEvents]
-rps = 1
