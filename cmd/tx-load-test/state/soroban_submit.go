@@ -16,7 +16,7 @@ import (
 // Soroban resources for one-off setup transactions. Standalone deployments can
 // be slightly under-estimated for create-contract flows, and setup is not
 // latency-sensitive enough for exact-minimum provisioning to matter.
-const setupResourcePadFactor = 1.10
+const setupResourcePadFactor = 1.50
 
 const maxSorobanRestoreAttempts = 2
 

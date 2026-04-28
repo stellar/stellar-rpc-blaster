@@ -103,6 +103,7 @@ loop:
 	}
 
 	logE2ELatencies(logger, state.e2eStats.snapshot(), pollErr)
+	logLedgerMetrics(logger, state.ledgerStats.snapshot())
 	logVegetaMetrics(logger, metrics)
 
 	return nil

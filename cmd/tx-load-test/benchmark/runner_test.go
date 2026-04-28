@@ -86,11 +86,16 @@ func TestHandleSendTransactionEnvelopeTracksStatuses(t *testing.T) {
 	require.True(t, state.handleSendTransactionEnvelope(sendRespEnvelope{
 		ID: 11,
 		Result: protocol.SendTransactionResponse{
-			Status: "PENDING",
-			Hash:   "abc",
+			Status:       "PENDING",
+			Hash:         "abc",
+			LatestLedger: 100,
 		},
 	}, time.Unix(1, 0), leases))
 	require.Len(t, state.hashes, 1)
+	queuedItem := <-state.hashes
+	require.Equal(t, "abc", queuedItem.hash)
+	require.Equal(t, int64(11), queuedItem.rpcID)
+	require.Equal(t, uint32(100), queuedItem.submitLatestLedger)
 
 	require.True(t, state.handleSendTransactionEnvelope(sendRespEnvelope{
 		ID:     12,
@@ -112,6 +117,71 @@ func TestHandleSendTransactionEnvelopeTracksStatuses(t *testing.T) {
 	require.Equal(t, uint64(1), ambiguous)
 	require.Equal(t, []int64{12, 13}, leases.retryableReleases)
 	require.Equal(t, []int64{14}, leases.ambiguousReleases)
+}
+
+func TestHandlePollResponseTracksLedgerMetrics(t *testing.T) {
+	state := newAttackState(1)
+	item := pollItem{hash: "abc", rpcID: 7, submittedAt: time.Now().Add(-time.Second), submitLatestLedger: 100}
+	resp := &protocol.GetTransactionResponse{
+		TransactionDetails: protocol.TransactionDetails{
+			Status: protocol.TransactionStatusSuccess,
+			Ledger: 103,
+		},
+	}
+
+	leases := &fakeLeaseManager{}
+	handlePollResponse(nilLogger(), state, item, resp, leases)
+
+	snapshot := state.ledgerStats.snapshot()
+	require.Equal(t, []uint32{3}, snapshot.finalityDistances)
+	require.Equal(t, map[uint32]uint32{103: 1}, snapshot.txsPerLedger)
+	require.Zero(t, snapshot.finalitySkipped)
+	require.Equal(t, []int64{7}, leases.consumedReleases)
+}
+
+func TestHandlePollResponseTracksFailedLedgerMetrics(t *testing.T) {
+	state := newAttackState(1)
+	item := pollItem{hash: "abc", rpcID: 8, submittedAt: time.Now().Add(-time.Second), submitLatestLedger: 200}
+	resp := &protocol.GetTransactionResponse{
+		TransactionDetails: protocol.TransactionDetails{
+			Status: protocol.TransactionStatusFailed,
+			Ledger: 205,
+		},
+	}
+
+	leases := &fakeLeaseManager{}
+	handlePollResponse(nilLogger(), state, item, resp, leases)
+
+	snapshot := state.ledgerStats.snapshot()
+	require.Equal(t, []uint32{5}, snapshot.finalityDistances)
+	require.Equal(t, map[uint32]uint32{205: 1}, snapshot.txsPerLedger)
+	require.Zero(t, snapshot.finalitySkipped)
+	require.Equal(t, []int64{8}, leases.consumedReleases)
+}
+
+func TestLedgerMetricsSkipInvalidFinalityDistances(t *testing.T) {
+	stats := newLedgerMetricStats()
+	stats.observeFinality(100, 99)
+	stats.observeFinality(0, 101)
+	stats.observeFinality(100, 0)
+
+	snapshot := stats.snapshot()
+	require.Empty(t, snapshot.finalityDistances)
+	require.Equal(t, map[uint32]uint32{99: 1, 101: 1}, snapshot.txsPerLedger)
+	require.Equal(t, uint64(3), snapshot.finalitySkipped)
+}
+
+func TestLedgerMetricsTrackTimeoutDistanceSeparately(t *testing.T) {
+	stats := newLedgerMetricStats()
+	stats.observeTimeout(100, 104)
+	stats.observeTimeout(100, 99)
+	stats.observeTimeout(0, 104)
+
+	snapshot := stats.snapshot()
+	require.Equal(t, []uint32{4}, snapshot.timeoutDistances)
+	require.Equal(t, uint64(2), snapshot.timeoutSkipped)
+	require.Empty(t, snapshot.finalityDistances)
+	require.Empty(t, snapshot.txsPerLedger)
 }
 
 func TestProcessAttackResultCountsHTTPFailures(t *testing.T) {
