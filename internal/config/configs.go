@@ -13,6 +13,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/stellar-rpc-blaster/internal/run/parameters"
+	"github.com/stellar/stellar-rpc-blaster/internal/util"
 )
 
 type Config struct {
@@ -85,8 +86,9 @@ type RuntimeSettings struct {
 
 // Per-endpoint configuration
 type EndpointConfig struct {
-	RPS      int  `toml:"rps"`                 // requests per second
-	StartRPS *int `toml:"start_rps,omitempty"` // initial RPS to start at, must be <= RPS; nil means omitted
+	RPS      int    `toml:"rps"`                 // requests per second
+	StartRPS *int   `toml:"start_rps,omitempty"` // initial RPS to start at, must be <= RPS; nil means omitted
+	Limit    uint32 `toml:"limit,omitempty"`     // number of results per request
 }
 
 func NewConfig(
@@ -186,6 +188,16 @@ func (c *Config) validateEndpointConfig() error {
 				return fmt.Errorf("could not parse endpoint %s, need start_rps <= rps", endpoint)
 			}
 		}
+		switch endpoint {
+		case "getTransactions", "getLedgers", "getEvents":
+			if c.GetEndpointLimit(endpoint) > c.GetEndpointMaxLimit(endpoint) {
+				return fmt.Errorf("pagination limit for %s must not exceed %d", endpoint, c.GetEndpointMaxLimit(endpoint))
+			}
+		default:
+			if c.GetEndpointLimit(endpoint) != 0 {
+				return fmt.Errorf("endpoint %s does not support pagination, so limit must be omitted or 0", endpoint)
+			}
+		}
 	}
 	if !hasValidEndpoint {
 		return fmt.Errorf("at least one endpoint must be configured with RPS > 0")
@@ -213,6 +225,36 @@ func (c *Config) GetEndpointStartRPS(key string) int {
 		return *ep.StartRPS
 	}
 	return -1
+}
+
+// GetEndpointLimit returns the configured limit, or 0 if omitted.
+func (c *Config) GetEndpointLimit(key string) uint32 {
+	if ep, ok := c.Endpoints[key]; ok && ep.Limit != 0 {
+		return ep.Limit // if limits are set in toml as non-zero, use them
+	}
+	switch key {
+	case "getTransactions":
+		return util.DefaultTxPageLimit
+	case "getLedgers":
+		return util.DefaultLedgersPageLimit
+	case "getEvents":
+		return util.DefaultEventsPageLimit
+	default:
+		return 0 // for endpoints that don't support limits
+	}
+}
+
+func (c *Config) GetEndpointMaxLimit(key string) uint32 {
+	switch key {
+	case "getTransactions":
+		return util.MaxTxPageLimit
+	case "getLedgers":
+		return util.MaxLedgersPageLimit
+	case "getEvents":
+		return util.MaxEventsPageLimit
+	default:
+		return 0 // for endpoints that don't support limits
+	}
 }
 
 // GetActiveEndpoints returns the endpoints configured with RPS > 0.

@@ -226,10 +226,7 @@ func (a *Aggregator) checkErrorPercent() int {
 		if total == 0 {
 			continue
 		}
-		pct := int(float64(w.errors) / float64(total) * 100)
-		if pct > worst {
-			worst = pct
-		}
+		worst = max(worst, int(float64(w.errors)/float64(total)*100))
 	}
 	return worst
 }
