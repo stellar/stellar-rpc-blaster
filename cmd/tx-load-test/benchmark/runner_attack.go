@@ -48,6 +48,7 @@ type attackState struct {
 	onChainErrorCodes  *rejectionCounts
 	onChainOpResults   *rejectionCounts
 	onChainDiagnostics *rejectionCounts
+	vegetaErrors       *rejectionCounts
 	e2eStats           e2eLatencyStats
 	ledgerStats        *ledgerMetricStats
 
@@ -71,6 +72,7 @@ func newAttackState(maxTx int) *attackState {
 		onChainErrorCodes:  newRejectionCounts(),
 		onChainOpResults:   newRejectionCounts(),
 		onChainDiagnostics: newRejectionCounts(),
+		vegetaErrors:       newRejectionCounts(),
 		ledgerStats:        newLedgerMetricStats(),
 	}
 }
@@ -128,6 +130,9 @@ func (s *attackState) handleSendTransactionEnvelope(envelope sendRespEnvelope, s
 
 func processAttackResult(res *vegeta.Result, metrics *vegeta.Metrics, logger *log.Entry, state *attackState, accounts accountLeaseManager, workload string, recorder *benchmarkTraceRecorder) {
 	metrics.Add(res)
+	if res.Error != "" {
+		state.vegetaErrors.inc(res.Error)
+	}
 	atomic.AddUint64(&state.submitted, 1)
 	requestID := requestIDFromResultURL(res.URL)
 
@@ -442,7 +447,7 @@ func logTxsPerLedgerMetrics(logger *log.Entry, txsPerLedger map[uint32]uint32) {
 		len(counts), ledgers[0], ledgers[len(ledgers)-1], total, mean, p50, p95, p99, max)
 }
 
-func logVegetaMetrics(logger *log.Entry, metrics vegeta.Metrics) {
+func logVegetaMetrics(logger *log.Entry, metrics vegeta.Metrics, errorCounts []rejectionCountEntry) {
 	logger.Info("--- vegeta metrics ---")
 	logger.Infof("requests=%d  rate=%.2f req/s  throughput=%.2f req/s  success=%.2f%%",
 		metrics.Requests, metrics.Rate, metrics.Throughput, metrics.Success*100)
@@ -458,9 +463,13 @@ func logVegetaMetrics(logger *log.Entry, metrics vegeta.Metrics) {
 			logger.Infof("  HTTP %s: %d", code, count)
 		}
 	}
-	if len(metrics.Errors) > 0 {
-		for _, e := range metrics.Errors {
-			logger.Infof("  error: %s", e)
+	if len(errorCounts) > 0 {
+		for _, entry := range errorCounts {
+			logger.Infof("  error: %s (%d)", entry.code, entry.count)
+		}
+	} else if len(metrics.Errors) > 0 {
+		for _, errMsg := range metrics.Errors {
+			logger.Infof("  error: %s (1)", errMsg)
 		}
 	}
 }

@@ -19,7 +19,7 @@ import (
 // to confirm on-chain inclusion. It scales with the target RPS so the drain
 // phase after the attack completes in reasonable time.
 func pollWorkerCount(targetRPS int) int {
-	return max(40, min((targetRPS*4)/5, 800))
+	return max(80, min((targetRPS*8)/5, 1600))
 }
 
 // pollTimeout is the per-transaction deadline for polling getTransaction to a

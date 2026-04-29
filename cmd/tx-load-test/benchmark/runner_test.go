@@ -1,14 +1,17 @@
 package benchmark
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/keypair"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
 	"github.com/stretchr/testify/require"
@@ -65,10 +68,10 @@ func TestRunVegetaAttackBuildsTargeterWithAttackContext(t *testing.T) {
 }
 
 func TestPollWorkerCountBounds(t *testing.T) {
-	require.Equal(t, 40, pollWorkerCount(1))
-	require.Equal(t, 80, pollWorkerCount(100))
-	require.Equal(t, 160, pollWorkerCount(200))
-	require.Equal(t, 800, pollWorkerCount(2_000))
+	require.Equal(t, 80, pollWorkerCount(1))
+	require.Equal(t, 160, pollWorkerCount(100))
+	require.Equal(t, 320, pollWorkerCount(200))
+	require.Equal(t, 1600, pollWorkerCount(2_000))
 }
 
 func TestPercentileDurationEdges(t *testing.T) {
@@ -194,6 +197,50 @@ func TestProcessAttackResultCountsHTTPFailures(t *testing.T) {
 	require.Equal(t, uint64(1), ambiguous)
 	require.Equal(t, uint64(1), metrics.Requests)
 	require.Equal(t, []int64{77}, leases.ambiguousReleases)
+}
+
+func TestProcessAttackResultCountsRepeatedVegetaErrors(t *testing.T) {
+	metrics := vegeta.Metrics{}
+	state := newAttackState(3)
+	leases := &fakeLeaseManager{}
+
+	processAttackResult(&vegeta.Result{Code: 503, Error: "503 Service Unavailable", URL: "https://rpc.example#blaster-rpc-id=1"}, &metrics, nilLogger(), state, leases, "simple-payment", nil)
+	processAttackResult(&vegeta.Result{Code: 503, Error: "503 Service Unavailable", URL: "https://rpc.example#blaster-rpc-id=2"}, &metrics, nilLogger(), state, leases, "simple-payment", nil)
+	processAttackResult(&vegeta.Result{Code: 0, Error: "lease simple-payment source account: context deadline exceeded", URL: "https://rpc.example#blaster-rpc-id=3"}, &metrics, nilLogger(), state, leases, "simple-payment", nil)
+
+	require.Equal(t, []rejectionCountEntry{
+		{code: "503 Service Unavailable", count: 2},
+		{code: "lease simple-payment source account: context deadline exceeded", count: 1},
+	}, state.vegetaErrors.entries())
+	require.ElementsMatch(t, []string{
+		"503 Service Unavailable",
+		"lease simple-payment source account: context deadline exceeded",
+	}, metrics.Errors)
+}
+
+func TestLogVegetaMetricsIncludesErrorCounts(t *testing.T) {
+	var buf bytes.Buffer
+	logger := log.New()
+	logger.SetLevel(log.InfoLevel)
+	logger.SetOutput(&buf)
+	logger.DisableColors()
+	logger.DisableTimestamp()
+
+	logVegetaMetrics(logger, vegeta.Metrics{
+		StatusCodes: map[string]int{"503": 290, "0": 609},
+		Errors: []string{
+			"503 Service Unavailable",
+			"lease simple-payment source account: context deadline exceeded",
+		},
+	}, []rejectionCountEntry{
+		{code: "lease simple-payment source account: context deadline exceeded", count: 609},
+		{code: "503 Service Unavailable", count: 290},
+	})
+
+	output := buf.String()
+	require.Contains(t, output, "error: lease simple-payment source account: context deadline exceeded (609)")
+	require.Contains(t, output, "error: 503 Service Unavailable (290)")
+	require.False(t, strings.Contains(output, "error: 503 Service Unavailable\"\n"), output)
 }
 
 func TestHandlePollResponseTracksOnChainFailureCodes(t *testing.T) {
