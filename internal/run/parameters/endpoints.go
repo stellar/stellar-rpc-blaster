@@ -88,17 +88,18 @@ func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 
 	case "getEvents":
 		lr := params.Output.LedgerRange
-		span := int(lr.Last) - int(lr.First)
-		if span <= 0 {
+		if lr.Last <= lr.First {
 			return nil, fmt.Errorf("empty ledger range for %s", endpointKey)
 		}
+		lr.Last++ // treat as inclusive bound for getEvents
+		span := lr.Last - lr.First
 		eventBodies := params.Output.ContractEventData
 		count := min(maxNeededNumBodies, util.MaxNumPrebuiltBodies)
 
 		result := make([]map[string]any, count)
 		for i := range count {
 			filters := eventBodies.BuildEventsFilters()
-			start := lr.First + uint32(rand.IntN(span))
+			start := lr.First + uint32(rand.IntN(int(span)))
 			end := min(start+limit, lr.Last)
 			remaining := lr.Last - start
 			entry := map[string]any{
