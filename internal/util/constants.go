@@ -17,8 +17,9 @@ const (
 // Configurable limits for generate
 const (
 	// Default pagination limits that occur in RPC when pagination is used without a limit
-	DefaultTxPageLimit     uint32 = 50
-	DefaultEventsPageLimit uint32 = 100
+	DefaultTxPageLimit      uint32 = 50
+	DefaultLedgersPageLimit uint32 = 50
+	DefaultEventsPageLimit  uint32 = 100
 
 	DefaultSeedSliceSize uint32 = 64 // starting size for slices of bootstrapped seed data
 )

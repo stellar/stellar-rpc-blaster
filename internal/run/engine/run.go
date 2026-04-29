@@ -64,7 +64,7 @@ func NewBlastEngine(
 		pacer := NewSteppedPacer(endpointKey, cfg)
 
 		maxNumBodies := pacer.Hits(cfg.Duration) // upper limit of how many request bodies we could possibly need
-		paramMaps, err := parameters.BuildEndpointParams(endpointKey, int(maxNumBodies), sharedParams)
+		paramMaps, err := parameters.BuildEndpointParams(endpointKey, int(maxNumBodies), sharedParams, cfg.GetEndpointLimit(endpointKey))
 		if err != nil {
 			return nil, fmt.Errorf("couldn't build params for endpoint %s: %w", endpointKey, err)
 		}
