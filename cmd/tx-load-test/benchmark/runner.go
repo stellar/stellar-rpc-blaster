@@ -28,10 +28,11 @@ func runVegetaAttack(
 	httpClient *http.Client,
 	rpc *rpcclient.Client,
 	label string,
+	rateSummary string,
 	newTargeter func(context.Context) (vegeta.Targeter, error),
 	accounts accountLeaseManager,
 	recorder *benchmarkTraceRecorder,
-) error {
+) (workloadMetricsReport, error) {
 	pacer := engine.RampToConstantPacer{
 		StartRPS:      1,
 		MaxRPS:        cfg.TargetRPS,
@@ -44,7 +45,7 @@ func runVegetaAttack(
 
 	targeter, err := newTargeter(attackCtx)
 	if err != nil {
-		return err
+		return workloadMetricsReport{}, err
 	}
 
 	maxTx := cfg.TargetRPS*int(cfg.Duration.Seconds()) + 1000
@@ -67,8 +68,9 @@ loop:
 			break loop
 		case <-progressTicker.C:
 			submitted, httpErr, queued, tryAgainLater, submitErrors, ambiguous := state.submissionSnapshot()
+			elapsed := time.Since(attackStartedAt).Round(time.Second)
 			logger.Infof("attack progress -- elapsed=%s submitted=%d httpErr=%d queued=%d tryAgainLater=%d submitErrors=%d ambiguous=%d",
-				time.Since(attackStartedAt).Round(time.Second), submitted, httpErr, queued, tryAgainLater, submitErrors, ambiguous)
+				elapsed, submitted, httpErr, queued, tryAgainLater, submitErrors, ambiguous)
 		case res, ok := <-results:
 			if !ok {
 				break loop
@@ -91,7 +93,7 @@ loop:
 		state.submitDiagnostics.log(logger, "submit diagnostic summary")
 	}
 
-	waitForPollWorkers(logger, queued, numPollWorkers, pollWg, state)
+	pollDrainTimeout := waitForPollWorkers(logger, queued, numPollWorkers, pollWg, state)
 
 	included, onChainFail, pollErr := state.pollSnapshot()
 	logger.Infof("on-chain results  -- included=%d failed=%d pollErr=%d",
@@ -106,5 +108,5 @@ loop:
 	logLedgerMetrics(logger, state.ledgerStats.snapshot())
 	logVegetaMetrics(logger, metrics, state.vegetaErrors.entries())
 
-	return nil
+	return newWorkloadMetricsReport(label, rateSummary, cfg, numPollWorkers, pollDrainTimeout, state, metrics), nil
 }

@@ -90,7 +90,7 @@ func handlePollResponse(logger *log.Entry, state *attackState, item pollItem, re
 	}
 }
 
-func waitForPollWorkers(logger *log.Entry, queued uint64, numPollWorkers int, pollWg *sync.WaitGroup, state *attackState) {
+func waitForPollWorkers(logger *log.Entry, queued uint64, numPollWorkers int, pollWg *sync.WaitGroup, state *attackState) time.Duration {
 	drainTimeout := estimatePollDrainTimeout(queued, numPollWorkers)
 	logger.Infof("waiting up to %s for %d poll workers to drain %d queued txs", drainTimeout, numPollWorkers, queued)
 
@@ -107,10 +107,10 @@ func waitForPollWorkers(logger *log.Entry, queued uint64, numPollWorkers int, po
 	for {
 		select {
 		case <-pollDone:
-			return
+			return drainTimeout
 		case <-drainDeadline:
 			logger.Warnf("poll workers still running after %s -- abandoning", drainTimeout)
-			return
+			return drainTimeout
 		case <-progressTicker.C:
 			included, onChainFail, pollErr := state.pollSnapshot()
 			settled := included + onChainFail + pollErr

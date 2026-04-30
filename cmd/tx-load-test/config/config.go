@@ -73,6 +73,10 @@ type Config struct {
 	// TraceFile optionally captures per-request benchmark submit/poll traces as
 	// newline-delimited JSON for post-run inspection.
 	TraceFile string
+
+	// MetricsFile captures aggregate benchmark metrics as JSON. If unset by the
+	// caller, the bench command fills in a timestamped default filename.
+	MetricsFile string
 }
 
 // DefaultConfig returns a Config with sensible defaults.
