@@ -1,7 +1,17 @@
 # stellar-rpc-blaster
-CLI load testing tool for Stellar RPC
+CLI load-testing tools for Stellar RPC.
 
-This repo is home to our RPC load testing tool. It has the ability to test various endpoints on one's RPC server. 
+This repo contains two tools:
+
+- `stellar-rpc-blaster` -- configurable RPC request load generation from sampled ledger data.
+- `tx-load-test` -- standalone transaction load testing for SAC transfers, OZ token transfers, Soroswap swaps, and a parallel classic-payment stream. See [cmd/tx-load-test/README.md](cmd/tx-load-test/README.md) for setup, benchmark, teardown, and metrics-output details.
+
+## Build
+
+```bash
+go build -o stellar-rpc-blaster .
+go build -o tx-load-test ./cmd/tx-load-test/
+```
 
 ### Running
 

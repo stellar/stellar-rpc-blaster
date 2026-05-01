@@ -115,7 +115,7 @@ func (feePayerStep) Run(ctx context.Context, logger *log.Entry, cfg config.Confi
 	if err != nil {
 		return fmt.Errorf("fee payer: read balance: %w", err)
 	}
-	minRequired := float64(cfg.NumberOfAccounts)*cfg.BaseReserveXLM + setupFeeBudgetXLM
+	minRequired := minimumFeePayerBalanceXLM(cfg, st)
 	for balance < minRequired {
 		if netInfo.FriendbotURL == "" {
 			return fmt.Errorf(
@@ -139,6 +139,15 @@ func (feePayerStep) Run(ctx context.Context, logger *log.Entry, cfg config.Confi
 	st.FeePayerKP = kp
 	st.NetworkPassphrase = cfg.NetworkPassphrase
 	return nil
+}
+
+func minimumFeePayerBalanceXLM(cfg config.Config, st *state.State) float64 {
+	existingAccounts := 0
+	if st != nil {
+		existingAccounts = len(st.AccountKPs)
+	}
+	accountsToCreate := max(0, cfg.NumberOfAccounts-existingAccounts)
+	return float64(accountsToCreate)*cfg.BaseReserveXLM + setupFeeBudgetXLM
 }
 
 // fundViaFriendbot sends a GET request to the friendbot URL with the target

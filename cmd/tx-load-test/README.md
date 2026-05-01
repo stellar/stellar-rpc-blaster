@@ -65,11 +65,13 @@ Creates all required ledger state and writes `state.json`. If a state file alrea
 | `--soroswap-router` | *(required on `testnet`/`mainnet`)* | Soroswap router contract ID; optional on `standalone`/`futurenet`, where setup can auto-deploy it |
 | `--liquidity-per-pool` | `1000000` | Token units of each asset to seed into each Soroswap benchmark pool |
 | `--accounts` | `5000` | Target number of participant accounts |
-| `--base-reserve-xlm` | `3.0` | XLM to fund each account |
+| `--base-reserve-xlm` | `3.0` | XLM to fund each account; covers the three-trustline holder reserve plus fee/headroom |
 | `--state-file` | `state.json` | Output state file path |
 | `--log-level` | `info` | `debug`, `info`, `warn`, `error` |
 
 The fee-payer seed is read from the `FEE_PAYER` environment variable. If unset, a temporary keypair is generated and funded via friendbot (testnet/futurenet only).
+
+The `--base-reserve-xlm` default is intentionally conservative. On current public networks the Stellar base reserve is 0.5 XLM, and a benchmark holder account needs three classic asset trustlines (`BLTA`, `BLTB`, `BLTC`). Stellar minimum balance is `(2 + subentry count) * base reserve`, so a holder requires `(2 account reserves + 3 trustline reserves) * 0.5 = 2.5 XLM`. Funding each account with 3.0 XLM leaves about 0.5 XLM per holder for small incidental fees, append/repair operations, and reserve-parameter headroom. Passive accounts do not need the trustline reserves, but setup uses one funding amount for all participant accounts so every account can be promoted to the holder subset later.
 
 If `setup` is re-run against an existing `state.json`, `FEE_PAYER` must be set and must match the hash recorded in the state file.
 Re-running `setup` requires the resolved network passphrase to match the value already recorded in `state.json`. The `--rpc-url` may change, but the chosen endpoint must report that same passphrase via `getNetwork`.

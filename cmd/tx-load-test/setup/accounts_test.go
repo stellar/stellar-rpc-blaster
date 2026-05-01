@@ -52,6 +52,29 @@ func TestBuildAccountProvisionPlan(t *testing.T) {
 	}
 }
 
+func TestMinimumFeePayerBalanceUsesAccountDelta(t *testing.T) {
+	feePayer, err := keypair.Random()
+	require.NoError(t, err)
+
+	existing := make([]*keypair.Full, 0, 5)
+	for idx := 1; idx <= 5; idx++ {
+		kp, err := state.DeriveKeypair(feePayer, idx)
+		require.NoError(t, err)
+		existing = append(existing, kp)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.NumberOfAccounts = 5
+	cfg.BaseReserveXLM = 3
+
+	require.Equal(t, 115.0, minimumFeePayerBalanceXLM(cfg, nil))
+	require.Equal(t, 106.0, minimumFeePayerBalanceXLM(cfg, &state.State{AccountKPs: existing[:3]}))
+	require.Equal(t, 100.0, minimumFeePayerBalanceXLM(cfg, &state.State{AccountKPs: existing}))
+
+	cfg.NumberOfAccounts = 2
+	require.Equal(t, 100.0, minimumFeePayerBalanceXLM(cfg, &state.State{AccountKPs: existing}))
+}
+
 func TestPlanSACHolderRepairs(t *testing.T) {
 	issuer, err := keypair.Random()
 	require.NoError(t, err)
