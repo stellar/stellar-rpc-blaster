@@ -7,10 +7,8 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/cli"
 )
 
-// At a high level, the main function calls cli.Execute, which creates the commands
-// and runs them through the App struct in internal/app.go.
-// This calls the engine to run the load tests (internal/engine/{vegeta.go -> run.go -> blast.go}).
-// Metrics are collected and reported through internal/metrics [TODO].
+// Calls cli.Execute, which creates the commands and runs them through the App struct in internal/app.go.
+// This calls the engine to run the load tests or generate seed data.
 func main() {
 	err := cli.Execute()
 	if err != nil {
