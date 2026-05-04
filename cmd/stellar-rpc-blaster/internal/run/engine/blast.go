@@ -6,8 +6,9 @@ import (
 	"time"
 
 	"github.com/creachadair/jrpc2"
-	blasterMetrics "github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/run/metrics"
 	vegeta "github.com/tsenart/vegeta/v12/lib"
+
+	blasterMetrics "github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/run/metrics"
 )
 
 type JrpcErrEnvelope struct {

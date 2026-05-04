@@ -11,9 +11,9 @@ import (
 
 	"github.com/HdrHistogram/hdrhistogram-go"
 
-	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/config"
-
 	"github.com/stellar/go-stellar-sdk/support/log"
+
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/config"
 )
 
 var capturedPercentiles = []float64{50, 95, 99, 99.9} // treat as const
@@ -226,10 +226,7 @@ func (a *Aggregator) checkErrorPercent() int {
 		if total == 0 {
 			continue
 		}
-		pct := int(float64(w.errors) / float64(total) * 100)
-		if pct > worst {
-			worst = pct
-		}
+		worst = max(worst, int(float64(w.errors)/float64(total)*100))
 	}
 	return worst
 }

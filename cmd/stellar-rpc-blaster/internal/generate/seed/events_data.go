@@ -35,10 +35,11 @@ func (s *EventDataSeeder) WriteResults(w *SeedWriter) {
 // SeedDataForRange implements Seeder for EventDataSeeder.
 // It fetches events for the given ledger range and accumulates per-contract topic associations.
 func (s *EventDataSeeder) SeedDataForRange(ctx context.Context, r Range) error {
-	limit := min(util.TxPageLimit, r.Last-r.First+1)
+	r.Last++ // treat as inclusive range for getEvents
+	limit := min(util.DefaultEventsPageLimit, r.Last-r.First)
 
-	for start := r.First; start <= r.Last; start += limit {
-		endLedger := min(start+limit-1, r.Last)
+	for start := r.First; start < r.Last; start += limit {
+		endLedger := min(start+limit, r.Last)
 		var cursor *protocol.Cursor
 
 		for {
@@ -50,6 +51,9 @@ func (s *EventDataSeeder) SeedDataForRange(ctx context.Context, r Range) error {
 			}
 
 			for _, event := range eventsResponse.Events {
+				if uint32(event.Ledger) >= r.Last {
+					return nil // events sorted ascending, nothing useful past here
+				}
 				s.contractEvents.AddEventData(event)
 			}
 
