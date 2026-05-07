@@ -230,22 +230,76 @@ func HasPositiveI128(balance xdr.Int128Parts) bool {
 	return balance.Hi > 0 || (balance.Hi == 0 && balance.Lo > 0)
 }
 
-func DecodeTransactionResultCode(resultXDR string) string {
-	if resultXDR == "" {
-		return "unknown"
-	}
+// DecodeTxResult parses a base64-encoded TransactionResult XDR. Callers that
+// need multiple pieces of information from the same XDR (e.g. the formatted
+// code string AND a bad_seq classification) should use this and pass the
+// parsed value into ResultCodeFromTxResult / IsBadSeqFromTxResult to avoid
+// decoding the XDR multiple times in the hot ERROR path.
+func DecodeTxResult(resultXDR string) (xdr.TransactionResult, bool) {
 	var result xdr.TransactionResult
+	if resultXDR == "" {
+		return result, false
+	}
 	if err := xdr.SafeUnmarshalBase64(resultXDR, &result); err != nil {
-		return "decode-error"
+		return result, false
+	}
+	return result, true
+}
+
+// ResultCodeFromTxResult formats a parsed TransactionResult's outer code,
+// descending into the inner code when the outer is TxFeeBumpInnerFailed.
+func ResultCodeFromTxResult(result *xdr.TransactionResult) string {
+	if result == nil {
+		return "unknown"
 	}
 	outer := result.Result.Code.String()
 	if result.Result.Code == xdr.TransactionResultCodeTxFeeBumpInnerFailed {
 		if inner, ok := result.Result.GetInnerResultPair(); ok {
-			innerCode := inner.Result.Result.Code.String()
-			return outer + " (inner: " + innerCode + ")"
+			return outer + " (inner: " + inner.Result.Result.Code.String() + ")"
 		}
 	}
 	return outer
+}
+
+// IsBadSeqFromTxResult reports whether the parsed result encodes a TxBadSeq
+// outcome, either directly or wrapped in TxFeeBumpInnerFailed.
+func IsBadSeqFromTxResult(result *xdr.TransactionResult) bool {
+	if result == nil {
+		return false
+	}
+	if result.Result.Code == xdr.TransactionResultCodeTxBadSeq {
+		return true
+	}
+	if result.Result.Code == xdr.TransactionResultCodeTxFeeBumpInnerFailed {
+		if inner, ok := result.Result.GetInnerResultPair(); ok {
+			return inner.Result.Result.Code == xdr.TransactionResultCodeTxBadSeq
+		}
+	}
+	return false
+}
+
+// DecodeTransactionResultCode is a string-in / string-out wrapper that decodes
+// the XDR and formats the result code in one call. Use this for one-off
+// callsites; in hot loops, prefer DecodeTxResult + ResultCodeFromTxResult.
+func DecodeTransactionResultCode(resultXDR string) string {
+	if resultXDR == "" {
+		return "unknown"
+	}
+	result, ok := DecodeTxResult(resultXDR)
+	if !ok {
+		return "decode-error"
+	}
+	return ResultCodeFromTxResult(&result)
+}
+
+// IsBadSeqResult is a string-in wrapper for IsBadSeqFromTxResult. Prefer the
+// parsed-result variant in hot loops.
+func IsBadSeqResult(resultXDR string) bool {
+	result, ok := DecodeTxResult(resultXDR)
+	if !ok {
+		return false
+	}
+	return IsBadSeqFromTxResult(&result)
 }
 
 func min(a, b int) int {

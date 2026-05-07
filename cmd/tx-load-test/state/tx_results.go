@@ -36,17 +36,27 @@ func logTxFailure(logger *log.Entry, hash, resultXDR string, diagnosticEventsXDR
 
 // DecodeOperationResults extracts per-operation result summaries from a base64
 // TransactionResult XDR string, descending into fee-bump inner results when
-// the outer code is TxFeeBumpInnerFailed. Returns nil if there are no
-// operation-level results to report (e.g. pre-apply rejections).
+// the outer code is TxFeeBumpInnerSuccess or TxFeeBumpInnerFailed. Returns
+// nil if there are no operation-level results to report (e.g. pre-apply
+// rejections, or unwrapped fee-bump outer codes).
+//
+// Use this for one-off callsites; in hot loops where the same XDR is also
+// passed to other decoders, prefer ledger.DecodeTxResult +
+// OperationResultsFromTxResult so the XDR is decoded once.
 func DecodeOperationResults(resultXDR string) []string {
-	if resultXDR == "" {
+	result, ok := ledger.DecodeTxResult(resultXDR)
+	if !ok {
 		return nil
 	}
-	var result xdr.TransactionResult
-	if err := xdr.SafeUnmarshalBase64(resultXDR, &result); err != nil {
-		return nil
-	}
+	return OperationResultsFromTxResult(&result)
+}
 
+// OperationResultsFromTxResult is the parsed-result variant of
+// DecodeOperationResults.
+func OperationResultsFromTxResult(result *xdr.TransactionResult) []string {
+	if result == nil {
+		return nil
+	}
 	var opResults []xdr.OperationResult
 	switch result.Result.Code {
 	case xdr.TransactionResultCodeTxSuccess, xdr.TransactionResultCodeTxFailed:
