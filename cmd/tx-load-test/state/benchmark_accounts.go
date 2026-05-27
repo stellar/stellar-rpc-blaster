@@ -16,11 +16,11 @@ const (
 	SimplePaymentOpsPerTransaction = 1
 	// RecommendedSourceReuseLedgers is the target minimum source-account reuse
 	// interval used by the recommended pool-size formula.
-	RecommendedSourceReuseLedgers = 2
+	RecommendedSourceReuseLedgers = 3
 	// SourceAccountRunBudget is the maximum number of transactions one source
 	// account should ideally submit over a single benchmark run before we size a
 	// larger source-account pool. With a 5 second ledger cadence and a
-	// 2-ledger preferred reuse gap, a 5 minute run naturally reuses each source
+	// 3-ledger preferred reuse gap, a 5 minute run naturally reuses each source
 	// account about 30 times, so runs longer than 5 minutes are where the
 	// duration-based budget starts growing the recommended pool size.
 	SourceAccountRunBudget = 30
