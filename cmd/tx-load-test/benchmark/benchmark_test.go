@@ -92,7 +92,7 @@ func TestValidateConfig(t *testing.T) {
 				Mode:             config.ModeSACTransfer,
 				TargetRPS:        50,
 				ClassicRPS:       0,
-				NumberOfAccounts: 500,
+				NumberOfAccounts: 750,
 			},
 			wantErr: false,
 		},
@@ -102,7 +102,7 @@ func TestValidateConfig(t *testing.T) {
 				Mode:             config.ModeOZTransfer,
 				TargetRPS:        50,
 				ClassicRPS:       0,
-				NumberOfAccounts: 500,
+				NumberOfAccounts: 750,
 			},
 			wantErr: false,
 		},
@@ -112,7 +112,7 @@ func TestValidateConfig(t *testing.T) {
 				Mode:             config.ModeSoroswap,
 				TargetRPS:        50,
 				ClassicRPS:       0,
-				NumberOfAccounts: 500,
+				NumberOfAccounts: 750,
 			},
 			wantErr: false,
 		},
@@ -122,7 +122,7 @@ func TestValidateConfig(t *testing.T) {
 				Mode:             config.BenchmarkMode("unknown-mode"),
 				TargetRPS:        50,
 				ClassicRPS:       0,
-				NumberOfAccounts: 500,
+				NumberOfAccounts: 750,
 			},
 			wantErr: true,
 		},
@@ -132,7 +132,7 @@ func TestValidateConfig(t *testing.T) {
 				Mode:             config.ModeSACTransfer,
 				TargetRPS:        50,
 				ClassicRPS:       0,
-				NumberOfAccounts: 499,
+				NumberOfAccounts: 749,
 			},
 			wantErr: true,
 		},
@@ -142,7 +142,7 @@ func TestValidateConfig(t *testing.T) {
 				Mode:             config.ModeSACTransfer,
 				TargetRPS:        50,
 				ClassicRPS:       0,
-				NumberOfAccounts: 499,
+				NumberOfAccounts: 749,
 			},
 			wantErr: true,
 		},
@@ -152,7 +152,7 @@ func TestValidateConfig(t *testing.T) {
 				Mode:             config.ModeSACTransfer,
 				TargetRPS:        50,
 				ClassicRPS:       0,
-				NumberOfAccounts: 500,
+				NumberOfAccounts: 750,
 			},
 			wantErr: false,
 		},
@@ -183,7 +183,7 @@ func TestValidateConfig(t *testing.T) {
 				TargetRPS:        200,
 				ClassicRPS:       200,
 				Duration:         2 * time.Minute,
-				NumberOfAccounts: 3_999,
+				NumberOfAccounts: 5_999,
 			},
 			wantErr: true,
 		},
@@ -194,7 +194,7 @@ func TestValidateConfig(t *testing.T) {
 				TargetRPS:        200,
 				ClassicRPS:       200,
 				Duration:         2 * time.Minute,
-				NumberOfAccounts: 4_000,
+				NumberOfAccounts: 6_000,
 			},
 			wantErr: false,
 		},
@@ -226,7 +226,7 @@ func TestValidateSetupConfig(t *testing.T) {
 			TargetRPS:        200,
 			ClassicRPS:       200,
 			Duration:         2 * time.Minute,
-			NumberOfAccounts: 4_000,
+			NumberOfAccounts: 6_000,
 		})
 		require.NoError(t, err)
 	})
@@ -236,9 +236,9 @@ func TestValidateSetupConfig(t *testing.T) {
 			TargetRPS:        200,
 			ClassicRPS:       200,
 			Duration:         2 * time.Minute,
-			NumberOfAccounts: 3_999,
+			NumberOfAccounts: 5_999,
 		})
-		require.EqualError(t, err, "benchmark shape is not valid for mode=sac-transfer: account pool too small for configured benchmark: have 3999 accounts but need at least 4000 for the shared tx-source pool  -- increase --accounts, reduce --target-rps, reduce --classic-rps, or shorten --duration")
+		require.EqualError(t, err, "benchmark shape is not valid for mode=sac-transfer: account pool too small for configured benchmark: have 5999 accounts but need at least 6000 for the shared tx-source pool  -- increase --accounts, reduce --target-rps, reduce --classic-rps, or shorten --duration")
 	})
 }
 

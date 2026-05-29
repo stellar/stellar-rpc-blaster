@@ -118,33 +118,7 @@ func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *sta
 			return fmt.Errorf("parse dst account: %w", err)
 		}
 
-		invokeArgs := xdr.InvokeContractArgs{
-			ContractAddress: xdr.ScAddress{
-				Type:       xdr.ScAddressTypeScAddressTypeContract,
-				ContractId: &contractID,
-			},
-			FunctionName: "transfer",
-			Args: xdr.ScVec{
-				{
-					Type: xdr.ScValTypeScvAddress,
-					Address: &xdr.ScAddress{
-						Type:      xdr.ScAddressTypeScAddressTypeAccount,
-						AccountId: &srcAccID,
-					},
-				},
-				{
-					Type: xdr.ScValTypeScvAddress,
-					Address: &xdr.ScAddress{
-						Type:      xdr.ScAddressTypeScAddressTypeAccount,
-						AccountId: &dstAccID,
-					},
-				},
-				{
-					Type: xdr.ScValTypeScvI128,
-					I128: &xdr.Int128Parts{Hi: 0, Lo: xdr.Uint64(sacTransferAmount)},
-				},
-			},
-		}
+		invokeArgs := buildOZTransferInvokeArgs(contractID, srcAccID, dstAccID)
 
 		footprint, err := buildOZFootprintFromTemplate(simTemplate.simulation.Footprint, contractID, srcKP.Address(), dstKP.Address())
 		if err != nil {
@@ -200,7 +174,13 @@ func presimulateOZTransfer(
 		return simulatedInvocationTemplate{}, err
 	}
 
-	invokeArgs := xdr.InvokeContractArgs{
+	invokeArgs := buildOZTransferInvokeArgs(contractID, srcAccID, dstAccID)
+
+	return presimulateBenchmarkInvocation(state, srcKP, srcKP.Address(), invokeArgs)
+}
+
+func buildOZTransferInvokeArgs(contractID xdr.ContractId, srcAccID, dstAccID xdr.AccountId) xdr.InvokeContractArgs {
+	return xdr.InvokeContractArgs{
 		ContractAddress: xdr.ScAddress{
 			Type:       xdr.ScAddressTypeScAddressTypeContract,
 			ContractId: &contractID,
@@ -227,8 +207,6 @@ func presimulateOZTransfer(
 			},
 		},
 	}
-
-	return presimulateBenchmarkInvocation(state, srcKP, srcKP.Address(), invokeArgs)
 }
 
 func buildOZFootprintFromTemplate(

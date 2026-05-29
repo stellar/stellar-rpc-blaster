@@ -24,6 +24,21 @@ type SimulatedInvocation struct {
 	AuthEntries []xdr.SorobanAuthorizationEntry
 }
 
+type RestoreProbeOptions struct {
+	DryRun    bool
+	PadFactor float64
+}
+
+type RestoreProbeResult struct {
+	RestoreNeeded       bool
+	RestoreTransactions int
+	ReadOnlyKeys        int
+	ReadWriteKeys       int
+	ResourceFee         xdr.Int64
+	Simulation          SimulatedInvocation
+	HasSimulation       bool
+}
+
 func SimulateInvokeContract(
 	st *state.State,
 	txSourceKP *keypair.Full,
@@ -31,7 +46,10 @@ func SimulateInvokeContract(
 	invokeArgs xdr.InvokeContractArgs,
 	baseFee int64,
 ) (SimulatedInvocation, error) {
-	simResp, err := simulateInvokeContractResponse(st, txSourceKP, opSourceAddress, invokeArgs, baseFee)
+	ctx, cancel := context.WithTimeout(context.Background(), simulateInvokeTimeout)
+	defer cancel()
+
+	simResp, err := simulateInvokeContractResponse(ctx, st, txSourceKP, opSourceAddress, invokeArgs, baseFee)
 	if err != nil {
 		return SimulatedInvocation{}, err
 	}
@@ -44,13 +62,14 @@ func SimulateInvokeContract(
 }
 
 func simulateInvokeContractResponse(
+	ctx context.Context,
 	st *state.State,
 	txSourceKP *keypair.Full,
 	opSourceAddress string,
 	invokeArgs xdr.InvokeContractArgs,
 	baseFee int64,
 ) (protocol.SimulateTransactionResponse, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), simulateInvokeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, simulateInvokeTimeout)
 	defer cancel()
 
 	op := txnbuild.InvokeHostFunction{
@@ -96,8 +115,9 @@ func SimulatePaddedInvokeContract(
 	baseFee int64,
 	padFactor float64,
 ) (SimulatedInvocation, error) {
+	ctx := context.Background()
 	for restoreAttempt := 0; restoreAttempt <= maxSimulationRestoreAttempts; restoreAttempt++ {
-		simResp, err := simulateInvokeContractResponse(st, txSourceKP, opSourceAddress, invokeArgs, baseFee)
+		simResp, err := simulateInvokeContractResponse(ctx, st, txSourceKP, opSourceAddress, invokeArgs, baseFee)
 		if err != nil {
 			return SimulatedInvocation{}, err
 		}
@@ -105,7 +125,7 @@ func SimulatePaddedInvokeContract(
 			if restoreAttempt == maxSimulationRestoreAttempts {
 				return SimulatedInvocation{}, fmt.Errorf("simulate: restore still required after %d attempts", restoreAttempt+1)
 			}
-			if err := submitSimulationRestore(st, txSourceKP, simResp.RestorePreamble); err != nil {
+			if err := submitSimulationRestore(ctx, st, txSourceKP, simResp.RestorePreamble); err != nil {
 				return SimulatedInvocation{}, fmt.Errorf("restore footprint: %w", err)
 			}
 			continue
@@ -122,7 +142,60 @@ func SimulatePaddedInvokeContract(
 	return SimulatedInvocation{}, fmt.Errorf("simulate: restoration attempts exhausted")
 }
 
-func submitSimulationRestore(st *state.State, fallbackSigner *keypair.Full, preamble *protocol.RestorePreamble) error {
+func RestoreInvokeContract(
+	ctx context.Context,
+	st *state.State,
+	txSourceKP *keypair.Full,
+	opSourceAddress string,
+	invokeArgs xdr.InvokeContractArgs,
+	baseFee int64,
+	options RestoreProbeOptions,
+) (RestoreProbeResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var result RestoreProbeResult
+	for restoreAttempt := 0; restoreAttempt <= maxSimulationRestoreAttempts; restoreAttempt++ {
+		simResp, err := simulateInvokeContractResponse(ctx, st, txSourceKP, opSourceAddress, invokeArgs, baseFee)
+		if err != nil {
+			return result, err
+		}
+		if simResp.RestorePreamble == nil {
+			sim, err := parseSimulatedInvocation(simResp)
+			if err != nil {
+				return result, err
+			}
+			PadSimulatedInvocation(&sim, options.PadFactor)
+			result.Simulation = sim
+			result.HasSimulation = true
+			return result, nil
+		}
+
+		result.RestoreNeeded = true
+		sorobanData, err := restoreSorobanTransactionData(simResp.RestorePreamble)
+		if err != nil {
+			return result, err
+		}
+		result.ReadOnlyKeys += len(sorobanData.Resources.Footprint.ReadOnly)
+		result.ReadWriteKeys += len(sorobanData.Resources.Footprint.ReadWrite)
+		result.ResourceFee += sorobanData.ResourceFee
+
+		if options.DryRun {
+			return result, nil
+		}
+		if restoreAttempt == maxSimulationRestoreAttempts {
+			return result, fmt.Errorf("simulate: restore still required after %d attempts", restoreAttempt+1)
+		}
+		if err := submitSimulationRestore(ctx, st, txSourceKP, simResp.RestorePreamble); err != nil {
+			return result, fmt.Errorf("restore footprint: %w", err)
+		}
+		result.RestoreTransactions++
+	}
+
+	return result, fmt.Errorf("simulate: restoration attempts exhausted")
+}
+
+func submitSimulationRestore(ctx context.Context, st *state.State, fallbackSigner *keypair.Full, preamble *protocol.RestorePreamble) error {
 	sorobanData, err := restoreSorobanTransactionData(preamble)
 	if err != nil {
 		return err
@@ -137,7 +210,7 @@ func submitSimulationRestore(st *state.State, fallbackSigner *keypair.Full, prea
 	if st.NetworkPassphrase == "" {
 		return fmt.Errorf("missing network passphrase for restore transaction")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), simulateInvokeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, simulateInvokeTimeout)
 	defer cancel()
 	logger := log.New().WithField("phase", "benchmark restore")
 	return state.SubmitAndWait(

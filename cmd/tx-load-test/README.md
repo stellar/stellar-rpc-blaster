@@ -7,11 +7,12 @@ A standalone Stellar Soroban RPC load-testing tool. It drives sustained transact
 The tool is split into three independent phases connected by a JSON state file:
 
 ```
-setup  -->  state.json  -->  bench  (repeatable)
+setup  -->  state.json  -->  restore  -->  bench  (repeatable)
                         -->  teardown
 ```
 
 - **`setup`** -- one-time ledger initialization: creates accounts, assets, trustlines, SAC contracts, Soroswap pools/liquidity, and the OZ benchmark token. Re-running with a higher `--accounts` value adds accounts incrementally.
+- **`restore`** -- optional pre-benchmark maintenance: simulates benchmark-shaped probes, restores archived Soroban state, and logs per-mode restore summaries without running benchmark traffic.
 - **`bench`** -- drives load against the RPC endpoint using pre-built state. Run as many times as needed.
 - **`teardown`** -- merges all participant accounts back into the fee payer, recovering XLM. Deletes the state file on success.
 - **`sync`** -- reconciles the state file with on-chain reality (removes accounts that no longer exist).
@@ -36,15 +37,21 @@ go build -o tx-load-test ./cmd/tx-load-test/
 export FEE_PAYER="S..."  # optional; omit to auto-generate via friendbot
 ./tx-load-test setup --rpc-url https://soroban-testnet.stellar.org --network testnet --accounts 3000
 
-# 2. Run a benchmark (requires the same fee-payer seed used for setup)
+# 2. If the state has been idle, dry-run restore first (requires the same fee-payer seed used for setup)
 export FEE_PAYER="S..."
+./tx-load-test restore --mode all --dry-run
+
+# 3. Restore archived state if the dry-run reports restore-needed probes
+./tx-load-test restore --mode all --verify
+
+# 4. Run a benchmark
 ./tx-load-test bench --mode sac-transfer --target-rps 300 --duration 60s
 # Writes flattened metrics to tx-load-test-metrics-<timestamp>-sac-transfer.ndjson by default.
 
-# 3. Need more accounts? Just re-run setup with a higher target.
+# 5. Need more accounts? Just re-run setup with a higher target.
 ./tx-load-test setup --rpc-url https://soroban-testnet.stellar.org --network testnet --accounts 5000
 
-# 4. Clean up (also requires FEE_PAYER)
+# 6. Clean up (also requires FEE_PAYER)
 ./tx-load-test teardown
 ```
 
@@ -98,6 +105,51 @@ If setup is interrupted, a best-effort cleanup merges whatever accounts exist an
 # Later, expand to 5000 -- only accounts 2001-5000 are created
 ./tx-load-test setup --rpc-url https://... --network testnet --accounts 5000
 ```
+
+### `restore`
+
+Restores archived Soroban state before a benchmark run. This command is meant for state files that sit idle between infrequent tests, especially `oz-transfer` and `soroswap`, where account-specific contract data can archive.
+
+`restore` uses simulation only inside this maintenance command. It does not submit the benchmark transfer/swap invokes used as probes; it submits only `RestoreFootprint` transactions when simulation reports archived state. The hot benchmark path remains simulation-free per generated request.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--mode` | `all` | Restore scope: `all`, `sac-transfer`, `oz-transfer`, or `soroswap` |
+| `--dry-run` | `false` | Simulate and log what would need restore; submit no restore transactions |
+| `--verify` | `false` | After restore, re-run the selected probes and fail if any still require restore |
+| `--account-start` | `0` | 0-based offset into the selected participant account list |
+| `--account-limit` | `0` | Maximum selected accounts per applicable mode; `0` means all remaining accounts |
+| `--progress-interval` | `100` | Log restore progress every N probes; set negative to disable periodic progress |
+| `--rpc-url` | *(from state file)* | Override the RPC URL stored in `state.json` |
+| `--state-file` | `state.json` | Input state file path |
+| `--skip-account-preflight` | `false` | Skip the sampled on-chain participant-account existence check before restore starts |
+| `--account-preflight-sample` | `10` | Number of participant accounts to sample during runtime preflight |
+| `--log-level` | `info` | `debug`, `info`, `warn`, `error` |
+
+Example workflow:
+
+```bash
+export FEE_PAYER="S..."
+
+# See how much archived state would need restoring.
+./tx-load-test restore --mode all --dry-run
+
+# Restore and verify the selected probes are live afterwards.
+./tx-load-test restore --mode all --verify
+
+# For large states, restore in chunks.
+./tx-load-test restore --mode oz-transfer --account-start 0 --account-limit 500 --verify
+./tx-load-test restore --mode oz-transfer --account-start 500 --account-limit 500 --verify
+```
+
+Each mode logs a start message, an update after the first probe, periodic progress every `--progress-interval` probes, a final progress update, and a summary. Progress and summary logs include probes simulated, restore-needed probes, restore transactions submitted, no-op probes, restored read-only/read-write key counts, selected account range, selected account count, elapsed time, and the first few errors. In `--dry-run`, summaries use “would restore” wording and `restoreTransactions=0`.
+
+`--account-limit` limits selected accounts, not total probe count. `oz-transfer` runs one restore probe per selected account. `soroswap` runs four probes per selected holder account because it checks two benchmark pools in both swap directions. With `--mode all --account-limit 1000`, the command can therefore run up to 3 SAC probes, 1000 OZ probes, and 4000 Soroswap probes.
+
+Mode-specific scope:
+- **`sac-transfer`** probes only the three shared SAC contract instances. Participant balances are classic trustlines and are not Soroban archived state.
+- **`oz-transfer`** probes selected participant accounts so each selected account's OZ `Balance` contract data is touched at least once.
+- **`soroswap`** probes selected holder accounts across the benchmark pools and both swap directions, covering shared router/pair/pool state and account-specific trader contract data.
 
 ### `bench`
 
