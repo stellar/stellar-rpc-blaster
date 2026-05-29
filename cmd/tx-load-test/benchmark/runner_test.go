@@ -81,7 +81,7 @@ func TestPollWorkerCountBounds(t *testing.T) {
 
 func TestDefaultMetricsFileNameIncludesSecondPrecisionTimestampAndMode(t *testing.T) {
 	name := DefaultMetricsFileName(config.ModeSACTransfer, time.Date(2026, 4, 30, 1, 2, 3, 987654321, time.UTC))
-	require.Equal(t, "tx-load-test-metrics-20260430T010203Z-sac-transfer.ndjson", name)
+	require.Equal(t, filepath.Join("metrics", "tx-load-test-metrics-20260430T010203Z-sac-transfer.ndjson"), name)
 }
 
 func TestWorkloadMetricsReportIncludesStdoutMetrics(t *testing.T) {

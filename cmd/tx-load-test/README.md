@@ -46,7 +46,7 @@ export FEE_PAYER="S..."
 
 # 4. Run a benchmark
 ./tx-load-test bench --mode sac-transfer --target-rps 300 --duration 60s
-# Writes flattened metrics to tx-load-test-metrics-<timestamp>-sac-transfer.ndjson by default.
+# Writes flattened metrics to metrics/tx-load-test-metrics-<timestamp>-sac-transfer.ndjson by default.
 
 # 5. Need more accounts? Just re-run setup with a higher target.
 ./tx-load-test setup --rpc-url https://soroban-testnet.stellar.org --network testnet --accounts 5000
@@ -170,7 +170,7 @@ Before the benchmark starts, the tool queries the chosen RPC endpoint (either `-
 | `--skip-account-preflight` | `false` | Skip the sampled on-chain participant-account existence check before the benchmark starts |
 | `--account-preflight-sample` | `10` | Number of participant accounts to sample during runtime preflight |
 | `--trace-file` | *(disabled)* | Optional NDJSON file that captures every benchmark submit and poll request/response |
-| `--metrics-file` | `tx-load-test-metrics-<timestamp>-<mode>.ndjson` | Optional flattened NDJSON benchmark metrics file path |
+| `--metrics-file` | `metrics/tx-load-test-metrics-<timestamp>-<mode>.ndjson` | Optional flattened benchmark metrics file path |
 | `--log-level` | `info` | `debug`, `info`, `warn`, `error` |
 
 **Mode guide:**
@@ -206,7 +206,7 @@ When `--classic-rps > 0`, bench also runs a parallel simple-payment companion st
 
 When `--trace-file` is enabled, bench also writes every submit and poll request/response pair to the specified NDJSON file for post-run analysis.
 
-**Metrics file output:** bench writes a flattened NDJSON metrics file. If `--metrics-file` is omitted, the default path is `tx-load-test-metrics-<timestamp>-<mode>.ndjson`.
+**Metrics file output:** bench writes a flattened NDJSON metrics file. If `--metrics-file` is omitted, the default path is `metrics/tx-load-test-metrics-<timestamp>-<mode>.ndjson`.
 
 The metrics file is newline-delimited JSON. Each workload produces one `summary` record that combines run parameters, workload parameters, submission counters, on-chain counters, latency stats, ledger stats, Vegeta metrics, and HTTP status-code counts. HTTP status codes are flattened into fields on the summary record, for example `vegeta_status_code_200`, not emitted as separate records.
 

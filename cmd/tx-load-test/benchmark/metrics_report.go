@@ -129,7 +129,7 @@ type byteMetricsReport struct {
 type flatMetricsRecord map[string]any
 
 func DefaultMetricsFileName(mode config.BenchmarkMode, now time.Time) string {
-	return fmt.Sprintf("tx-load-test-metrics-%s-%s.ndjson", now.UTC().Format("20060102T150405Z"), sanitizeFilenamePart(string(mode)))
+	return filepath.Join("metrics", fmt.Sprintf("tx-load-test-metrics-%s-%s.ndjson", now.UTC().Format("20060102T150405Z"), sanitizeFilenamePart(string(mode))))
 }
 
 func sanitizeFilenamePart(value string) string {
