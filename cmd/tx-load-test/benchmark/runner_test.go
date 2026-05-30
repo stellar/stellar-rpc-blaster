@@ -79,6 +79,12 @@ func TestPollWorkerCountBounds(t *testing.T) {
 	require.Equal(t, 1600, pollWorkerCount(2_000))
 }
 
+func TestBenchmarkTimeoutsKeepPollTrailingTransactionExpiry(t *testing.T) {
+	require.Equal(t, 20, benchmarkTransactionTimeoutSecs)
+	require.Equal(t, 25*time.Second, pollTimeout)
+	require.Greater(t, pollTimeout, time.Duration(benchmarkTransactionTimeoutSecs)*time.Second)
+}
+
 func TestDefaultMetricsFileNameIncludesSecondPrecisionTimestampAndMode(t *testing.T) {
 	name := DefaultMetricsFileName(config.ModeSACTransfer, time.Date(2026, 4, 30, 1, 2, 3, 987654321, time.UTC))
 	require.Equal(t, filepath.Join("metrics", "tx-load-test-metrics-20260430T010203Z-sac-transfer.ndjson"), name)

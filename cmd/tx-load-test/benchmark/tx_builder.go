@@ -17,7 +17,7 @@ import (
 
 const requestIDURLFragmentPrefix = "blaster-rpc-id="
 
-const benchmarkTransactionTimeoutSecs = 25
+const benchmarkTransactionTimeoutSecs = 20
 
 type sorobanSendTransactionParams struct {
 	RPCID             int64

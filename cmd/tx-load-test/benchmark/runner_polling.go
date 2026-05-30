@@ -26,7 +26,7 @@ func pollWorkerCount(targetRPS int) int {
 // terminal state. It intentionally outlives the benchmark transaction expiry
 // so the poller can observe txTooLate-style terminal failures instead of
 // timing out first.
-const pollTimeout = 35 * time.Second
+const pollTimeout = 25 * time.Second
 
 type pollTransactionResult struct {
 	response                 protocol.GetTransactionResponse
