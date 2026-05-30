@@ -17,9 +17,9 @@ import (
 // runVegetaAttack is the shared Vegeta harness used by all benchmark modes.
 // It constructs a RampToConstantPacer and drives the attack for cfg.Duration.
 //
-// After the attack finishes, a pool of poll worker goroutines drains the
-// accepted-transaction hashes by calling getTransaction until each reaches a
-// terminal state (SUCCESS or FAILED).  This gives a complete picture of
+// After the attack finishes, a fair poll scheduler drains accepted-transaction
+// hashes with bounded getTransaction attempts until each reaches terminal state
+// (SUCCESS or FAILED) or its poll deadline. This gives a complete picture of
 // on-chain outcomes, not just submission acceptance.
 func runVegetaAttack(
 	ctx context.Context,
