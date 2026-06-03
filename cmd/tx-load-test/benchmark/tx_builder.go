@@ -31,6 +31,13 @@ type sorobanSendTransactionParams struct {
 	AuthEntries       []xdr.SorobanAuthorizationEntry
 	Resources         xdr.SorobanResources
 	ResourceFee       xdr.Int64
+	// SorobanDataExt carries the simulator's SorobanTransactionDataExt
+	// verbatim. For protocol-23+ autorestore this holds
+	// SorobanResourcesExtV0.ArchivedSorobanEntries: the read-write footprint
+	// indices core will auto-restore inline at apply time. Dropping it forces
+	// apply to fail with invokeHostFunctionEntryArchived even though
+	// ResourceFee already prices the inline restoration.
+	SorobanDataExt xdr.SorobanTransactionDataExt
 }
 
 func buildSorobanSendTransactionBody(params sorobanSendTransactionParams) ([]byte, error) {
@@ -46,6 +53,7 @@ func buildSorobanSendTransactionBody(params sorobanSendTransactionParams) ([]byt
 			SorobanData: &xdr.SorobanTransactionData{
 				Resources:   params.Resources,
 				ResourceFee: params.ResourceFee,
+				Ext:         params.SorobanDataExt,
 			},
 		},
 	}
@@ -54,13 +62,38 @@ func buildSorobanSendTransactionBody(params sorobanSendTransactionParams) ([]byt
 		SourceAccount:        &txnbuild.SimpleAccount{AccountID: params.TxSource.Address(), Sequence: params.Sequence},
 		IncrementSequenceNum: false,
 		Operations:           []txnbuild.Operation{&op},
-		BaseFee:              sampleBenchmarkBaseFee(),
+		BaseFee:              benchmarkInnerBaseFee(params.ResourceFee),
 		Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(benchmarkTransactionTimeoutSecs)},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build transaction: %w", err)
 	}
 	return buildBenchmarkSendTransactionBody(params.RPCID, params.NetworkPassphrase, params.FeePayerKP, tx, params.Signers...)
+}
+
+// benchmarkInnerBaseFee returns the per-op inclusion fee for a benchmark
+// transaction. It samples from the usual [benchmarkBaseFeeMin,
+// benchmarkBaseFeeMax] range but raises the floor when the simulator-reported
+// resource fee is large (i.e. autorestore or other expensive Soroban work).
+//
+// Stellar-core enforces a self-induced surge price during sustained
+// Soroban-heavy traffic; the inclusion floor scales with how much resource
+// work each tx consumes. Sampling a 10k-100k inclusion fee on a tx whose
+// resource fee is several million stroops underbids that floor and shows up
+// as txINSUFFICIENT_FEE at submit time. Boosting the inclusion fee
+// proportionally is cheap on test networks (the fee payer is funded by
+// friendbot) and lets the fee-bump's totalFee = (numOps+1) * baseFee +
+// resourceFee actually clear the floor.
+func benchmarkInnerBaseFee(resourceFee xdr.Int64) int64 {
+	baseFee := sampleBenchmarkBaseFee()
+	const heavyResourceFeeThreshold xdr.Int64 = 10_000_000
+	if resourceFee >= heavyResourceFeeThreshold {
+		const heavyResourceBaseFeeFloor int64 = 1_000_000
+		if baseFee < heavyResourceBaseFeeFloor {
+			baseFee = heavyResourceBaseFeeFloor
+		}
+	}
+	return baseFee
 }
 
 func buildBenchmarkSendTransactionBody(rpcID int64, networkPassphrase string, feePayerKP *keypair.Full, innerTx *txnbuild.Transaction, signers ...*keypair.Full) ([]byte, error) {

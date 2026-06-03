@@ -18,11 +18,16 @@ func buildRestoreCmd() *cobra.Command {
 archived Soroban state, submits RestoreFootprint transactions when needed, and
 optionally verifies the selected workload footprints are live.
 
+For soroswap, restore also runs a benchmark-footprint validation pass that
+builds the same rewritten footprints used by benchmark submissions and compares
+them with fresh simulation footprints.
+
 This keeps simulation out of the per-request benchmark hot path. Use restore
-when a state file has been idle long enough that OZ or Soroswap contract data
-may have archived. SAC restore is intentionally limited to shared contract
-state; SAC participant balances are classic trustlines, not Soroban archived
-entries.`,
+when a state file has been idle long enough that benchmark contract data may
+have archived. SAC restore probes selected holder accounts with transfer-shaped
+calls so simulation can report archived SAC WASM/code, contract instance state,
+and any account-specific SAC contract data. SAC participant balances are classic
+trustlines, not Soroban archived entries.`,
 		RunE: runRestore,
 	}
 

@@ -22,6 +22,13 @@ type SimulatedInvocation struct {
 	ResourceFee xdr.Int64
 	Footprint   xdr.LedgerFootprint
 	AuthEntries []xdr.SorobanAuthorizationEntry
+	// Ext carries the simulator's SorobanTransactionDataExt. When the simulator
+	// runs against an AutoRestoringSnapshotSource, V1 holds the read-write
+	// footprint indices that core must auto-restore inline at apply time. The
+	// extension MUST be reattached to the submitted SorobanTransactionData;
+	// dropping it causes apply to fail with invokeHostFunctionEntryArchived
+	// for entries the simulator already paid for via the inflated resource fee.
+	Ext xdr.SorobanTransactionDataExt
 }
 
 type RestoreProbeOptions struct {
@@ -37,6 +44,13 @@ type RestoreProbeResult struct {
 	ResourceFee         xdr.Int64
 	Simulation          SimulatedInvocation
 	HasSimulation       bool
+	// AutoRestoreKeys counts read-write footprint indices the simulator
+	// marked for inline auto-restoration via SorobanResourcesExtV0. A non-zero
+	// count means the corresponding ledger entries are archived and the
+	// invoking tx must carry SorobanTransactionDataExt.V1 for apply to
+	// auto-restore them; the legacy RestorePreamble is intentionally absent
+	// in this case.
+	AutoRestoreKeys int
 }
 
 func SimulateInvokeContract(
@@ -168,6 +182,17 @@ func RestoreInvokeContract(
 			PadSimulatedInvocation(&sim, options.PadFactor)
 			result.Simulation = sim
 			result.HasSimulation = true
+			// Protocol-23+ autorestore: when read-write entries are archived
+			// but not yet evicted, the simulator omits RestorePreamble and
+			// instead encodes the indices in SorobanResourcesExtV0. Surface
+			// that here so callers can distinguish a true noop from one that
+			// silently relies on autorestore at apply time.
+			if archived := sim.ArchivedSorobanEntries(); len(archived) > 0 {
+				result.RestoreNeeded = true
+				result.AutoRestoreKeys += len(archived)
+				result.ReadWriteKeys += len(archived)
+				result.ResourceFee += sim.ResourceFee
+			}
 			return result, nil
 		}
 
@@ -262,7 +287,17 @@ func parseSimulatedInvocation(simResp protocol.SimulateTransactionResponse) (Sim
 		ResourceFee: sorobanData.ResourceFee,
 		Footprint:   sorobanData.Resources.Footprint,
 		AuthEntries: authEntries,
+		Ext:         sorobanData.Ext,
 	}, nil
+}
+
+// ArchivedSorobanEntries returns the read-write footprint indices the
+// simulator marked for inline auto-restoration, or nil if none.
+func (s SimulatedInvocation) ArchivedSorobanEntries() []xdr.Uint32 {
+	if s.Ext.V != 1 || s.Ext.ResourceExt == nil {
+		return nil
+	}
+	return s.Ext.ResourceExt.ArchivedSorobanEntries
 }
 
 func PadSimulatedInvocation(sim *SimulatedInvocation, factor float64) {

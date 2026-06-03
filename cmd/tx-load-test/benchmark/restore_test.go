@@ -10,6 +10,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/network"
 	"github.com/stellar/go-stellar-sdk/support/log"
+	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
 	"github.com/stretchr/testify/require"
 
@@ -39,27 +40,34 @@ func TestSelectAccountRange(t *testing.T) {
 	require.ErrorContains(t, err, "outside account pool")
 }
 
-func TestRestoreSACContractsProbesContractInstancesOnly(t *testing.T) {
+func TestRestoreSACContractsProbesTransferPath(t *testing.T) {
 	oldProbe := restoreInvokeContract
 	defer func() { restoreInvokeContract = oldProbe }()
 
 	var calls []xdr.InvokeContractArgs
+	var txSources []string
+	var opSources []string
 	restoreInvokeContract = func(
 		_ context.Context,
 		_ *state.State,
-		_ *keypair.Full,
-		_ string,
+		txSourceKP *keypair.Full,
+		opSourceAddress string,
 		invokeArgs xdr.InvokeContractArgs,
 		_ int64,
 		_ sharedsoroban.RestoreProbeOptions,
 	) (sharedsoroban.RestoreProbeResult, error) {
 		calls = append(calls, invokeArgs)
+		txSources = append(txSources, txSourceKP.Address())
+		opSources = append(opSources, opSourceAddress)
 		return sharedsoroban.RestoreProbeResult{}, nil
 	}
 
+	accounts := []*keypair.Full{mustRandomKP(t), mustRandomKP(t)}
 	st := &state.State{
 		FeePayerKP:        mustRandomKP(t),
 		NetworkPassphrase: network.TestNetworkPassphrase,
+		AccountKPs:        accounts,
+		SACHolderKPs:      accounts,
 		SACs:              [3]string{mustContractID(t, 1), mustContractID(t, 2), mustContractID(t, 3)},
 	}
 	summary, err := restoreSACContracts(context.Background(), st, RestoreOptions{DryRun: true}, restoreSummary{
@@ -68,11 +76,28 @@ func TestRestoreSACContractsProbesContractInstancesOnly(t *testing.T) {
 		startedAt: time.Now(),
 	})
 	require.NoError(t, err)
-	require.Equal(t, 3, summary.probes)
-	require.Len(t, calls, 3)
-	for _, call := range calls {
-		require.Equal(t, xdr.ScSymbol("decimals"), call.FunctionName)
-		require.Empty(t, call.Args)
+	require.Equal(t, 2, summary.selectedAccounts)
+	require.Equal(t, 6, summary.totalProbes)
+	require.Equal(t, 6, summary.probes)
+	require.Len(t, calls, 6)
+	require.Equal(t, []string{
+		accounts[0].Address(), accounts[0].Address(), accounts[0].Address(),
+		accounts[1].Address(), accounts[1].Address(), accounts[1].Address(),
+	}, txSources)
+	require.Equal(t, txSources, opSources)
+	for i, call := range calls {
+		src := accounts[i/3]
+		dst := accounts[1]
+		if src.Address() == dst.Address() {
+			dst = accounts[0]
+		}
+		require.Equal(t, xdr.ScSymbol("transfer"), call.FunctionName)
+		require.Len(t, call.Args, 3)
+		require.Equal(t, src.Address(), call.Args[0].Address.AccountId.Address())
+		require.Equal(t, dst.Address(), call.Args[1].Address.AccountId.Address())
+		amount, ok := call.Args[2].GetI128()
+		require.True(t, ok)
+		require.Equal(t, xdr.Uint64(sacTransferAmount), amount.Lo)
 	}
 }
 
@@ -176,6 +201,16 @@ func TestRestoreAccountLimitAppliesPerModeAccountSelection(t *testing.T) {
 		SoroswapPairContracts:   []string{mustContractID(t, 7), mustContractID(t, 8)},
 	}
 
+	sacSummary, err := restoreSACContracts(context.Background(), st, RestoreOptions{AccountLimit: 2, DryRun: true}, restoreSummary{
+		mode:      config.ModeSACTransfer,
+		dryRun:    true,
+		startedAt: time.Now(),
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2, sacSummary.selectedAccounts)
+	require.Equal(t, 2*len(st.SACs), sacSummary.totalProbes)
+	require.Equal(t, sacSummary.totalProbes, sacSummary.probes)
+
 	ozSummary, err := restoreOZBalances(context.Background(), st, RestoreOptions{AccountLimit: 2, DryRun: true}, restoreSummary{
 		mode:      config.ModeOZTransfer,
 		dryRun:    true,
@@ -199,6 +234,80 @@ func TestRestoreAccountLimitAppliesPerModeAccountSelection(t *testing.T) {
 	for _, amount := range soroswapAmounts {
 		require.Equal(t, xdr.Uint64(1000), amount)
 	}
+}
+
+func TestRestoreArchivedStateRunsSoroswapBenchmarkFootprintValidation(t *testing.T) {
+	oldProbe := restoreInvokeContract
+	oldTokenBalance := restoreSoroswapTokenBalance
+	defer func() {
+		restoreInvokeContract = oldProbe
+		restoreSoroswapTokenBalance = oldTokenBalance
+	}()
+
+	balanceContractID := xdr.ContractId{9}
+	restoreProbeCalls := 0
+	validationProbeCalls := 0
+	restoreInvokeContract = func(
+		_ context.Context,
+		_ *state.State,
+		_ *keypair.Full,
+		_ string,
+		invokeArgs xdr.InvokeContractArgs,
+		_ int64,
+		options sharedsoroban.RestoreProbeOptions,
+	) (sharedsoroban.RestoreProbeResult, error) {
+		traderAddress := mustSwapTraderAddress(t, invokeArgs)
+		if options.DryRun {
+			validationProbeCalls++
+		} else {
+			restoreProbeCalls++
+		}
+		footprint := xdr.LedgerFootprint{ReadWrite: []xdr.LedgerKey{mustBalanceKey(t, balanceContractID, traderAddress)}}
+		return sharedsoroban.RestoreProbeResult{
+			HasSimulation: true,
+			Simulation:    sharedTestSimulatedInvocation(xdr.SorobanResources{Footprint: footprint}, 100),
+		}, nil
+	}
+	restoreSoroswapTokenBalance = func(context.Context, *state.State, string, string) (xdr.Int128Parts, error) {
+		return xdr.Int128Parts{Hi: 0, Lo: 1_000_000}, nil
+	}
+
+	issuer := mustRandomKP(t)
+	accounts := []*keypair.Full{mustRandomKP(t), mustRandomKP(t)}
+	st := &state.State{
+		FeePayerKP:        mustRandomKP(t),
+		NetworkPassphrase: network.TestNetworkPassphrase,
+		Assets: [3]txnbuild.CreditAsset{
+			{Code: "BLTA", Issuer: issuer.Address()},
+			{Code: "BLTB", Issuer: issuer.Address()},
+			{Code: "BLTC", Issuer: issuer.Address()},
+		},
+		AccountKPs:              accounts,
+		SACHolderKPs:            accounts,
+		SACs:                    [3]string{mustContractID(t, 1), mustContractID(t, 2), mustContractID(t, 3)},
+		SoroswapFactoryContract: mustContractID(t, 5),
+		SoroswapRouterContract:  mustContractID(t, 6),
+		SoroswapPairContracts:   []string{mustContractID(t, 7), mustContractID(t, 8)},
+	}
+
+	var buf bytes.Buffer
+	logger := log.New()
+	logger.SetLevel(log.InfoLevel)
+	logger.SetOutput(&buf)
+	logger.DisableColors()
+	logger.DisableTimestamp()
+
+	err := RestoreArchivedState(context.Background(), logger, st, RestoreOptions{
+		Mode:             string(config.ModeSoroswap),
+		AccountLimit:     2,
+		ProgressInterval: -1,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2*len(sharedsoroswap.BenchmarkPairs)*2, restoreProbeCalls)
+	require.Equal(t, len(sharedsoroswap.BenchmarkPairs)*2+2*len(sharedsoroswap.BenchmarkPairs)*2, validationProbeCalls)
+	require.Contains(t, buf.String(), "soroswap benchmark footprint validation summary")
+	require.Contains(t, buf.String(), "benchmarkProbes=8")
+	require.Contains(t, buf.String(), "footprintMismatches=0")
 }
 
 func TestRestoreStopsAfterContextCancellation(t *testing.T) {
@@ -252,4 +361,14 @@ func mustContractID(t *testing.T, marker byte) string {
 	encoded, err := ledger.EncodeContractID(id)
 	require.NoError(t, err)
 	return encoded
+}
+
+func mustSwapTraderAddress(t *testing.T, invokeArgs xdr.InvokeContractArgs) string {
+	t.Helper()
+	require.Equal(t, xdr.ScSymbol("swap_exact_tokens_for_tokens"), invokeArgs.FunctionName)
+	require.Len(t, invokeArgs.Args, 5)
+	trader := invokeArgs.Args[3]
+	require.NotNil(t, trader.Address)
+	require.NotNil(t, trader.Address.AccountId)
+	return trader.Address.AccountId.Address()
 }

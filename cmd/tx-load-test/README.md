@@ -110,7 +110,7 @@ If setup is interrupted, a best-effort cleanup merges whatever accounts exist an
 
 Restores archived Soroban state before a benchmark run. This command is meant for state files that sit idle between infrequent tests, especially `oz-transfer` and `soroswap`, where account-specific contract data can archive.
 
-`restore` uses simulation only inside this maintenance command. It does not submit the benchmark transfer/swap invokes used as probes; it submits only `RestoreFootprint` transactions when simulation reports archived state. The hot benchmark path remains simulation-free per generated request.
+`restore` uses simulation only inside this maintenance command. It does not submit the benchmark transfer/swap invokes used as probes; it submits only `RestoreFootprint` transactions when simulation reports archived state. For `soroswap`, the command also runs a secondary benchmark-footprint validation pass: it builds the same rewritten footprints used by the benchmark targeter, compares them with fresh simulation footprints, and fails on missing or unexpected contract-data keys. The hot benchmark path remains simulation-free per generated request.
 
 | Flag | Default | Description |
 |---|---|---|
@@ -142,12 +142,12 @@ export FEE_PAYER="S..."
 ./tx-load-test restore --mode oz-transfer --account-start 500 --account-limit 500 --verify
 ```
 
-Each mode logs a start message, an update after the first probe, periodic progress every `--progress-interval` probes, a final progress update, and a summary. Progress and summary logs include probes simulated, restore-needed probes, restore transactions submitted, no-op probes, restored read-only/read-write key counts, selected account range, selected account count, elapsed time, and the first few errors. In `--dry-run`, summaries use “would restore” wording and `restoreTransactions=0`.
+Each mode logs a start message, an update after the first probe, periodic progress every `--progress-interval` probes, a final progress update, and a summary. Progress and summary logs include probes simulated, restore-needed probes, restore transactions submitted, no-op probes, restored read-only/read-write key counts, selected account range, selected account count, elapsed time, and the first few errors. In `--dry-run`, summaries use “would restore” wording and `restoreTransactions=0`. Soroswap additionally logs `soroswap benchmark footprint validation summary` with template/probe counts, restore-needed validation probes, footprint mismatches, missing keys, unexpected keys, and allowed extra read-write trustline keys.
 
-`--account-limit` limits selected accounts, not total probe count. `oz-transfer` runs one restore probe per selected account. `soroswap` runs four probes per selected holder account because it checks two benchmark pools in both swap directions. With `--mode all --account-limit 1000`, the command can therefore run up to 3 SAC probes, 1000 OZ probes, and 4000 Soroswap probes.
+`--account-limit` limits selected accounts, not total probe count. `sac-transfer` runs one representative transfer probe per selected holder account per SAC contract. `oz-transfer` runs one restore probe per selected account. `soroswap` runs four probes per selected holder account because it checks two benchmark pools in both swap directions. With `--mode all --account-limit 1000`, the command can therefore run up to 3000 SAC probes, 1000 OZ probes, and 4000 Soroswap probes.
 
 Mode-specific scope:
-- **`sac-transfer`** probes only the three shared SAC contract instances. Participant balances are classic trustlines and are not Soroban archived state.
+- **`sac-transfer`** runs representative transfer probes from each selected holder account against the three SAC contracts so simulation can restore both SAC WASM/code and contract instance state, plus any account-specific SAC contract data a transfer simulation reports. Participant balances are classic trustlines and are not Soroban archived state.
 - **`oz-transfer`** probes selected participant accounts so each selected account's OZ `Balance` contract data is touched at least once.
 - **`soroswap`** probes selected holder accounts across the benchmark pools and both swap directions, covering shared router/pair/pool state and account-specific trader contract data.
 

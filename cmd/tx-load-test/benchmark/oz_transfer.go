@@ -1,6 +1,7 @@
 package benchmark
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/rand/v2"
@@ -80,6 +81,19 @@ func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *sta
 	if err != nil {
 		return nil, fmt.Errorf("pre-simulate OZ transfer: %w", err)
 	}
+	// Capture the representative src/dst keys so the per-request rewrite can
+	// drop them from the template's RW before appending the actual leased
+	// trader balance keys. Without this, every OZ tx would carry the
+	// representative src/dst entries plus the actual ones -- a duplicate-key
+	// rejection at submit and a stale-index autorestore signal at apply.
+	repSrcBalanceKey, err := ledger.OZBalanceLedgerKey(contractID, txSourceAccounts[0].Address())
+	if err != nil {
+		return nil, fmt.Errorf("encode OZ rep src balance key: %w", err)
+	}
+	repDstBalanceKey, err := ledger.OZBalanceLedgerKey(contractID, txSourceAccounts[1].Address())
+	if err != nil {
+		return nil, fmt.Errorf("encode OZ rep dst balance key: %w", err)
+	}
 
 	n := len(txSourceAccounts)
 
@@ -120,7 +134,13 @@ func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *sta
 
 		invokeArgs := buildOZTransferInvokeArgs(contractID, srcAccID, dstAccID)
 
-		footprint, err := buildOZFootprintFromTemplate(simTemplate.simulation.Footprint, contractID, srcKP.Address(), dstKP.Address())
+		footprint, dataExt, err := buildOZFootprintFromTemplate(
+			simTemplate.simulation.Footprint,
+			simTemplate.simulation.Ext,
+			contractID,
+			srcKP.Address(), dstKP.Address(),
+			repSrcBalanceKey, repDstBalanceKey,
+		)
 		if err != nil {
 			return fmt.Errorf("build OZ footprint: %w", err)
 		}
@@ -150,6 +170,12 @@ func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *sta
 				WriteBytes:    simTemplate.simulation.Resources.WriteBytes,
 			},
 			ResourceFee: simTemplate.simulation.ResourceFee,
+			// dataExt carries the remapped archivedSorobanEntries. The
+			// representative src/dst balance entries are filtered out before
+			// the new actual ones are appended, so any surviving simulator
+			// indices (e.g. the OZ contract instance when archived) are
+			// translated to their new positions and re-sorted.
+			SorobanDataExt: dataExt,
 		})
 		if err != nil {
 			return err
@@ -209,26 +235,53 @@ func buildOZTransferInvokeArgs(contractID xdr.ContractId, srcAccID, dstAccID xdr
 	}
 }
 
+// buildOZFootprintFromTemplate substitutes the per-request src/dst balance
+// keys for the representative ones the simulator saw. Non-balance template
+// RW entries (e.g. an autorestored OZ contract instance) are kept in place so
+// that protocol-23 autorestore indices still resolve at apply time; their
+// positions in the rewritten RW are tracked and the simulator's
+// archivedSorobanEntries are remapped accordingly.
 func buildOZFootprintFromTemplate(
 	tmpl xdr.LedgerFootprint,
+	tmplExt xdr.SorobanTransactionDataExt,
 	contractID xdr.ContractId,
 	srcAddress, dstAddress string,
-) (xdr.LedgerFootprint, error) {
-	return buildFootprintFromTemplate(
-		tmpl,
-		func() (xdr.LedgerKey, error) {
-			srcKey, err := ledger.OZBalanceLedgerKey(contractID, srcAddress)
-			if err != nil {
-				return xdr.LedgerKey{}, fmt.Errorf("src balance key: %w", err)
-			}
-			return srcKey, nil
-		},
-		func() (xdr.LedgerKey, error) {
-			dstKey, err := ledger.OZBalanceLedgerKey(contractID, dstAddress)
-			if err != nil {
-				return xdr.LedgerKey{}, fmt.Errorf("dst balance key: %w", err)
-			}
-			return dstKey, nil
-		},
-	)
+	repSrcKey, repDstKey xdr.LedgerKey,
+) (xdr.LedgerFootprint, xdr.SorobanTransactionDataExt, error) {
+	srcKey, err := ledger.OZBalanceLedgerKey(contractID, srcAddress)
+	if err != nil {
+		return xdr.LedgerFootprint{}, xdr.SorobanTransactionDataExt{}, fmt.Errorf("src balance key: %w", err)
+	}
+	dstKey, err := ledger.OZBalanceLedgerKey(contractID, dstAddress)
+	if err != nil {
+		return xdr.LedgerFootprint{}, xdr.SorobanTransactionDataExt{}, fmt.Errorf("dst balance key: %w", err)
+	}
+	repSrcBytes, err := repSrcKey.MarshalBinary()
+	if err != nil {
+		return xdr.LedgerFootprint{}, xdr.SorobanTransactionDataExt{}, fmt.Errorf("marshal rep src key: %w", err)
+	}
+	repDstBytes, err := repDstKey.MarshalBinary()
+	if err != nil {
+		return xdr.LedgerFootprint{}, xdr.SorobanTransactionDataExt{}, fmt.Errorf("marshal rep dst key: %w", err)
+	}
+	footprint := xdr.LedgerFootprint{
+		ReadOnly:  append([]xdr.LedgerKey(nil), tmpl.ReadOnly...),
+		ReadWrite: make([]xdr.LedgerKey, 0, len(tmpl.ReadWrite)+2),
+	}
+	indexRemap := make([]int, len(tmpl.ReadWrite))
+	for i, key := range tmpl.ReadWrite {
+		keyBytes, err := key.MarshalBinary()
+		if err != nil {
+			return xdr.LedgerFootprint{}, xdr.SorobanTransactionDataExt{}, fmt.Errorf("marshal RW[%d]: %w", i, err)
+		}
+		if bytes.Equal(keyBytes, repSrcBytes) || bytes.Equal(keyBytes, repDstBytes) {
+			indexRemap[i] = -1
+			continue
+		}
+		indexRemap[i] = len(footprint.ReadWrite)
+		footprint.ReadWrite = append(footprint.ReadWrite, key)
+	}
+	footprint.ReadWrite = append(footprint.ReadWrite, srcKey, dstKey)
+	newExt := remapArchivedSorobanEntries(tmplExt, indexRemap)
+	return footprint, newExt, nil
 }
