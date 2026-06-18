@@ -396,6 +396,13 @@ func timeoutScheduledPollItem(logger *log.Entry, state *attackState, item *sched
 		logger.WithError(err).Debugf("poll failed: hash=%s", item.item.hash)
 	}
 	atomic.AddUint64(&state.ambiguous, 1)
+	// A poll timeout leaves the on-chain outcome genuinely ambiguous: the tx may
+	// have been included (sequence consumed) or evicted (sequence untouched), and
+	// the poller simply could not confirm in time. Neither optimistic assumption
+	// is safe -- rolling the sequence back reuses a consumed number and assuming
+	// consumed skips one -- both yield txBAD_SEQ. Route through ReleaseAmbiguous
+	// so the recovery loop reloads chain truth before the account is reused. The
+	// recovery loop is parallelized (see runRecoveryLoop) so this stays cheap.
 	releaseAmbiguous(accounts, item.item.rpcID)
 }
 

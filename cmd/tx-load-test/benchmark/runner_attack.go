@@ -210,7 +210,15 @@ func processAttackResult(res *vegeta.Result, metrics *vegeta.Metrics, logger *lo
 			ResponseBody:      string(res.Body),
 		})
 	}
-	if !state.handleSendTransactionEnvelope(envelope, res.Timestamp, accounts) {
+	// Use the time the PENDING response was received (hit start + request
+	// latency), NOT res.Timestamp (the vegeta hit start). When the account
+	// pool is contended the targeter blocks in Acquire before the tx is ever
+	// sent, so res.Timestamp can predate the actual submit by tens of seconds.
+	// Anchoring the poll deadline (and e2e latency) to res.Timestamp would
+	// charge that Acquire wait against the poll budget, pre-expiring the
+	// deadline so the tx is abandoned after a single NOT_FOUND poll.
+	respReceivedAt := res.Timestamp.Add(res.Latency)
+	if !state.handleSendTransactionEnvelope(envelope, respReceivedAt, accounts) {
 		atomic.AddUint64(&state.httpErr, 1)
 		logger.Debugf("sendTransaction: unknown status %q", envelope.Result.Status)
 	}

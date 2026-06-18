@@ -122,6 +122,8 @@ func TestPollSchedulerAllowsOneFinalAttemptForAlreadyExpiredItem(t *testing.T) {
 	waitForPollWaitGroup(t, wg)
 
 	require.Equal(t, []string{"expired"}, client.calls())
+	// A poll timeout leaves the sequence state ambiguous, so the account is
+	// released ambiguous (reload chain truth via recovery) rather than reused.
 	require.Equal(t, []int64{33}, leases.ambiguousReleases)
 	_, _, pollErr := state.pollSnapshot()
 	require.Equal(t, uint64(1), pollErr)
