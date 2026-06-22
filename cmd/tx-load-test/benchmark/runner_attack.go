@@ -38,6 +38,12 @@ type pollItem struct {
 	rpcID              int64
 	submittedAt        time.Time
 	submitLatestLedger uint32
+	// submitLatestLedgerCloseTime is the unix-seconds close time of the
+	// latest ledger known to the RPC at the moment sendTransaction returned
+	// PENDING. The poll scheduler uses this to predict the next viable poll
+	// moment (close + indexing window) so the first attempt isn't wasted on
+	// the inter-close interval.
+	submitLatestLedgerCloseTime int64
 }
 
 type attackState struct {
@@ -99,10 +105,11 @@ func (s *attackState) handleSendTransactionEnvelope(envelope sendRespEnvelope, s
 	switch envelope.Result.Status {
 	case "PENDING", "DUPLICATE":
 		s.hashes <- pollItem{
-			hash:               envelope.Result.Hash,
-			rpcID:              envelope.ID,
-			submittedAt:        submittedAt,
-			submitLatestLedger: envelope.Result.LatestLedger,
+			hash:                        envelope.Result.Hash,
+			rpcID:                       envelope.ID,
+			submittedAt:                 submittedAt,
+			submitLatestLedger:          envelope.Result.LatestLedger,
+			submitLatestLedgerCloseTime: envelope.Result.LatestLedgerCloseTime,
 		}
 		atomic.AddUint64(&s.queued, 1)
 		return true

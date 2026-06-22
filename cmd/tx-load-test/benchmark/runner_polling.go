@@ -37,6 +37,27 @@ const (
 	pollMaxBackoff     = 3500 * time.Millisecond
 )
 
+const (
+	// estimatedLedgerCloseInterval is the assumed wall-clock interval between
+	// ledger closes. Used to predict when the next close after a submit will
+	// happen so the first poll attempt lands inside the index window rather
+	// than racing it. Mirrors state.BenchmarkLedgerCloseSeconds; not imported
+	// to keep this package self-contained, but the two must agree.
+	estimatedLedgerCloseInterval = 5 * time.Second
+	// estimatedRPCIndexingLag is the typical delay between a ledger closing on
+	// core and stellar-rpc surfacing a getTransaction result for txs in that
+	// ledger. Tuned for a stellar-rpc running on the same host as the bench
+	// (low millisecond network overhead); raise for shared/remote RPC nodes
+	// where indexing typically settles around 1.5 s.
+	estimatedRPCIndexingLag = 1 * time.Second
+	// minFirstPollDelay is the floor for the first poll attempt when we lack
+	// a useful close-time prediction (legacy poll items, oddly-shaped PENDING
+	// responses, or a submit that landed just before a close). Without this
+	// floor we'd issue the first poll within milliseconds of submit and waste
+	// a guaranteed-NOT_FOUND RPC round trip while the ledger hasn't closed.
+	minFirstPollDelay = 2 * time.Second
+)
+
 type pollTransactionResult struct {
 	response                 protocol.GetTransactionResponse
 	lastObservedLatestLedger uint32
@@ -49,6 +70,10 @@ type pollSchedulerOptions struct {
 	attemptTimeout time.Duration
 	initialBackoff time.Duration
 	maxBackoff     time.Duration
+	// firstPollDelay is the floor for the first poll attempt when no
+	// LatestLedgerCloseTime hint is available. Production uses
+	// minFirstPollDelay; tests can leave it zero for immediate-poll behavior.
+	firstPollDelay time.Duration
 	jitter         bool
 }
 
@@ -60,6 +85,7 @@ func defaultPollSchedulerOptions(maxConcurrency int) pollSchedulerOptions {
 		attemptTimeout: pollAttemptTimeout,
 		initialBackoff: pollInitialBackoff,
 		maxBackoff:     pollMaxBackoff,
+		firstPollDelay: minFirstPollDelay,
 		jitter:         true,
 	}.normalized()
 }
@@ -82,6 +108,9 @@ func (o pollSchedulerOptions) normalized() pollSchedulerOptions {
 	}
 	if o.maxBackoff < o.initialBackoff {
 		o.maxBackoff = o.initialBackoff
+	}
+	if o.firstPollDelay < 0 {
+		o.firstPollDelay = 0
 	}
 	return o
 }
@@ -183,7 +212,7 @@ func runPollScheduler(ctx context.Context, logger *log.Entry, client transaction
 				hashes = nil
 				continue
 			}
-			scheduled := newScheduledPollItem(item, submitIndex, time.Now(), options.timeout)
+			scheduled := newScheduledPollItem(item, submitIndex, time.Now(), options)
 			submitIndex++
 			if ctxCanceled {
 				timeoutScheduledPollItem(logger, state, scheduled, accounts, ctx.Err())
@@ -204,16 +233,39 @@ func runPollScheduler(ctx context.Context, logger *log.Entry, client transaction
 	}
 }
 
-func newScheduledPollItem(item pollItem, submitIndex uint64, now time.Time, timeout time.Duration) *scheduledPollItem {
+func newScheduledPollItem(item pollItem, submitIndex uint64, now time.Time, options pollSchedulerOptions) *scheduledPollItem {
 	if item.submittedAt.IsZero() {
 		item.submittedAt = now
 	}
 	return &scheduledPollItem{
 		item:         item,
 		submitIndex:  submitIndex,
-		nextPollAt:   now,
-		pollDeadline: item.submittedAt.Add(timeout),
+		nextPollAt:   firstPollAt(item, now, options.firstPollDelay),
+		pollDeadline: item.submittedAt.Add(options.timeout),
 	}
+}
+
+// firstPollAt returns when the first poll attempt for item should fire. It
+// targets the moment the next ledger close + RPC indexing window opens --
+// the earliest wall-clock instant getTransaction can return a terminal
+// status. The submitLatestLedgerCloseTime hint from sendTransaction tells us
+// when the previous close happened; the next close is one
+// estimatedLedgerCloseInterval later, plus an estimatedRPCIndexingLag
+// cushion. When that prediction is in the past (submit landed just before
+// the next close fired, or no hint was provided) we fall back to a floor of
+// now + minDelay so we still skip the guaranteed-NOT_FOUND polls.
+func firstPollAt(item pollItem, now time.Time, minDelay time.Duration) time.Time {
+	floor := now.Add(minDelay)
+	if item.submitLatestLedgerCloseTime <= 0 {
+		return floor
+	}
+	predicted := time.Unix(item.submitLatestLedgerCloseTime, 0).
+		Add(estimatedLedgerCloseInterval).
+		Add(estimatedRPCIndexingLag)
+	if predicted.Before(floor) {
+		return floor
+	}
+	return predicted
 }
 
 func dispatchDuePollBatches(ctx context.Context, logger *log.Entry, client transactionPollClient, queue *pollScheduleHeap, results chan<- pollBatchResult, inFlight *int, state *attackState, accounts accountLeaseManager, workload string, recorder *benchmarkTraceRecorder, options pollSchedulerOptions) bool {
@@ -356,13 +408,15 @@ func requeueOrTimeoutPollItem(now time.Time, logger *log.Entry, state *attackSta
 }
 
 func pollBackoff(item *scheduledPollItem, options pollSchedulerOptions) time.Duration {
-	backoff := options.initialBackoff
-	for range max(item.attempt-1, 0) {
-		backoff *= 2
-		if backoff >= options.maxBackoff {
-			backoff = options.maxBackoff
-			break
-		}
+	// Linear arithmetic-step backoff: attempt N waits N * initialBackoff,
+	// capped at maxBackoff. With the prediction-based first poll already
+	// landing inside the ledger close + index window, exponential growth is
+	// unnecessary -- a linear step lets subsequent attempts spread out
+	// gradually as the tx ages without slipping a full ledger close behind.
+	attempts := max(item.attempt, 1)
+	backoff := time.Duration(attempts) * options.initialBackoff
+	if backoff > options.maxBackoff {
+		backoff = options.maxBackoff
 	}
 	if !options.jitter || backoff <= 0 {
 		return backoff

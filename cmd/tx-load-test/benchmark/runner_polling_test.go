@@ -131,6 +131,108 @@ func TestPollSchedulerAllowsOneFinalAttemptForAlreadyExpiredItem(t *testing.T) {
 	require.Equal(t, []uint32{5}, snapshot.timeoutDistances)
 }
 
+func TestFirstPollAtPredictsNextCloseAndIndexWindow(t *testing.T) {
+	// Submit at wall-clock t=10s; RPC reports last close was at t=8s (2s ago).
+	// Next close expected at t=8+5=13s; indexed ~t=14s after the 1s lag.
+	// First poll should fire at exactly t=14s -- a delay of 4s from submit.
+	now := time.Unix(10, 0)
+	item := pollItem{submittedAt: now, submitLatestLedgerCloseTime: 8}
+	got := firstPollAt(item, now, minFirstPollDelay)
+	want := time.Unix(8, 0).Add(estimatedLedgerCloseInterval).Add(estimatedRPCIndexingLag)
+	require.Equal(t, want, got)
+	require.Equal(t, 4*time.Second, got.Sub(now))
+}
+
+func TestFirstPollAtFloorsWhenPredictionIsInPast(t *testing.T) {
+	// Submit at t=20s, last close was at t=10s (10s ago). The predicted
+	// next-close moment (t=15s) is already past; fall back to the floor.
+	now := time.Unix(20, 0)
+	item := pollItem{submittedAt: now, submitLatestLedgerCloseTime: 10}
+	got := firstPollAt(item, now, minFirstPollDelay)
+	require.Equal(t, now.Add(minFirstPollDelay), got)
+}
+
+func TestFirstPollAtFloorsWhenCloseTimeMissing(t *testing.T) {
+	now := time.Unix(100, 0)
+	got := firstPollAt(pollItem{submittedAt: now}, now, minFirstPollDelay)
+	require.Equal(t, now.Add(minFirstPollDelay), got)
+}
+
+func TestFirstPollAtImmediateWhenFloorIsZero(t *testing.T) {
+	// Tests pass firstPollDelay=0 to keep their immediate-poll semantics.
+	// Without a close-time hint, the result is exactly now.
+	now := time.Unix(100, 0)
+	got := firstPollAt(pollItem{submittedAt: now}, now, 0)
+	require.Equal(t, now, got)
+}
+
+func TestPollBackoffIsLinearArithmeticStepCappedAtMax(t *testing.T) {
+	opts := pollSchedulerOptions{
+		initialBackoff: 500 * time.Millisecond,
+		maxBackoff:     3500 * time.Millisecond,
+		jitter:         false,
+	}.normalized()
+	cases := []struct {
+		attempt int
+		want    time.Duration
+	}{
+		{1, 500 * time.Millisecond},
+		{2, 1000 * time.Millisecond},
+		{3, 1500 * time.Millisecond},
+		{4, 2000 * time.Millisecond},
+		{5, 2500 * time.Millisecond},
+		{6, 3000 * time.Millisecond},
+		{7, 3500 * time.Millisecond},
+		{8, 3500 * time.Millisecond},  // capped
+		{20, 3500 * time.Millisecond}, // capped
+	}
+	for _, c := range cases {
+		got := pollBackoff(&scheduledPollItem{attempt: c.attempt}, opts)
+		require.Equal(t, c.want, got, "attempt %d", c.attempt)
+	}
+}
+
+func TestPollBackoffJitterStaysWithinTenPercentWindow(t *testing.T) {
+	// At cap (3500ms), jitter window = 350ms but capped at 250ms (per code).
+	opts := pollSchedulerOptions{
+		initialBackoff: 500 * time.Millisecond,
+		maxBackoff:     3500 * time.Millisecond,
+		jitter:         true,
+	}.normalized()
+	// Run several distinct (submitIndex, attempt) combos to exercise the
+	// jitter seed and confirm bounds.
+	for _, attempt := range []int{1, 3, 7, 10} {
+		base := time.Duration(min(attempt, 7)) * 500 * time.Millisecond
+		jitterCap := min(base/10, 250*time.Millisecond)
+		for idx := uint64(0); idx < 20; idx++ {
+			got := pollBackoff(&scheduledPollItem{submitIndex: idx, attempt: attempt}, opts)
+			require.GreaterOrEqual(t, got, base-jitterCap, "attempt=%d idx=%d", attempt, idx)
+			require.LessOrEqual(t, got, base+jitterCap, "attempt=%d idx=%d", attempt, idx)
+			require.LessOrEqual(t, got, opts.maxBackoff)
+		}
+	}
+}
+
+func TestNewScheduledPollItemAppliesPredictedFirstPoll(t *testing.T) {
+	// End-to-end: a poll item carrying a close-time hint should schedule its
+	// first poll at the predicted close+index window, not at "now". This is
+	// the production-path assertion that the prediction is wired through.
+	now := time.Unix(1000, 0)
+	item := pollItem{
+		hash:                        "abc",
+		submittedAt:                 now,
+		submitLatestLedgerCloseTime: 998,
+	}
+	opts := pollSchedulerOptions{
+		timeout:        25 * time.Second,
+		firstPollDelay: minFirstPollDelay,
+	}.normalized()
+	scheduled := newScheduledPollItem(item, 0, now, opts)
+	wantFirstPoll := time.Unix(998, 0).Add(estimatedLedgerCloseInterval).Add(estimatedRPCIndexingLag)
+	require.Equal(t, wantFirstPoll, scheduled.nextPollAt)
+	require.Equal(t, now.Add(25*time.Second), scheduled.pollDeadline)
+}
+
 func waitForPollWaitGroup(t *testing.T, wg *sync.WaitGroup) {
 	t.Helper()
 	done := make(chan struct{})
