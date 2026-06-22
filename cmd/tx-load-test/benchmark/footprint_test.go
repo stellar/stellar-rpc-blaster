@@ -436,6 +436,112 @@ func TestBuildOZFootprintFromTemplateRemapsArchivedSorobanEntries(t *testing.T) 
 	require.Equal(t, []xdr.Uint32{0}, ext.ResourceExt.ArchivedSorobanEntries)
 }
 
+// TestBuildOZFootprintFromTemplateInheritsArchivedBalanceMarkers is the
+// regression for the real OZ self-heal bug: the substituted entries (the
+// per-account balances) ARE the archived ones, and their autorestore markers
+// must transfer onto the appended actual src/dst balances. The prior remap
+// dropped them, so apply read an archived balance not in archivedSorobanEntries
+// and failed with invokeHostFunctionEntryArchived.
+func TestBuildOZFootprintFromTemplateInheritsArchivedBalanceMarkers(t *testing.T) {
+	repSrc, err := keypair.Random()
+	require.NoError(t, err)
+	repDst, err := keypair.Random()
+	require.NoError(t, err)
+	actualSrc, err := keypair.Random()
+	require.NoError(t, err)
+	actualDst, err := keypair.Random()
+	require.NoError(t, err)
+	contractID := xdr.ContractId{1}
+
+	repSrcKey := mustBalanceKey(t, contractID, repSrc.Address())
+	repDstKey := mustBalanceKey(t, contractID, repDst.Address())
+	contractInstanceKey := xdr.LedgerKey{
+		Type: xdr.LedgerEntryTypeContractData,
+		ContractData: &xdr.LedgerKeyContractData{
+			Contract: xdr.ScAddress{
+				Type:       xdr.ScAddressTypeScAddressTypeContract,
+				ContractId: &xdr.ContractId{42},
+			},
+			Key:        xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance},
+			Durability: xdr.ContractDataDurabilityPersistent,
+		},
+	}
+	// Template RW: [rep src bal, rep dst bal, instance]. The idle-state reality:
+	// ALL THREE are archived.
+	tmpl := xdr.LedgerFootprint{
+		ReadWrite: []xdr.LedgerKey{repSrcKey, repDstKey, contractInstanceKey},
+	}
+	tmplExt := xdr.SorobanTransactionDataExt{
+		V: 1,
+		ResourceExt: &xdr.SorobanResourcesExtV0{
+			ArchivedSorobanEntries: []xdr.Uint32{0, 1, 2},
+		},
+	}
+
+	footprint, ext, err := buildOZFootprintFromTemplate(
+		tmpl, tmplExt, contractID,
+		actualSrc.Address(), actualDst.Address(), repSrcKey, repDstKey,
+	)
+	require.NoError(t, err)
+
+	// Rewritten RW: [instance, actual src bal, actual dst bal] at indices 0,1,2.
+	expectedSrcKey := mustBalanceKey(t, contractID, actualSrc.Address())
+	expectedDstKey := mustBalanceKey(t, contractID, actualDst.Address())
+	require.Equal(t, []xdr.LedgerKey{contractInstanceKey, expectedSrcKey, expectedDstKey}, footprint.ReadWrite)
+	// All three must be marked archived: instance (kept→0), actual src (1,
+	// inherited from rep src), actual dst (2, inherited from rep dst).
+	require.Equal(t, int32(1), int32(ext.V))
+	require.NotNil(t, ext.ResourceExt)
+	require.Equal(t, []xdr.Uint32{0, 1, 2}, ext.ResourceExt.ArchivedSorobanEntries)
+}
+
+// TestBuildOZFootprintFromTemplateInheritsOnlyArchivedBalances confirms the
+// inheritance is selective: when only the balances archived (not the instance),
+// only the appended balance indices are marked.
+func TestBuildOZFootprintFromTemplateInheritsOnlyArchivedBalances(t *testing.T) {
+	repSrc, err := keypair.Random()
+	require.NoError(t, err)
+	repDst, err := keypair.Random()
+	require.NoError(t, err)
+	actualSrc, err := keypair.Random()
+	require.NoError(t, err)
+	actualDst, err := keypair.Random()
+	require.NoError(t, err)
+	contractID := xdr.ContractId{1}
+
+	repSrcKey := mustBalanceKey(t, contractID, repSrc.Address())
+	repDstKey := mustBalanceKey(t, contractID, repDst.Address())
+	contractInstanceKey := xdr.LedgerKey{
+		Type: xdr.LedgerEntryTypeContractData,
+		ContractData: &xdr.LedgerKeyContractData{
+			Contract:   xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &xdr.ContractId{42}},
+			Key:        xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance},
+			Durability: xdr.ContractDataDurabilityPersistent,
+		},
+	}
+	tmpl := xdr.LedgerFootprint{
+		ReadWrite: []xdr.LedgerKey{repSrcKey, repDstKey, contractInstanceKey},
+	}
+	// Only the balances (indices 0,1) are archived; the instance (2) is live.
+	tmplExt := xdr.SorobanTransactionDataExt{
+		V: 1,
+		ResourceExt: &xdr.SorobanResourcesExtV0{
+			ArchivedSorobanEntries: []xdr.Uint32{0, 1},
+		},
+	}
+
+	_, ext, err := buildOZFootprintFromTemplate(
+		tmpl, tmplExt, contractID,
+		actualSrc.Address(), actualDst.Address(), repSrcKey, repDstKey,
+	)
+	require.NoError(t, err)
+	// Rewritten RW: [instance(0), actual src(1), actual dst(2)]. Instance not
+	// archived; the two appended balances are.
+	require.Equal(t, int32(1), int32(ext.V))
+	require.NotNil(t, ext.ResourceExt)
+	require.Equal(t, []xdr.Uint32{1, 2}, ext.ResourceExt.ArchivedSorobanEntries)
+}
+
 func TestBuildSoroswapFootprintAddsTraderTrustlines(t *testing.T) {
 	oldTrader, err := keypair.Random()
 	require.NoError(t, err)

@@ -393,17 +393,23 @@ func remapArchivedSorobanEntries(ext xdr.SorobanTransactionDataExt, indexRemap [
 		}
 		remapped = append(remapped, xdr.Uint32(newIdx))
 	}
-	if len(remapped) == 0 {
+	return buildArchivedSorobanExt(remapped)
+}
+
+// buildArchivedSorobanExt assembles a SorobanTransactionDataExt from a set of
+// read-write footprint indices that core must auto-restore. It sorts and
+// dedups (core requires ascending, unique indices) and downgrades to V0 when
+// the set is empty. Distinct source indices can collapse to the same new index
+// if a rewrite merges entries, hence the dedup.
+func buildArchivedSorobanExt(indices []xdr.Uint32) xdr.SorobanTransactionDataExt {
+	if len(indices) == 0 {
 		return xdr.SorobanTransactionDataExt{V: 0}
 	}
-	slices.Sort(remapped)
-	// Deduplicate post-sort. Distinct old indices can collapse to the same
-	// new index if two simulator-side entries got merged by the rewrite (not
-	// expected for SAC, but defensive against future rewrite shapes).
-	remapped = slices.Compact(remapped)
+	slices.Sort(indices)
+	indices = slices.Compact(indices)
 	return xdr.SorobanTransactionDataExt{
 		V:           1,
-		ResourceExt: &xdr.SorobanResourcesExtV0{ArchivedSorobanEntries: remapped},
+		ResourceExt: &xdr.SorobanResourcesExtV0{ArchivedSorobanEntries: indices},
 	}
 }
 

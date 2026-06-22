@@ -237,10 +237,23 @@ func buildOZTransferInvokeArgs(contractID xdr.ContractId, srcAccID, dstAccID xdr
 
 // buildOZFootprintFromTemplate substitutes the per-request src/dst balance
 // keys for the representative ones the simulator saw. Non-balance template
-// RW entries (e.g. an autorestored OZ contract instance) are kept in place so
-// that protocol-23 autorestore indices still resolve at apply time; their
-// positions in the rewritten RW are tracked and the simulator's
-// archivedSorobanEntries are remapped accordingly.
+// RW entries (e.g. the OZ contract instance) are kept in place; the actual
+// src/dst balance entries are appended.
+//
+// Autorestore correctness hinges on a subtlety unique to OZ: unlike SAC and
+// soroswap -- whose substituted entries are classic trustlines that never
+// archive -- OZ's substituted entries ARE the per-account balance contract-data
+// entries, which DO archive. So when the simulator marks the representative
+// src/dst balances as archived, that marker must be INHERITED by the appended
+// actual src/dst balances; otherwise apply reads an archived balance that isn't
+// in archivedSorobanEntries and fails with invokeHostFunctionEntryArchived.
+// Kept entries (the instance) remap their indices as usual.
+//
+// This inherits the rep balances' archival state onto whichever accounts this
+// request happens to use. That is exact when balances age uniformly (all minted
+// together at setup, identical TTL) -- the same uniformity the template approach
+// already assumes. A per-request simulation would be exact in all cases but
+// defeats the template optimization.
 func buildOZFootprintFromTemplate(
 	tmpl xdr.LedgerFootprint,
 	tmplExt xdr.SorobanTransactionDataExt,
@@ -264,24 +277,61 @@ func buildOZFootprintFromTemplate(
 	if err != nil {
 		return xdr.LedgerFootprint{}, xdr.SorobanTransactionDataExt{}, fmt.Errorf("marshal rep dst key: %w", err)
 	}
+
+	archivedTemplate := archivedTemplateIndexSet(tmplExt)
 	footprint := xdr.LedgerFootprint{
 		ReadOnly:  append([]xdr.LedgerKey(nil), tmpl.ReadOnly...),
 		ReadWrite: make([]xdr.LedgerKey, 0, len(tmpl.ReadWrite)+2),
 	}
-	indexRemap := make([]int, len(tmpl.ReadWrite))
+	var archived []xdr.Uint32
+	repSrcArchived, repDstArchived := false, false
 	for i, key := range tmpl.ReadWrite {
 		keyBytes, err := key.MarshalBinary()
 		if err != nil {
 			return xdr.LedgerFootprint{}, xdr.SorobanTransactionDataExt{}, fmt.Errorf("marshal RW[%d]: %w", i, err)
 		}
-		if bytes.Equal(keyBytes, repSrcBytes) || bytes.Equal(keyBytes, repDstBytes) {
-			indexRemap[i] = -1
+		// The rep src/dst balances are dropped here and re-appended below as the
+		// actual accounts' keys; their archival state is carried onto the
+		// appended entries rather than the (now-absent) template positions.
+		if bytes.Equal(keyBytes, repSrcBytes) {
+			repSrcArchived = repSrcArchived || archivedTemplate[i]
 			continue
 		}
-		indexRemap[i] = len(footprint.ReadWrite)
+		if bytes.Equal(keyBytes, repDstBytes) {
+			repDstArchived = repDstArchived || archivedTemplate[i]
+			continue
+		}
+		newIdx := len(footprint.ReadWrite)
 		footprint.ReadWrite = append(footprint.ReadWrite, key)
+		if archivedTemplate[i] {
+			archived = append(archived, xdr.Uint32(newIdx))
+		}
 	}
-	footprint.ReadWrite = append(footprint.ReadWrite, srcKey, dstKey)
-	newExt := remapArchivedSorobanEntries(tmplExt, indexRemap)
-	return footprint, newExt, nil
+
+	srcIdx := len(footprint.ReadWrite)
+	footprint.ReadWrite = append(footprint.ReadWrite, srcKey)
+	if repSrcArchived {
+		archived = append(archived, xdr.Uint32(srcIdx))
+	}
+	dstIdx := len(footprint.ReadWrite)
+	footprint.ReadWrite = append(footprint.ReadWrite, dstKey)
+	if repDstArchived {
+		archived = append(archived, xdr.Uint32(dstIdx))
+	}
+
+	return footprint, buildArchivedSorobanExt(archived), nil
+}
+
+// archivedTemplateIndexSet returns the set of read-write footprint indices the
+// simulator marked for auto-restoration, for O(1) membership tests during a
+// footprint rewrite.
+func archivedTemplateIndexSet(ext xdr.SorobanTransactionDataExt) map[int]bool {
+	if ext.V != 1 || ext.ResourceExt == nil {
+		return nil
+	}
+	set := make(map[int]bool, len(ext.ResourceExt.ArchivedSorobanEntries))
+	for _, idx := range ext.ResourceExt.ArchivedSorobanEntries {
+		set[int(idx)] = true
+	}
+	return set
 }
