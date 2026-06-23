@@ -8,17 +8,21 @@ Treat this as a design brief plus acceptance criteria.
 
 Build a standalone Stellar Soroban RPC load-testing CLI named `tx-load-test` under `cmd/tx-load-test`.
 
-The tool must support four commands:
+The tool must support five commands:
 
 1. `setup`
-2. `bench`
-3. `teardown`
-4. `sync`
+2. `restore`
+3. `bench`
+4. `teardown`
+5. `sync`
 
-The tool must implement a three-phase lifecycle driven by a JSON state file:
+The tool must implement a state-file-driven lifecycle. `restore` is an
+optional pre-benchmark maintenance step that re-hydrates archived Soroban
+state; `bench` is repeatable; cleanup and reconciliation are explicit.
 
 ```text
-setup  -->  state.json  -->  bench  (repeatable)
+setup  -->  state.json  -->  restore  (optional, pre-benchmark maintenance)
+											 -->  bench     (repeatable)
 											 -->  teardown
 											 -->  sync
 ```
@@ -37,7 +41,7 @@ The reimplementation must preserve these behaviors.
 ### 2.1 CLI shape
 
 - Use `cobra` for the command tree.
-- Provide a root command `tx-load-test` with subcommands `setup`, `bench`, `teardown`, and `sync`.
+- Provide a root command `tx-load-test` with subcommands `setup`, `restore`, `bench`, `teardown`, and `sync`.
 - Root command should print usage when invoked without a subcommand.
 - Build target must remain:
 
@@ -147,7 +151,40 @@ Operational details worth preserving:
 - Soroswap core auto-bootstrap should only be allowed on standalone and futurenet
 - deterministic Soroswap factory/router contract IDs should be derived from stable salts plus fee payer address and network passphrase
 
-### 3.2 `bench`
+### 3.2 `restore`
+
+`restore` is an optional pre-benchmark maintenance command. State files that
+sit idle between tests accumulate archived Soroban state (especially
+`oz-transfer` per-account balances and `soroswap`/account contract data),
+which makes the first benchmark hits fail or pay extra. `restore` probes the
+benchmark-shaped invocations and re-hydrates what it can before a real run.
+
+Flags:
+
+- `--mode`, default `all`; one of `all`, `sac-transfer`, `oz-transfer`, `soroswap`
+- `--dry-run`, default `false`; simulate and report what would need restore, submit nothing
+- `--verify`, default `false`; after restoring, re-run the probes and fail if any still require restore
+- `--account-start`, default `0`; 0-based offset into the selected participant list
+- `--account-limit`, default `0`; max selected accounts per applicable mode (`0` = all)
+- `--progress-interval`, default `100`; log progress every N probes (negative disables)
+- `--rpc-url`, optional override from state
+- `--skip-account-preflight` / `--account-preflight-sample` (default `10`), same semantics as `bench`
+- `--state-file`, default `state.json`
+- `--log-level`, default `info`
+
+Behavior to preserve:
+
+- requires `FEE_PAYER`; validates network passphrase like the other state-consuming commands
+- uses **simulation only** to probe; it does not submit the benchmark transfer/swap invocations
+- per-mode probe scope:
+	- `sac-transfer`: probes the three shared SAC contract instances (participant balances are classic trustlines, not archivable Soroban state)
+	- `oz-transfer`: one probe per selected account so each account's OZ `Balance` contract-data entry is touched
+	- `soroswap`: probes selected holders across both benchmark pools in both swap directions (covers shared router/pair/pool state plus per-account trader data)
+- **legacy restoration**: when simulation returns a `RestorePreamble`, submit a `RestoreFootprint` transaction (unless `--dry-run`) and retry, bounded by a small attempt cap
+- **autorestore awareness** (protocol 23+): when simulation omits a `RestorePreamble` but reports archived read-write entries via `SorobanResourcesExtV0.archivedSorobanEntries`, surface those as `autoRestoreProbes`/`autoRestoreKeys` in the summary but submit no separate transaction — these entries are restored inline by the benchmark's own invocations at apply time (see §7.4). `--verify` must therefore exclude autorestore-only probes when deciding whether restoration is still outstanding, or it will never converge.
+- emit a per-mode summary: probes run, restore-needed probes, restore transactions submitted, autorestore probes/keys, no-op probes, restored read-only/read-write key counts, selected account range/count, elapsed time, and the first few errors. `--dry-run` summaries use "would restore" wording.
+
+### 3.3 `bench`
 
 Flags:
 
@@ -158,6 +195,7 @@ Flags:
 - `--ramp-up`, default `20s`
 - `--rpc-url`, optional override from state
 - `--trace-file`, optional NDJSON submit/poll trace output
+- `--metrics-file`, optional; defaults to a timestamped, mode-named NDJSON file under `metrics/`
 - `--skip-account-preflight`, optional; disables the sampled on-chain participant existence preflight
 - `--account-preflight-sample`, default `10`
 - `--state-file`, default `state.json`
@@ -180,9 +218,12 @@ Benchmark engine expectations:
 - use Vegeta-style attack generation with ramp-up pacing
 - submit traffic through the RPC endpoint using the RPC `sendTransaction` method
 - wrap benchmark submissions in fee-bump envelopes paid by the fee payer while preserving the inner workload transaction semantics
-- maintain a separate poll/drain stage to observe inclusion results
+- sample a per-op inclusion fee per transaction rather than using one fixed value (see §7.2) and raise that floor for resource-heavy transactions
+- thread the simulator's autorestore extension through to each submitted transaction (see §7.4)
+- maintain a separate poll/drain stage to observe inclusion results, scheduled so polling never blocks per transaction (see §7.2)
 - report submission counters, acceptance failures, ambiguous submission outcomes, on-chain inclusion/failure counts, Vegeta metrics, latency percentiles, byte counts, and HTTP code distribution
 - preserve submit-time and on-chain failure summaries, including result-code breakdowns, operation-result breakdowns, and normalized diagnostic summaries when available
+- write a flattened NDJSON metrics file as a first-class output (see §7.5)
 
 Validation rules:
 
@@ -194,7 +235,7 @@ Validation rules:
 - account pool must be large enough for both the Soroban stream and the classic companion stream for the requested duration and rate
 - `sac-transfer` requires valid SAC holder subsets and trustlines in state
 
-### 3.3 `teardown`
+### 3.4 `teardown`
 
 Behavior:
 
@@ -212,7 +253,7 @@ Teardown mechanics to preserve:
 	- remove trustlines then account-merge
 - batching is conservative to avoid signature and operation limits
 
-### 3.4 `sync`
+### 3.5 `sync`
 
 Behavior:
 
@@ -260,6 +301,7 @@ Under `cmd/tx-load-test/`:
 - `main.go`: execute root command
 - `root_cmd.go`: build Cobra root command
 - `setup_cmd.go`
+- `restore_cmd.go`
 - `bench_cmd.go`
 - `teardown_cmd.go`
 - `sync_cmd.go`
@@ -308,13 +350,18 @@ Responsibilities:
 - benchmark config validation
 - source-account sizing math for the Soroban stream and the optional classic companion stream
 - shared source-account lease management for benchmark traffic, including unique request IDs, sequence assignment, and release semantics for retryable, consumed, and ambiguous outcomes
+- a parallel pool of recovery workers that re-load on-chain sequence state for poisoned/ambiguous accounts before reuse (see §7.1)
 - benchmark runners and attack orchestration
-- mode-specific payload generation
-- shared transaction building
+- a poll scheduler that batches `getTransaction`, requeues non-terminal results, and never blocks per transaction (see §7.2)
+- mode-specific payload generation, including per-mode footprint rewrite and autorestore-index remapping (see §7.4)
+- shared transaction building, including the autorestore extension and per-tx fee sampling
+- flattened NDJSON metrics reporting (see §7.5)
+- the `restore` maintenance logic (probing + legacy restore submission + autorestore accounting)
 
-Important design choice to preserve:
+Important design choices to preserve:
 
 - one shared Soroban transaction builder for all Soroban modes rather than ad hoc request construction in each mode
+- `restore` lives alongside the benchmark code because it reuses the same mode payloads and simulation helpers as a probe; it differs only in submitting `RestoreFootprint` (or nothing) instead of the workload invocation
 
 ### 5.5 `soroban`
 
@@ -322,13 +369,14 @@ Use this as the shared low-level Soroban helper package.
 
 Responsibilities:
 
-- simulation helpers
+- simulation helpers, including capturing the simulator's `SorobanTransactionData.Ext` (autorestore extension) alongside resources and footprint
 - footprint manipulation and substitution
 - SCVal/address/encoding helpers
 
 Important design choice:
 
 - simulation and footprint substitution belong in shared helpers, not duplicated in each benchmark mode
+- the simulation result must carry the autorestore extension, not just resources/footprint, or every consumer silently drops it
 
 ### 5.6 `soroswap`
 
@@ -348,7 +396,7 @@ Responsibilities:
 - account derivation from fee payer seed + indices
 - shared submission helpers
 - result polling and transaction outcome decoding
-- benchmark account-count math helpers used by validation
+- benchmark account-count math helpers used by validation, including the source-account reuse-gap and run-budget sizing constants
 
 ### 5.8 `ledger`
 
@@ -398,7 +446,9 @@ This is essential. Recreate both the sizing math and the runtime account-coordin
 - use a shared source-account lease manager at runtime rather than static per-workload partitions
 - preserve capability-aware leasing so workloads that need trustlined-capable sources can require them while other workloads can draw from the broader pool
 - preserve explicit lease release semantics for retryable, consumed, and ambiguous outcomes so local sequence state is not blindly rewound
-- preserve background recovery of ambiguous or poisoned accounts by reloading on-chain sequence state before reuse
+- preserve background recovery of ambiguous or poisoned accounts by reloading on-chain sequence state before reuse. Recovery MUST be parallel (a pool of recovery workers), not a single serialized loop: under load, a single worker blocked on one slow sequence reload lets poisoned accounts accumulate faster than they drain, collapsing the available pool and stalling the whole benchmark.
+- size the pool from a source-account reuse gap (a small number of ledgers a given account should rest between submissions) and a per-run reuse budget, so the pool is large enough to avoid sequence contention at the requested rate and duration
+- load initial on-chain sequence numbers in batches via `getLedgerEntries` (many keys per request, bounded concurrency) rather than one account lookup at a time, so cold start and recovery scale to thousands of accounts
 
 ### 7.2 Transaction submission and polling
 
@@ -411,12 +461,86 @@ This is essential. Recreate both the sizing math and the runtime account-coordin
 - retain distinct visibility into ambiguous submission outcomes versus confirmed retryable or terminal failures
 - surface result-code, op-result, and diagnostic summaries at both submit time and final on-chain outcome time
 
+Fee handling (correctness, not tuning):
+
+- sample a per-op inclusion fee per transaction from a range rather than using one fixed value. Stellar core's surge-pricing comparison requires a strictly greater per-op fee to displace a queued transaction; identical bids tie and all but the first are rejected `txINSUFFICIENT_FEE`. Per-tx sampling makes ties statistically negligible.
+- raise that inclusion-fee floor for resource-heavy transactions (e.g. autorestore-inflated resource fees), so the fee-bump's total fee clears the floor instead of underbidding it.
+
+Polling model (preserve the shape, not the constants):
+
+- do not block a worker per outstanding transaction. Use a scheduler (e.g. a time-ordered queue) that holds pending hashes and dispatches due polls, so a backlog never starves new work.
+- batch `getTransaction` lookups and requeue non-terminal results with backoff rather than busy-waiting; only declare a per-transaction timeout when an overall deadline is exceeded.
+- defer the first poll for a submitted transaction until the next ledger after submission can plausibly have closed and been indexed; polling immediately on submit wastes a guaranteed not-found round trip. The submission response's latest-ledger close time is enough to predict this.
+- a poll timeout leaves the on-chain outcome genuinely ambiguous (the tx may have been included or evicted); release such accounts as ambiguous and route them through recovery rather than optimistically rewinding or advancing the sequence.
+
 ### 7.3 Soroswap mode behavior
 
 - benchmark pools should exist for BLTA/BLTB and BLTB/BLTC style paths
 - swaps should use the router contract
 - setup should ensure the router points at the chosen factory
 - setup should ensure factory/router are initialized correctly when auto-bootstrapped
+
+### 7.4 Soroban state archival and autorestore
+
+This is a correctness requirement, not an optimization. On protocol 23+,
+contract-data entries that go unused archive over time. Idle state files hit
+this constantly: an `oz-transfer` account's `Balance` entry, a `soroswap`
+pool/trader entry, or a contract instance can all be archived by the time a
+benchmark runs. Getting this wrong manifests as `invokeHostFunctionEntryArchived`
+at apply time, even though simulation succeeded.
+
+Preserve the full chain:
+
+- **Capture**: when simulating a benchmark invocation, the simulator may return
+	no legacy `RestorePreamble` but instead populate
+	`SorobanTransactionData.Ext` (`SorobanResourcesExtV0.archivedSorobanEntries`)
+	with the read-write footprint indices it auto-restored. The simulation
+	result must retain this extension, not just resources and footprint.
+- **Reattach**: the shared transaction builder must set this extension on the
+	submitted `SorobanTransactionData`. Core auto-restores the listed entries
+	inline at apply time and prices it into the resource fee. Dropping the
+	extension makes apply reject the archived reads.
+- **Remap across footprint rewrites**: each mode reuses a presimulated template
+	footprint and substitutes per-request keys. The archived indices reference
+	template positions, so they must be remapped to the rewritten footprint's
+	positions. Two distinct cases:
+	- entries that are *kept* in place (e.g. a shared contract instance) keep
+		their archived marker, remapped to the new index;
+	- entries that are *substituted* must have their marker INHERITED by the
+		replacement. This is the subtle one: SAC and soroswap substitute classic
+		trustlines (which never archive), so they only ever carry markers on kept
+		entries; but `oz-transfer` substitutes the per-account balance entries,
+		which ARE the archivable ones. If the substituted entry's template
+		counterpart was archived, the appended actual entry must be marked too.
+	- the resulting index list must stay sorted and unique (core requires it).
+- **`restore` accounting**: probes whose only restoration need is satisfied by
+	autorestore submit no separate transaction; they are reported but rely on the
+	benchmark's own invocations to carry the extension (see §3.2).
+
+The template-reuse approach assumes participant entries share archival state
+(true when balances/state are provisioned together at setup with identical
+TTLs). Per-request simulation would be exact in all cases but defeats the
+template optimization; the inheritance heuristic is the deliberate tradeoff.
+
+### 7.5 Benchmark metrics output
+
+`bench` must write a flattened NDJSON metrics file as a first-class deliverable
+(default path under `metrics/`, timestamped and mode-named; overridable). It is
+separate from the optional `--trace-file` request/response capture.
+
+- one summary record per workload (the Soroban stream and, if enabled, the
+	classic companion stream), combining run/workload parameters, submission
+	counters, on-chain inclusion/failure counters, latency percentiles, Vegeta
+	metrics, and flattened HTTP status-code counts
+- ledger-level metrics are the diagnostically important additions: end-to-end
+	latency (submit start to terminal poll), ledger finality distance (submit
+	latest ledger to inclusion ledger), transactions per finality ledger, and a
+	timeout-distance metric. The gap between finality distance (small) and
+	end-to-end latency (large) is the primary signal that the observation
+	pipeline, not the network, is the bottleneck.
+- additional records for Vegeta error categories with run/workload identity
+- the schema intentionally omits per-ledger count maps and per-request records;
+	those remain trace-file or console concerns
 
 ## 8. Contract Behavior To Recreate
 
@@ -448,6 +572,8 @@ Current test inventory to emulate:
 - `cmd/tx-load-test/benchmark/tx_builder_test.go`
 - `cmd/tx-load-test/benchmark/footprint_test.go`
 - `cmd/tx-load-test/benchmark/runner_test.go`
+- `cmd/tx-load-test/benchmark/runner_polling_test.go`
+- `cmd/tx-load-test/benchmark/restore_test.go`
 - `cmd/tx-load-test/setup/setup_test.go`
 - `cmd/tx-load-test/setup/accounts_test.go`
 - `cmd/tx-load-test/setup/soroswap_core_test.go`
@@ -486,12 +612,34 @@ The recreated suite should cover at least these behaviors.
 - auth entry fixtures are valid for the SDK version in use
 - fee/resource-fee handling is asserted correctly
 - benchmark transaction construction is fee-bumped and signed correctly
+- per-tx inclusion-fee sampling, and the raised fee floor for heavy-resource transactions
+- the autorestore extension is carried onto the submitted transaction body
 
 ### 9.4 Shared Soroban helper tests
 
 - simulation helper behavior
 - footprint replacement/substitution behavior
 - helper SCVal/address conversions
+- simulation captures the autorestore extension (`archivedSorobanEntries`) from the simulator response
+
+### 9.4a Autorestore footprint-remap tests
+
+- archived indices for kept entries remap to their new footprint positions
+- archived indices for substituted entries are inherited by the appended replacements (the `oz-transfer` balance case), while substituted-but-never-archived entries (SAC/soroswap trustlines) carry nothing
+- the resulting archived index list is sorted and unique
+
+### 9.4b Poll-scheduler tests
+
+- non-terminal results requeue with backoff without blocking, and newer due items are not starved
+- an already-expired item still gets one final attempt before timing out
+- a poll timeout releases the account as ambiguous (routed to recovery), not optimistically rewound
+- the first poll is deferred toward the predicted next-close/index window
+
+### 9.4c Restore tests
+
+- per-mode probe selection and account-range slicing
+- legacy `RestorePreamble` probes submit a `RestoreFootprint` (and `--dry-run` submits nothing)
+- autorestore-only probes are counted but submit no transaction, and `--verify` does not treat them as outstanding restoration
 
 ### 9.5 Setup/account tests
 
@@ -511,14 +659,14 @@ The recreated suite should cover at least these behaviors.
 
 - atomic load/save behavior
 - account derivation from indices
-- benchmark account-count helpers and source-account sizing math
+- benchmark account-count helpers and source-account sizing math (reuse gap and run budget)
 - transaction result decoding/polling helpers
 
 ### 9.8 Teardown tests
 
 - batch construction and resumable cleanup behavior
 
-The current full suite passes at approximately 88 tests. The recreated suite does not need the same count, but it should be broad enough that a reviewer can see equivalent coverage.
+The recreated suite does not need a specific test count, but it should be broad enough that a reviewer can see equivalent coverage, now including the polling scheduler, autorestore remap/inheritance, and restore behaviors above.
 
 ## 10. Suggested Implementation Order
 
@@ -554,9 +702,9 @@ Use this order to rebuild the tool with minimum rework.
 
 ### Phase 5: Shared Soroban support
 
-1. Simulation helpers
+1. Simulation helpers (capturing the autorestore extension)
 2. Footprint helpers
-3. Shared tx builder
+3. Shared tx builder (autorestore extension + per-tx fee sampling)
 4. Result polling/submission helpers
 
 ### Phase 6: Soroswap support
@@ -575,20 +723,29 @@ Use this order to rebuild the tool with minimum rework.
 
 ### Phase 8: Bench runners
 
-1. Shared source-account lease manager and sequence coordination
-2. SAC transfer mode
-3. OZ transfer mode
-4. Soroswap swap mode
-5. Parallel simple-payment companion stream
-6. Vegeta metrics and reporting
+1. Shared source-account lease manager, sequence coordination, and parallel recovery workers
+2. Poll scheduler (batched, non-blocking, close-aligned first poll)
+3. Autorestore extension threading and per-mode footprint-remap/inheritance
+4. SAC transfer mode
+5. OZ transfer mode
+6. Soroswap swap mode
+7. Parallel simple-payment companion stream
+8. Vegeta metrics, ledger/finality metrics, and the flattened NDJSON metrics file
 
-### Phase 9: Cleanup and sync
+### Phase 9: Restore maintenance command
+
+1. Per-mode probe construction reusing the bench mode payloads
+2. Legacy `RestoreFootprint` submission with attempt cap
+3. Autorestore accounting and `--verify` convergence
+4. Account-range slicing and progress/summary reporting
+
+### Phase 10: Cleanup and sync
 
 1. Teardown drain/merge batching
 2. Partial-progress persistence
 3. Sync reconciliation
 
-### Phase 10: Documentation and polish
+### Phase 11: Documentation and polish
 
 1. Command docs
 2. State schema docs
@@ -600,17 +757,20 @@ Use this order to rebuild the tool with minimum rework.
 The reimplementation is complete when all of the following are true.
 
 1. `go build -o tx-load-test ./cmd/tx-load-test` succeeds.
-2. The CLI exposes `setup`, `bench`, `teardown`, and `sync` via Cobra.
+2. The CLI exposes `setup`, `restore`, `bench`, `teardown`, and `sync` via Cobra.
 3. Setup creates a reusable JSON state file and bench runs from it.
 4. Setup can be re-run with a higher `--accounts` target and only create the delta.
 5. Standalone/futurenet setup can auto-bootstrap Soroswap core from flat Wasm artifacts.
 6. Public-network setup requires explicit factory/router IDs.
 7. Bench supports `sac-transfer`, `oz-transfer`, and `soroswap`.
 8. Bench optionally runs the companion classic payment stream.
-9. Teardown is resumable and deletes the state file on full success.
-10. Sync removes missing on-chain accounts from persisted state.
-11. Contract artifacts are refreshed via `contracts/update-wasms.sh`.
-12. The test suite covers the same conceptual surface as the current implementation.
+9. Bench against archived state succeeds: the autorestore extension is carried through so apply auto-restores archived entries inline instead of failing with `invokeHostFunctionEntryArchived`.
+10. Bench writes a flattened NDJSON metrics file with ledger finality/inclusion metrics.
+11. Restore probes per mode, submits `RestoreFootprint` for legacy-archived state, accounts for autorestore, and `--verify` converges.
+12. Teardown is resumable and deletes the state file on full success.
+13. Sync removes missing on-chain accounts from persisted state.
+14. Contract artifacts are refreshed via `contracts/update-wasms.sh`.
+15. The test suite covers the same conceptual surface as the current implementation.
 
 ## 12. Things To Avoid
 
@@ -620,6 +780,9 @@ The reimplementation is complete when all of the following are true.
 4. Do not store raw fee payer secrets on disk.
 5. Do not depend on a vendored Soroswap repo at runtime.
 6. Do not make teardown a best-effort shell script; keep it a resumable first-class command.
+7. Do not drop the simulator's autorestore extension when building submitted transactions, and do not lose archived markers when rewriting footprints (especially for substituted entries) — both reintroduce `invokeHostFunctionEntryArchived` failures that pass simulation.
+8. Do not block a poll worker per outstanding transaction, and do not serialize account recovery behind a single worker — both cause the available pool to collapse under sustained load.
+9. Do not use one fixed inclusion fee for all benchmark transactions; identical bids tie under surge pricing and get rejected.
 
 ## 13. Final Note To The Future Agent
 
@@ -631,5 +794,7 @@ If tradeoffs are required, preserve these first:
 4. shared Soroban helpers and shared tx builder
 5. flat contract artifact model plus refresh script
 6. strong validation and comparable tests
+7. autorestore correctness (capture, reattach, remap/inherit) — without it, archived state silently breaks every Soroban mode
+8. the non-blocking poll scheduler and parallel account recovery — they are what keep throughput steady under sustained load rather than spiraling into pool starvation
 
 You do not need to reproduce the exact line structure of the current implementation. You do need to recreate the same operational model, package boundaries, ergonomics, and reliability properties.

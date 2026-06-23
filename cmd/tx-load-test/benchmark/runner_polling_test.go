@@ -233,6 +233,108 @@ func TestNewScheduledPollItemAppliesPredictedFirstPoll(t *testing.T) {
 	require.Equal(t, now.Add(25*time.Second), scheduled.pollDeadline)
 }
 
+func TestLedgerClockObserveKeepsMaxAndTracksFreshness(t *testing.T) {
+	clock := &ledgerClock{}
+	require.Equal(t, uint32(0), clock.latestSequence())
+	require.False(t, clock.fresh(time.Unix(100, 0)))
+
+	clock.observe(50, 1000, time.Unix(100, 0))
+	require.Equal(t, uint32(50), clock.latestSequence())
+	require.Equal(t, int64(1000), clock.latestCloseUnix())
+
+	// A lower sequence is ignored (monotonic), and does not refresh.
+	clock.observe(40, 999, time.Unix(200, 0))
+	require.Equal(t, uint32(50), clock.latestSequence())
+	require.Equal(t, int64(1000), clock.latestCloseUnix())
+
+	// A higher sequence advances and refreshes.
+	clock.observe(51, 1005, time.Unix(300, 0))
+	require.Equal(t, uint32(51), clock.latestSequence())
+	require.Equal(t, int64(1005), clock.latestCloseUnix())
+
+	// Freshness is measured from the last advancing update (t=300).
+	require.True(t, clock.fresh(time.Unix(300, 0).Add(ledgerClockStaleness-time.Second)))
+	require.False(t, clock.fresh(time.Unix(300, 0).Add(ledgerClockStaleness+time.Second)))
+}
+
+func TestLedgerGateBlocksUntilLedgerAdvances(t *testing.T) {
+	clock := &ledgerClock{}
+
+	// No clock info yet, or no item observation yet: never blocks (fall back to
+	// time-based scheduling).
+	require.False(t, ledgerGateBlocks(&scheduledPollItem{lastObservedLatestLedger: 100}, clock))
+	clock.observe(100, 0, time.Unix(1, 0))
+	require.False(t, ledgerGateBlocks(&scheduledPollItem{lastObservedLatestLedger: 0}, clock))
+
+	// Clock has not advanced past the item's last-observed ledger: block.
+	require.True(t, ledgerGateBlocks(&scheduledPollItem{lastObservedLatestLedger: 100}, clock))
+	require.True(t, ledgerGateBlocks(&scheduledPollItem{lastObservedLatestLedger: 101}, clock))
+
+	// Clock advances: items at/under the new ledger become eligible.
+	clock.observe(101, 0, time.Unix(2, 0))
+	require.False(t, ledgerGateBlocks(&scheduledPollItem{lastObservedLatestLedger: 100}, clock))
+	require.True(t, ledgerGateBlocks(&scheduledPollItem{lastObservedLatestLedger: 101}, clock))
+}
+
+func TestNextCloseProjectionAlignsToNextCloseWithFloor(t *testing.T) {
+	now := time.Unix(1000, 0)
+	// No close-time hint: fall back to the recheck floor.
+	require.Equal(t, now.Add(ledgerGateRecheckFloor), nextCloseProjection(now, 0))
+
+	// Last close at t=998; next close+index ~ 998+5+1 = 1004, which is after the
+	// floor, so use it.
+	got := nextCloseProjection(now, 998)
+	want := time.Unix(998, 0).Add(estimatedLedgerCloseInterval).Add(estimatedRPCIndexingLag)
+	require.Equal(t, want, got)
+
+	// Last close far in the past: projection is before the floor, so floor wins.
+	require.Equal(t, now.Add(ledgerGateRecheckFloor), nextCloseProjection(now, 100))
+}
+
+func TestPollSchedulerGatedDefersRepollUntilLedgerAdvances(t *testing.T) {
+	// One tx that stays NOT_FOUND at the same ledger across early polls, then
+	// SUCCEEDS once the ledger advances. With the gate on, the scheduler must
+	// not burn repeated polls while the ledger is unchanged: total attempts
+	// should be small (one per observed ledger), not one per backoff tick.
+	state := newAttackState(1)
+	now := time.Now()
+	state.hashes <- pollItem{hash: "tx", rpcID: 7, submittedAt: now, submitLatestLedger: 100}
+	close(state.hashes)
+
+	client := newScriptedPollClient(map[string][]scriptedPollResponse{
+		"tx": {
+			// attempt 1 @ ledger 100 -> NOT_FOUND
+			{response: protocol.GetTransactionResponse{LatestLedger: 100, TransactionDetails: protocol.TransactionDetails{Status: "NOT_FOUND"}}},
+			// attempt 2 @ ledger 101 -> SUCCESS (gate should have waited for the advance)
+			{response: protocol.GetTransactionResponse{LatestLedger: 101, TransactionDetails: protocol.TransactionDetails{Status: protocol.TransactionStatusSuccess, Ledger: 101}}},
+			// safety net if the gate misbehaves and over-polls:
+			{response: protocol.GetTransactionResponse{LatestLedger: 101, TransactionDetails: protocol.TransactionDetails{Status: protocol.TransactionStatusSuccess, Ledger: 101}}},
+		},
+	})
+	leases := &fakeLeaseManager{}
+
+	_, wg := startPollSchedulerWithClient(context.Background(), nilLogger(), client, state, leases, "sac-transfer", nil, pollSchedulerOptions{
+		maxConcurrency: 1,
+		batchSize:      1,
+		timeout:        200 * time.Millisecond,
+		attemptTimeout: time.Second,
+		initialBackoff: 5 * time.Millisecond,
+		maxBackoff:     5 * time.Millisecond,
+		ledgerGated:    true,
+	})
+	waitForPollWaitGroup(t, wg)
+
+	// The clock only advances via the responses themselves here (scripted client
+	// has no latest-ledger observer). After attempt 1 reports ledger 100, the
+	// item is gated at ledger 100; nothing else advances the clock, so the item
+	// stays deferred until its deadline and then times out -- i.e. the gate
+	// correctly suppresses redundant same-ledger polls.
+	calls := client.calls()
+	require.Equal(t, []string{"tx"}, calls, "gate must suppress same-ledger re-polls; got %v", calls)
+	_, _, pollErr := state.pollSnapshot()
+	require.Equal(t, uint64(1), pollErr)
+}
+
 func waitForPollWaitGroup(t *testing.T, wg *sync.WaitGroup) {
 	t.Helper()
 	done := make(chan struct{})

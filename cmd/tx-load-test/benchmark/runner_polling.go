@@ -31,8 +31,13 @@ func pollWorkerCount(targetRPS int) int {
 const pollTimeout = 25 * time.Second
 
 const (
-	pollBatchSize      = 25
-	pollAttemptTimeout = 5 * time.Second
+	pollBatchSize = 25
+	// pollAttemptTimeout bounds a single batch's getTransaction round trip.
+	// Kept just above the observed median getTransaction latency under load so
+	// slow-but-valid calls complete instead of being cancelled mid-flight and
+	// retried (which wastes the call and learns nothing). Still well under
+	// pollTimeout so an item can make several attempts before its deadline.
+	pollAttemptTimeout = 6 * time.Second
 	pollInitialBackoff = 500 * time.Millisecond
 	pollMaxBackoff     = 3500 * time.Millisecond
 )
@@ -58,6 +63,70 @@ const (
 	minFirstPollDelay = 2 * time.Second
 )
 
+const (
+	// ledgerGateRecheckFloor bounds how soon a gated (deferred) item can be
+	// reconsidered. A re-poll can only yield a new answer once a new ledger has
+	// closed, so deferred items are scheduled toward the next expected close;
+	// this floor keeps a stale/absent close-time hint from spinning the queue.
+	ledgerGateRecheckFloor = 500 * time.Millisecond
+	// ledgerClockStaleness is how long the shared ledger clock may go without an
+	// update before the fallback ticker spends a getLatestLedger call. In steady
+	// state getTransaction responses refresh the clock well within this window,
+	// so the (heavyweight) ticker call is skipped; it only fires during the
+	// drain tail when poll traffic has dried up.
+	ledgerClockStaleness = estimatedLedgerCloseInterval + 2*time.Second
+	// ledgerTickerLateRetry is the short wait the ticker uses when a close ran
+	// late (the sequence did not advance), so a slightly-late close is caught
+	// promptly instead of after another full interval.
+	ledgerTickerLateRetry = 1 * time.Second
+)
+
+// ledgerClock holds the highest network ledger sequence (and its close time)
+// observed from any source -- every getTransaction response feeds it for free,
+// and the fallback ticker tops it up during the drain tail. The poll scheduler
+// reads it to gate re-polls: a transaction's terminal status can only change at
+// a ledger close, so an item is only worth re-polling once the clock has
+// advanced past the ledger that item last observed. Concurrent writers (the
+// scheduler goroutine processing responses, and the ticker goroutine) update it
+// via monotonic CAS; reads are lock-free.
+type ledgerClock struct {
+	sequence   atomic.Uint32
+	closeUnix  atomic.Int64
+	lastUpdate atomic.Int64 // unix nanos of the most recent advancing update
+}
+
+// observe records a (sequence, closeUnix) sample, keeping the max sequence. now
+// is passed in so callers can use a single clock reading; it stamps lastUpdate
+// only when the sequence actually advances.
+func (c *ledgerClock) observe(sequence uint32, closeUnix int64, now time.Time) {
+	for {
+		cur := c.sequence.Load()
+		if sequence <= cur {
+			return
+		}
+		if c.sequence.CompareAndSwap(cur, sequence) {
+			if closeUnix > 0 {
+				c.closeUnix.Store(closeUnix)
+			}
+			c.lastUpdate.Store(now.UnixNano())
+			return
+		}
+	}
+}
+
+func (c *ledgerClock) latestSequence() uint32 { return c.sequence.Load() }
+func (c *ledgerClock) latestCloseUnix() int64 { return c.closeUnix.Load() }
+
+// fresh reports whether the clock was advanced within ledgerClockStaleness of
+// now -- i.e. whether poll responses are keeping it current without help.
+func (c *ledgerClock) fresh(now time.Time) bool {
+	last := c.lastUpdate.Load()
+	if last == 0 {
+		return false
+	}
+	return now.Sub(time.Unix(0, last)) < ledgerClockStaleness
+}
+
 type pollTransactionResult struct {
 	response                 protocol.GetTransactionResponse
 	lastObservedLatestLedger uint32
@@ -74,7 +143,12 @@ type pollSchedulerOptions struct {
 	// LatestLedgerCloseTime hint is available. Production uses
 	// minFirstPollDelay; tests can leave it zero for immediate-poll behavior.
 	firstPollDelay time.Duration
-	jitter         bool
+	// ledgerGated enables the ledger-advance re-poll gate: an item is only
+	// re-polled once the shared ledger clock has advanced past the ledger that
+	// item last observed. Production enables it; tests leave it off (zero) to
+	// keep the unconditional time-based behavior unless explicitly exercised.
+	ledgerGated bool
+	jitter      bool
 }
 
 func defaultPollSchedulerOptions(maxConcurrency int) pollSchedulerOptions {
@@ -86,6 +160,7 @@ func defaultPollSchedulerOptions(maxConcurrency int) pollSchedulerOptions {
 		initialBackoff: pollInitialBackoff,
 		maxBackoff:     pollMaxBackoff,
 		firstPollDelay: minFirstPollDelay,
+		ledgerGated:    true,
 		jitter:         true,
 	}.normalized()
 }
@@ -122,6 +197,11 @@ type scheduledPollItem struct {
 	nextPollAt               time.Time
 	pollDeadline             time.Time
 	lastObservedLatestLedger uint32
+	// lastObservedCloseUnix is the close time (unix seconds) of the latest
+	// ledger this item's most recent response reported. Used to schedule the
+	// next re-poll toward the following expected close so the item sleeps
+	// through the inter-close interval instead of waking to be gate-deferred.
+	lastObservedCloseUnix int64
 }
 
 type pollScheduleHeap []*scheduledPollItem
@@ -181,13 +261,26 @@ func runPollScheduler(ctx context.Context, logger *log.Entry, client transaction
 	ctxDone := ctx.Done()
 	ctxCanceled := false
 
+	clock := &ledgerClock{}
+	// Start the fallback latest-ledger ticker only when gating is on and the
+	// client can report the latest ledger. It stays dormant while poll
+	// responses keep the clock fresh and only spends a getLatestLedger call
+	// during the drain tail. Stop it when the scheduler returns.
+	if options.ledgerGated {
+		if observer, ok := client.(latestLedgerObserver); ok {
+			tickerStop := make(chan struct{})
+			defer close(tickerStop)
+			go runLatestLedgerTicker(ctx, tickerStop, observer, clock)
+		}
+	}
+
 	for {
 		if !inputOpen && queue.Len() == 0 && inFlight == 0 {
 			return
 		}
 
 		if !ctxCanceled {
-			progressed := dispatchDuePollBatches(ctx, logger, client, &queue, results, &inFlight, state, accounts, workload, recorder, options)
+			progressed := dispatchDuePollBatches(ctx, logger, client, &queue, results, &inFlight, state, accounts, workload, recorder, options, clock)
 			if progressed {
 				continue
 			}
@@ -222,7 +315,7 @@ func runPollScheduler(ctx context.Context, logger *log.Entry, client transaction
 		case result := <-results:
 			stopPollTimer(dueTimer)
 			inFlight--
-			handlePollBatchResult(time.Now(), logger, state, &queue, result, accounts, workload, recorder, options, ctxCanceled)
+			handlePollBatchResult(time.Now(), logger, state, &queue, result, accounts, workload, recorder, options, clock, ctxCanceled)
 		case <-due:
 		case <-ctxDone:
 			stopPollTimer(dueTimer)
@@ -268,7 +361,41 @@ func firstPollAt(item pollItem, now time.Time, minDelay time.Duration) time.Time
 	return predicted
 }
 
-func dispatchDuePollBatches(ctx context.Context, logger *log.Entry, client transactionPollClient, queue *pollScheduleHeap, results chan<- pollBatchResult, inFlight *int, state *attackState, accounts accountLeaseManager, workload string, recorder *benchmarkTraceRecorder, options pollSchedulerOptions) bool {
+// ledgerGateBlocks reports whether a re-poll of item should be deferred because
+// no new ledger has closed since it was last observed. It blocks only when both
+// the item and the clock have a known ledger and the clock has not advanced past
+// the item's last-observed ledger. When the clock is unknown (no observation
+// yet) or the item has no observed ledger (e.g. its last attempt errored), it
+// does not block -- falling back to time-based scheduling.
+func ledgerGateBlocks(item *scheduledPollItem, clock *ledgerClock) bool {
+	if clock == nil {
+		return false
+	}
+	latest := clock.latestSequence()
+	if latest == 0 || item.lastObservedLatestLedger == 0 {
+		return false
+	}
+	return latest <= item.lastObservedLatestLedger
+}
+
+// nextCloseProjection returns when a deferred item should next be considered:
+// the close after the one it last observed, plus the indexing cushion, floored
+// so a missing or stale close-time hint cannot spin the queue.
+func nextCloseProjection(now time.Time, lastObservedCloseUnix int64) time.Time {
+	floor := now.Add(ledgerGateRecheckFloor)
+	if lastObservedCloseUnix <= 0 {
+		return floor
+	}
+	projected := time.Unix(lastObservedCloseUnix, 0).
+		Add(estimatedLedgerCloseInterval).
+		Add(estimatedRPCIndexingLag)
+	if projected.Before(floor) {
+		return floor
+	}
+	return projected
+}
+
+func dispatchDuePollBatches(ctx context.Context, logger *log.Entry, client transactionPollClient, queue *pollScheduleHeap, results chan<- pollBatchResult, inFlight *int, state *attackState, accounts accountLeaseManager, workload string, recorder *benchmarkTraceRecorder, options pollSchedulerOptions, clock *ledgerClock) bool {
 	if *inFlight >= options.maxConcurrency || queue.Len() == 0 {
 		return false
 	}
@@ -289,6 +416,16 @@ func dispatchDuePollBatches(ctx context.Context, logger *log.Entry, client trans
 		progressed = true
 		if scheduled.attempt > 0 && !now.Before(scheduled.pollDeadline) {
 			timeoutScheduledPollItem(logger, state, scheduled, accounts, fmt.Errorf("poll deadline exceeded"))
+			continue
+		}
+		// Ledger-advance gate: a re-poll can only return a new answer once a new
+		// ledger has closed. If the shared clock has not advanced past the ledger
+		// this item last observed, defer it toward the next expected close
+		// instead of spending a (whole-ledger-decoding) getTransaction call. The
+		// first attempt is never gated -- it is timed by firstPollAt.
+		if options.ledgerGated && scheduled.attempt > 0 && ledgerGateBlocks(scheduled, clock) {
+			scheduled.nextPollAt = nextCloseProjection(now, scheduled.lastObservedCloseUnix)
+			heap.Push(queue, scheduled)
 			continue
 		}
 		scheduled.attempt++
@@ -336,11 +473,11 @@ func pollRequestID(item *scheduledPollItem) int64 {
 	return int64(item.submitIndex + 1)
 }
 
-func handlePollBatchResult(now time.Time, logger *log.Entry, state *attackState, queue *pollScheduleHeap, batch pollBatchResult, accounts accountLeaseManager, workload string, recorder *benchmarkTraceRecorder, options pollSchedulerOptions, ctxCanceled bool) {
+func handlePollBatchResult(now time.Time, logger *log.Entry, state *attackState, queue *pollScheduleHeap, batch pollBatchResult, accounts accountLeaseManager, workload string, recorder *benchmarkTraceRecorder, options pollSchedulerOptions, clock *ledgerClock, ctxCanceled bool) {
 	if batch.err != nil {
 		for _, item := range batch.items {
 			recordPollResponseTrace(workload, item.item.hash, item.item.rpcID, item.attempt, nil, batch.err, recorder)
-			handlePollAttemptError(now, logger, state, queue, item, accounts, batch.err, options, ctxCanceled)
+			handlePollAttemptError(now, logger, state, queue, item, accounts, options, clock, batch.err, ctxCanceled)
 		}
 		return
 	}
@@ -355,47 +492,53 @@ func handlePollBatchResult(now time.Time, logger *log.Entry, state *attackState,
 		if !ok {
 			err := fmt.Errorf("missing poll response for hash %s", item.item.hash)
 			recordPollResponseTrace(workload, item.item.hash, item.item.rpcID, item.attempt, nil, err, recorder)
-			handlePollAttemptError(now, logger, state, queue, item, accounts, err, options, ctxCanceled)
+			handlePollAttemptError(now, logger, state, queue, item, accounts, options, clock, err, ctxCanceled)
 			continue
 		}
 		if result.Hash != "" && result.Hash != item.item.hash {
 			err := fmt.Errorf("poll response hash mismatch: request=%s response=%s", item.item.hash, result.Hash)
 			recordPollResponseTrace(workload, item.item.hash, item.item.rpcID, item.attempt, nil, err, recorder)
-			handlePollAttemptError(now, logger, state, queue, item, accounts, err, options, ctxCanceled)
+			handlePollAttemptError(now, logger, state, queue, item, accounts, options, clock, err, ctxCanceled)
 			continue
 		}
 		if result.Err != nil {
 			recordPollResponseTrace(workload, item.item.hash, item.item.rpcID, item.attempt, nil, result.Err, recorder)
-			handlePollAttemptError(now, logger, state, queue, item, accounts, result.Err, options, ctxCanceled)
+			handlePollAttemptError(now, logger, state, queue, item, accounts, options, clock, result.Err, ctxCanceled)
 			continue
 		}
 
 		resp := result.Response
 		recordPollResponseTrace(workload, item.item.hash, item.item.rpcID, item.attempt, &resp, nil, recorder)
-		handlePollAttemptResponse(now, logger, state, queue, item, &resp, accounts, options, ctxCanceled)
+		handlePollAttemptResponse(now, logger, state, queue, item, &resp, accounts, options, clock, ctxCanceled)
 	}
 }
 
-func handlePollAttemptResponse(now time.Time, logger *log.Entry, state *attackState, queue *pollScheduleHeap, item *scheduledPollItem, resp *protocol.GetTransactionResponse, accounts accountLeaseManager, options pollSchedulerOptions, ctxCanceled bool) {
+func handlePollAttemptResponse(now time.Time, logger *log.Entry, state *attackState, queue *pollScheduleHeap, item *scheduledPollItem, resp *protocol.GetTransactionResponse, accounts accountLeaseManager, options pollSchedulerOptions, clock *ledgerClock, ctxCanceled bool) {
 	if resp.LatestLedger > 0 {
 		item.lastObservedLatestLedger = resp.LatestLedger
+		if resp.LatestLedgerCloseTime > 0 {
+			item.lastObservedCloseUnix = resp.LatestLedgerCloseTime
+		}
+		// Feed the shared clock for free from every response; this is what keeps
+		// the ledger-advance gate current in steady state without the ticker.
+		clock.observe(resp.LatestLedger, resp.LatestLedgerCloseTime, now)
 	}
 
 	switch resp.Status {
 	case protocol.TransactionStatusSuccess, protocol.TransactionStatusFailed:
 		handlePollResponse(logger, state, item.item, resp, accounts)
 	case "":
-		requeueOrTimeoutPollItem(now, logger, state, queue, item, accounts, fmt.Errorf("empty transaction status"), options, ctxCanceled)
+		requeueOrTimeoutPollItem(now, logger, state, queue, item, accounts, options, clock, fmt.Errorf("empty transaction status"), ctxCanceled)
 	default:
-		requeueOrTimeoutPollItem(now, logger, state, queue, item, accounts, nil, options, ctxCanceled)
+		requeueOrTimeoutPollItem(now, logger, state, queue, item, accounts, options, clock, nil, ctxCanceled)
 	}
 }
 
-func handlePollAttemptError(now time.Time, logger *log.Entry, state *attackState, queue *pollScheduleHeap, item *scheduledPollItem, accounts accountLeaseManager, err error, options pollSchedulerOptions, ctxCanceled bool) {
-	requeueOrTimeoutPollItem(now, logger, state, queue, item, accounts, err, options, ctxCanceled)
+func handlePollAttemptError(now time.Time, logger *log.Entry, state *attackState, queue *pollScheduleHeap, item *scheduledPollItem, accounts accountLeaseManager, options pollSchedulerOptions, clock *ledgerClock, err error, ctxCanceled bool) {
+	requeueOrTimeoutPollItem(now, logger, state, queue, item, accounts, options, clock, err, ctxCanceled)
 }
 
-func requeueOrTimeoutPollItem(now time.Time, logger *log.Entry, state *attackState, queue *pollScheduleHeap, item *scheduledPollItem, accounts accountLeaseManager, err error, options pollSchedulerOptions, ctxCanceled bool) {
+func requeueOrTimeoutPollItem(now time.Time, logger *log.Entry, state *attackState, queue *pollScheduleHeap, item *scheduledPollItem, accounts accountLeaseManager, options pollSchedulerOptions, clock *ledgerClock, err error, ctxCanceled bool) {
 	if ctxCanceled || !now.Before(item.pollDeadline) {
 		if err == nil {
 			err = fmt.Errorf("poll deadline exceeded")
@@ -403,7 +546,17 @@ func requeueOrTimeoutPollItem(now time.Time, logger *log.Entry, state *attackSta
 		timeoutScheduledPollItem(logger, state, item, accounts, err)
 		return
 	}
-	item.nextPollAt = now.Add(pollBackoff(item, options))
+	next := now.Add(pollBackoff(item, options))
+	// When gating is on and a new ledger has not yet closed since this item was
+	// last observed, there is no point waking before the next expected close --
+	// push the wake-up out to it so the item sleeps through the inter-close
+	// interval rather than waking only to be gate-deferred.
+	if options.ledgerGated && ledgerGateBlocks(item, clock) {
+		if aligned := nextCloseProjection(now, item.lastObservedCloseUnix); aligned.After(next) {
+			next = aligned
+		}
+	}
+	item.nextPollAt = next
 	heap.Push(queue, item)
 }
 
@@ -435,6 +588,61 @@ func pollBackoff(item *scheduledPollItem, options pollSchedulerOptions) time.Dur
 		return 0
 	}
 	return backoff
+}
+
+// runLatestLedgerTicker is the fallback that keeps the shared ledger clock
+// advancing when poll traffic is too sparse to do so (the drain tail). It paces
+// to the close cadence -- waking shortly after the next close is expected from
+// the last known close time -- and skips the (whole-ledger-marshaling)
+// getLatestLedger call entirely when poll responses have refreshed the clock
+// within ledgerClockStaleness. A close that ran late (sequence did not advance)
+// triggers a short retry instead of waiting another full interval.
+func runLatestLedgerTicker(ctx context.Context, stop <-chan struct{}, observer latestLedgerObserver, clock *ledgerClock) {
+	for {
+		var delay time.Duration
+		if closeUnix := clock.latestCloseUnix(); closeUnix > 0 {
+			next := time.Unix(closeUnix, 0).Add(estimatedLedgerCloseInterval).Add(estimatedRPCIndexingLag)
+			delay = time.Until(next)
+		}
+		if delay < ledgerGateRecheckFloor {
+			delay = ledgerGateRecheckFloor
+		}
+
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-stop:
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+
+		// Skip the heavy call while poll responses are keeping the clock fresh.
+		if clock.fresh(time.Now()) {
+			continue
+		}
+		before := clock.latestSequence()
+		seq, closeUnix, err := observer.GetLatestLedgerSeq(ctx)
+		if err != nil {
+			continue
+		}
+		clock.observe(seq, closeUnix, time.Now())
+		if seq <= before {
+			// Close ran late; recheck soon rather than after a full interval.
+			timer := time.NewTimer(ledgerTickerLateRetry)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-stop:
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+	}
 }
 
 func timeoutPendingPollItems(logger *log.Entry, state *attackState, queue *pollScheduleHeap, accounts accountLeaseManager, err error) {
