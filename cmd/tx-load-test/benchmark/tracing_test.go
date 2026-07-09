@@ -121,14 +121,19 @@ func TestPollTransactionWithTraceWritesPollRequestAndResponse(t *testing.T) {
 	defer server.Close()
 
 	rpc := rpcclient.NewClient(server.URL, nil)
-	_, err = pollTransactionWithTrace(context.Background(), rpc, "feedbeef", "simple-payment", recorder)
+	client := newSDKTransactionPollClient(rpc)
+	recordPollRequestTrace("simple-payment", "feedbeef", 7, 1, recorder)
+	results, err := client.GetTransactions(context.Background(), []transactionPollRequest{{ID: 1, Hash: "feedbeef"}})
 	require.NoError(t, err)
+	require.Len(t, results, 1)
+	recordPollResponseTrace("simple-payment", "feedbeef", 7, 1, &results[0].Response, results[0].Err, recorder)
 	require.NoError(t, recorder.Close())
 
 	records := readTraceRecords(t, traceFile)
 	require.Len(t, records, 2)
 	require.Equal(t, "poll_request", records[0].Event)
 	require.Equal(t, "poll_response", records[1].Event)
+	require.Equal(t, int64(7), records[0].RPCID)
 	require.Equal(t, "feedbeef", records[0].Hash)
 	require.Equal(t, protocol.TransactionStatusSuccess, records[1].TransactionStatus)
 }

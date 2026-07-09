@@ -52,6 +52,65 @@ func TestBuildAccountProvisionPlan(t *testing.T) {
 	}
 }
 
+func TestBuildAccountProvisionPlanPromotesExistingWithoutAppend(t *testing.T) {
+	feePayer, err := keypair.Random()
+	require.NoError(t, err)
+
+	existing := make([]*keypair.Full, 0, 10)
+	for idx := 1; idx <= 10; idx++ {
+		kp, err := state.DeriveKeypair(feePayer, idx)
+		require.NoError(t, err)
+		existing = append(existing, kp)
+	}
+
+	st := &state.State{
+		FeePayerKP:   feePayer,
+		AccountKPs:   existing,
+		SACHolderKPs: existing[:2],
+	}
+	cfg := config.DefaultConfig()
+	cfg.NumberOfAccounts = 10
+	cfg.Mode = config.ModeSoroswap
+	cfg.TargetRPS = 1
+	cfg.Duration = time.Second
+
+	plan, err := buildAccountProvisionPlan(cfg, st)
+	require.NoError(t, err)
+	require.Equal(t, 10, plan.existingCount)
+	require.Equal(t, 10, plan.targetCount)
+	require.Equal(t, 2, plan.existingHolders)
+	require.Equal(t, 10, plan.targetHolders)
+	require.Len(t, plan.promotedExistingKPs, 8)
+	require.Empty(t, plan.newKPs)
+	require.Empty(t, plan.holderNewKPs)
+	require.Empty(t, plan.passiveNewKPs)
+	require.Equal(t, existing[2].Address(), plan.promotedExistingKPs[0].Address())
+	require.Equal(t, existing[9].Address(), plan.promotedExistingKPs[7].Address())
+}
+
+func TestMinimumFeePayerBalanceUsesAccountDelta(t *testing.T) {
+	feePayer, err := keypair.Random()
+	require.NoError(t, err)
+
+	existing := make([]*keypair.Full, 0, 5)
+	for idx := 1; idx <= 5; idx++ {
+		kp, err := state.DeriveKeypair(feePayer, idx)
+		require.NoError(t, err)
+		existing = append(existing, kp)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.NumberOfAccounts = 5
+	cfg.BaseReserveXLM = 3
+
+	require.Equal(t, 115.0, minimumFeePayerBalanceXLM(cfg, nil))
+	require.Equal(t, 106.0, minimumFeePayerBalanceXLM(cfg, &state.State{AccountKPs: existing[:3]}))
+	require.Equal(t, 100.0, minimumFeePayerBalanceXLM(cfg, &state.State{AccountKPs: existing}))
+
+	cfg.NumberOfAccounts = 2
+	require.Equal(t, 100.0, minimumFeePayerBalanceXLM(cfg, &state.State{AccountKPs: existing}))
+}
+
 func TestPlanSACHolderRepairs(t *testing.T) {
 	issuer, err := keypair.Random()
 	require.NoError(t, err)

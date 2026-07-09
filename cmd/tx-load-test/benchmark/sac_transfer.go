@@ -1,9 +1,11 @@
 package benchmark
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"slices"
 
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 
@@ -145,11 +147,15 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 	// "trying to access contract instance outside of the footprint".
 	// The per-SAC footprint is used as a template: only the two trustline
 	// keys are substituted per request; all ReadOnly entries returned by the
-	// simulator are kept as-is.
+	// simulator are kept as-is. Per-SAC Resources / ResourceFee / Ext are
+	// preserved because protocol-23 autorestore can mark each SAC's archived
+	// entries independently and the resource fee scales with whichever SAC
+	// instance needs inline restoration.
 	var (
-		simResources          xdr.SorobanResources
-		simResourceFee        xdr.Int64
+		simResources          [3]xdr.SorobanResources
+		simResourceFees       [3]xdr.Int64
 		simFootprintTemplates [3]xdr.LedgerFootprint
+		simDataExts           [3]xdr.SorobanTransactionDataExt
 	)
 	for i := range sacIDs {
 		simTxSource := txSourceAccounts[0]
@@ -170,10 +176,9 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 			return nil, fmt.Errorf("pre-simulate SAC[%d] transfer: %w", i, err)
 		}
 		simFootprintTemplates[i] = simTemplate.simulation.Footprint
-		// All three SACs share the same WASM and logic; use the last
-		// simulation's resource numbers (they should be identical).
-		simResources = simTemplate.simulation.Resources
-		simResourceFee = simTemplate.simulation.ResourceFee
+		simResources[i] = simTemplate.simulation.Resources
+		simResourceFees[i] = simTemplate.simulation.ResourceFee
+		simDataExts[i] = simTemplate.simulation.Ext
 	}
 
 	// Pre-load the on-ledger sequence numbers for every participant account.
@@ -217,28 +222,9 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 			return fmt.Errorf("parse dst account: %w", err)
 		}
 
-		// Build transfer(src, dst, amount) invocation arguments.
-		args := xdr.ScVec{
-			{Type: xdr.ScValTypeScvAddress, Address: &xdr.ScAddress{
-				Type: xdr.ScAddressTypeScAddressTypeAccount, AccountId: &holderSrcAccID,
-			}},
-			{Type: xdr.ScValTypeScvAddress, Address: &xdr.ScAddress{
-				Type: xdr.ScAddressTypeScAddressTypeAccount, AccountId: &dstAccID,
-			}},
-			{Type: xdr.ScValTypeScvI128, I128: &xdr.Int128Parts{
-				Hi: 0, Lo: xdr.Uint64(sacTransferAmount),
-			}},
-		}
-		invokeArgs := xdr.InvokeContractArgs{
-			ContractAddress: xdr.ScAddress{
-				Type:       xdr.ScAddressTypeScAddressTypeContract,
-				ContractId: &sacID,
-			},
-			FunctionName: "transfer",
-			Args:         args,
-		}
+		invokeArgs := buildSACTransferInvokeArgs(sacID, holderSrcAccID, dstAccID)
 
-		footprint, err := buildSACFootprintFromTemplate(simFootprintTemplates[sacIdx], assetXDR, holderSrcAccID, dstAccID)
+		footprint, dataExt, err := buildSACFootprintFromTemplate(simFootprintTemplates[sacIdx], simDataExts[sacIdx], assetXDR, holderSrcAccID, dstAccID)
 		if err != nil {
 			return fmt.Errorf("build SAC footprint: %w", err)
 		}
@@ -268,11 +254,20 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 			}},
 			Resources: xdr.SorobanResources{
 				Footprint:     footprint,
-				Instructions:  simResources.Instructions,
-				DiskReadBytes: simResources.DiskReadBytes,
-				WriteBytes:    simResources.WriteBytes,
+				Instructions:  simResources[sacIdx].Instructions,
+				DiskReadBytes: simResources[sacIdx].DiskReadBytes,
+				WriteBytes:    simResources[sacIdx].WriteBytes,
 			},
-			ResourceFee: simResourceFee,
+			ResourceFee: simResourceFees[sacIdx],
+			// dataExt carries the remapped archivedSorobanEntries: positions
+			// have shifted because buildSACFootprintFromTemplate drops the
+			// template's per-asset trustline entries and appends the actual
+			// src/dst trustlines. Dropped trustline indices are filtered
+			// out (classic trustlines aren't persistent Soroban entries and
+			// don't archive). Surviving indices -- typically the per-SAC
+			// contract instance entry when the SAC is archived -- are
+			// translated to their new positions and re-sorted.
+			SorobanDataExt: dataExt,
 		})
 		if err != nil {
 			return err
@@ -299,6 +294,10 @@ func presimulateSACTransfer(
 		return simulatedInvocationTemplate{}, err
 	}
 
+	return presimulateBenchmarkInvocation(state, txSourceKP, srcKP.Address(), buildSACTransferInvokeArgs(sacID, srcAccID, dstAccID))
+}
+
+func buildSACTransferInvokeArgs(sacID xdr.ContractId, srcAccID, dstAccID xdr.AccountId) xdr.InvokeContractArgs {
 	args := xdr.ScVec{
 		{Type: xdr.ScValTypeScvAddress, Address: &xdr.ScAddress{
 			Type: xdr.ScAddressTypeScAddressTypeAccount, AccountId: &srcAccID,
@@ -310,7 +309,7 @@ func presimulateSACTransfer(
 			Hi: 0, Lo: xdr.Uint64(sacTransferAmount),
 		}},
 	}
-	invokeArgs := xdr.InvokeContractArgs{
+	return xdr.InvokeContractArgs{
 		ContractAddress: xdr.ScAddress{
 			Type:       xdr.ScAddressTypeScAddressTypeContract,
 			ContractId: &sacID,
@@ -318,32 +317,123 @@ func presimulateSACTransfer(
 		FunctionName: "transfer",
 		Args:         args,
 	}
-
-	return presimulateBenchmarkInvocation(state, txSourceKP, srcKP.Address(), invokeArgs)
 }
 
 // buildSACFootprintFromTemplate takes the footprint returned by the simulator for
 // a representative transfer (accounts[0] -> accounts[1]) and substitutes the two
 // ReadWrite trustline keys with the actual src/dst accounts for this request.
-// All ReadOnly entries (contract instance, issuer account, source account read
-// for auth) are kept as-is since they are identical for every invocation.
+// All ReadOnly entries and non-trustline ReadWrite entries returned by the
+// simulator are kept as-is since they are identical for every invocation.
+//
+// When the simulator emits a SorobanTransactionDataExt.V1 with
+// archivedSorobanEntries (protocol-23 autorestore), the indices reference
+// positions in the simulator's RW slice. Because we drop the template's
+// per-asset trustline entries and append new src/dst trustlines at the tail,
+// surviving indices must be remapped to point at the same entries' new
+// positions. Dropped trustline indices are filtered out (classic trustlines
+// don't archive and aren't persistent Soroban entries anyway). The returned
+// extension is sorted in ascending order, which core requires.
 func buildSACFootprintFromTemplate(
 	tmpl xdr.LedgerFootprint,
+	tmplExt xdr.SorobanTransactionDataExt,
 	assetXDR xdr.Asset,
 	src, dst xdr.AccountId,
-) (xdr.LedgerFootprint, error) {
+) (xdr.LedgerFootprint, xdr.SorobanTransactionDataExt, error) {
 	tla := xdr.TrustLineAsset{
 		Type:       assetXDR.Type,
 		AlphaNum4:  assetXDR.AlphaNum4,
 		AlphaNum12: assetXDR.AlphaNum12,
 	}
-	return buildFootprintFromTemplate(
-		tmpl,
-		func() (xdr.LedgerKey, error) {
-			return xdr.LedgerKey{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.LedgerKeyTrustLine{AccountId: src, Asset: tla}}, nil
-		},
-		func() (xdr.LedgerKey, error) {
-			return xdr.LedgerKey{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.LedgerKeyTrustLine{AccountId: dst, Asset: tla}}, nil
-		},
+	footprint := xdr.LedgerFootprint{
+		ReadOnly:  append([]xdr.LedgerKey(nil), tmpl.ReadOnly...),
+		ReadWrite: make([]xdr.LedgerKey, 0, len(tmpl.ReadWrite)),
+	}
+	indexRemap := make([]int, len(tmpl.ReadWrite))
+	for i, key := range tmpl.ReadWrite {
+		if isTrustlineKeyForAsset(key, tla) {
+			indexRemap[i] = -1
+			continue
+		}
+		indexRemap[i] = len(footprint.ReadWrite)
+		footprint.ReadWrite = append(footprint.ReadWrite, key)
+	}
+	footprint.ReadWrite = append(
+		footprint.ReadWrite,
+		xdr.LedgerKey{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.LedgerKeyTrustLine{AccountId: src, Asset: tla}},
+		xdr.LedgerKey{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.LedgerKeyTrustLine{AccountId: dst, Asset: tla}},
 	)
+	newExt := remapArchivedSorobanEntries(tmplExt, indexRemap)
+	return footprint, newExt, nil
+}
+
+// remapArchivedSorobanEntries translates archivedSorobanEntries indices from
+// the simulator's original read-write footprint to their positions in a
+// rewritten footprint. indexRemap[old] = new index, or < 0 if the entry was
+// dropped. Returns SorobanTransactionDataExt.V0 if no surviving indices
+// remain. Core requires the index list to be sorted ascending and to point
+// only at persistent entries -- callers are responsible for the latter
+// constraint by not dropping persistent entries during the rewrite.
+func remapArchivedSorobanEntries(ext xdr.SorobanTransactionDataExt, indexRemap []int) xdr.SorobanTransactionDataExt {
+	if ext.V != 1 || ext.ResourceExt == nil {
+		return ext
+	}
+	old := ext.ResourceExt.ArchivedSorobanEntries
+	if len(old) == 0 {
+		return xdr.SorobanTransactionDataExt{V: 0}
+	}
+	remapped := make([]xdr.Uint32, 0, len(old))
+	for _, idx := range old {
+		i := int(idx)
+		if i < 0 || i >= len(indexRemap) {
+			continue
+		}
+		newIdx := indexRemap[i]
+		if newIdx < 0 {
+			continue
+		}
+		remapped = append(remapped, xdr.Uint32(newIdx))
+	}
+	return buildArchivedSorobanExt(remapped)
+}
+
+// buildArchivedSorobanExt assembles a SorobanTransactionDataExt from a set of
+// read-write footprint indices that core must auto-restore. It sorts and
+// dedups (core requires ascending, unique indices) and downgrades to V0 when
+// the set is empty. Distinct source indices can collapse to the same new index
+// if a rewrite merges entries, hence the dedup.
+func buildArchivedSorobanExt(indices []xdr.Uint32) xdr.SorobanTransactionDataExt {
+	if len(indices) == 0 {
+		return xdr.SorobanTransactionDataExt{V: 0}
+	}
+	slices.Sort(indices)
+	indices = slices.Compact(indices)
+	return xdr.SorobanTransactionDataExt{
+		V:           1,
+		ResourceExt: &xdr.SorobanResourcesExtV0{ArchivedSorobanEntries: indices},
+	}
+}
+
+func isTrustlineKeyForAsset(key xdr.LedgerKey, asset xdr.TrustLineAsset) bool {
+	if key.Type != xdr.LedgerEntryTypeTrustline || key.TrustLine == nil {
+		return false
+	}
+	return trustlineAssetsEqual(key.TrustLine.Asset, asset)
+}
+
+// trustlineAssetsEqual compares two TrustLineAsset values by their canonical
+// XDR encoding. Go's `==` on AlphaNum4/AlphaNum12 walks the embedded AccountId,
+// whose underlying PublicKey carries an `Ed25519 *Uint256` field; built-in
+// struct equality compares those pointer addresses, not the 32 bytes they point
+// at, so two assets with the same issuer parsed from separate XDR responses
+// compare unequal. The marshal-and-compare path is robust against that.
+func trustlineAssetsEqual(a, b xdr.TrustLineAsset) bool {
+	if a.Type != b.Type {
+		return false
+	}
+	aBytes, errA := a.MarshalBinary()
+	bBytes, errB := b.MarshalBinary()
+	if errA != nil || errB != nil {
+		return false
+	}
+	return bytes.Equal(aBytes, bBytes)
 }

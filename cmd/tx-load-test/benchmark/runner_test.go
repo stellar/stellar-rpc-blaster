@@ -79,9 +79,15 @@ func TestPollWorkerCountBounds(t *testing.T) {
 	require.Equal(t, 1600, pollWorkerCount(2_000))
 }
 
+func TestBenchmarkTimeoutsKeepPollTrailingTransactionExpiry(t *testing.T) {
+	require.Equal(t, 20, benchmarkTransactionTimeoutSecs)
+	require.Equal(t, 25*time.Second, pollTimeout)
+	require.Greater(t, pollTimeout, time.Duration(benchmarkTransactionTimeoutSecs)*time.Second)
+}
+
 func TestDefaultMetricsFileNameIncludesSecondPrecisionTimestampAndMode(t *testing.T) {
 	name := DefaultMetricsFileName(config.ModeSACTransfer, time.Date(2026, 4, 30, 1, 2, 3, 987654321, time.UTC))
-	require.Equal(t, "tx-load-test-metrics-20260430T010203Z-sac-transfer.ndjson", name)
+	require.Equal(t, filepath.Join("metrics", "tx-load-test-metrics-20260430T010203Z-sac-transfer.ndjson"), name)
 }
 
 func TestWorkloadMetricsReportIncludesStdoutMetrics(t *testing.T) {
@@ -524,6 +530,41 @@ func TestSummarizeDiagnosticEventsUsesReadableTokens(t *testing.T) {
 		)),
 	})
 	require.Equal(t, "trying to access an archived contract data entry | Balance", summary)
+}
+
+func TestSummarizeDiagnosticEventsIncludesErrorAndCallContext(t *testing.T) {
+	summary := summarizeDiagnosticEvents([]string{
+		mustDiagnosticEventXDR(t, []xdr.ScVal{
+			mustScSymbol("fn_call"),
+			mustScSymbol("transfer"),
+		}, mustScVec(
+			mustScAccountAddress(t, keypair.MustRandom().Address()),
+			mustScAccountAddress(t, keypair.MustRandom().Address()),
+		)),
+		mustDiagnosticEventXDR(t, []xdr.ScVal{
+			mustScSymbol("error"),
+			mustScString("trying to access an archived contract data entry"),
+		}, mustScVec(
+			mustScSymbol("Balance"),
+			mustScAccountAddress(t, keypair.MustRandom().Address()),
+		)),
+	})
+	require.Equal(t, "trying to access an archived contract data entry | Balance ; fn_call | transfer", summary)
+}
+
+func TestSummarizeDiagnosticEventsKeepsMoreStableTokens(t *testing.T) {
+	summary := summarizeDiagnosticEvents([]string{
+		mustDiagnosticEventXDR(t, []xdr.ScVal{
+			mustScSymbol("error"),
+			mustScString("contract invocation failed"),
+		}, mustScVec(
+			mustScSymbol("transfer"),
+			mustScSymbol("allowance"),
+			mustScSymbol("Balance"),
+			mustScString("insufficient allowance"),
+		)),
+	})
+	require.Equal(t, "contract invocation failed | transfer | allowance | Balance | insufficient allowance", summary)
 }
 
 func TestSummarizeDiagnosticEventsIgnoresDynamicAddresses(t *testing.T) {

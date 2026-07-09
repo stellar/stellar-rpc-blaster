@@ -164,6 +164,10 @@ func (soroswapMode) NewTargeter(ctx context.Context, rpcURL string, st *state.St
 			AuthEntries:       authEntries,
 			Resources:         resources,
 			ResourceFee:       resourceFee,
+			// buildSoroswapFootprint only ever APPENDS new trustline keys at
+			// the tail of ReadWrite; existing entries keep their indices, so
+			// the simulator's archivedSorobanEntries indices remain valid.
+			SorobanDataExt: tmpl.simulation.Ext,
 		})
 		if err != nil {
 			return err

@@ -22,6 +22,35 @@ type SimulatedInvocation struct {
 	ResourceFee xdr.Int64
 	Footprint   xdr.LedgerFootprint
 	AuthEntries []xdr.SorobanAuthorizationEntry
+	// Ext carries the simulator's SorobanTransactionDataExt. When the simulator
+	// runs against an AutoRestoringSnapshotSource, V1 holds the read-write
+	// footprint indices that core must auto-restore inline at apply time. The
+	// extension MUST be reattached to the submitted SorobanTransactionData;
+	// dropping it causes apply to fail with invokeHostFunctionEntryArchived
+	// for entries the simulator already paid for via the inflated resource fee.
+	Ext xdr.SorobanTransactionDataExt
+}
+
+type RestoreProbeOptions struct {
+	DryRun    bool
+	PadFactor float64
+}
+
+type RestoreProbeResult struct {
+	RestoreNeeded       bool
+	RestoreTransactions int
+	ReadOnlyKeys        int
+	ReadWriteKeys       int
+	ResourceFee         xdr.Int64
+	Simulation          SimulatedInvocation
+	HasSimulation       bool
+	// AutoRestoreKeys counts read-write footprint indices the simulator
+	// marked for inline auto-restoration via SorobanResourcesExtV0. A non-zero
+	// count means the corresponding ledger entries are archived and the
+	// invoking tx must carry SorobanTransactionDataExt.V1 for apply to
+	// auto-restore them; the legacy RestorePreamble is intentionally absent
+	// in this case.
+	AutoRestoreKeys int
 }
 
 func SimulateInvokeContract(
@@ -31,7 +60,10 @@ func SimulateInvokeContract(
 	invokeArgs xdr.InvokeContractArgs,
 	baseFee int64,
 ) (SimulatedInvocation, error) {
-	simResp, err := simulateInvokeContractResponse(st, txSourceKP, opSourceAddress, invokeArgs, baseFee)
+	ctx, cancel := context.WithTimeout(context.Background(), simulateInvokeTimeout)
+	defer cancel()
+
+	simResp, err := simulateInvokeContractResponse(ctx, st, txSourceKP, opSourceAddress, invokeArgs, baseFee)
 	if err != nil {
 		return SimulatedInvocation{}, err
 	}
@@ -44,13 +76,14 @@ func SimulateInvokeContract(
 }
 
 func simulateInvokeContractResponse(
+	ctx context.Context,
 	st *state.State,
 	txSourceKP *keypair.Full,
 	opSourceAddress string,
 	invokeArgs xdr.InvokeContractArgs,
 	baseFee int64,
 ) (protocol.SimulateTransactionResponse, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), simulateInvokeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, simulateInvokeTimeout)
 	defer cancel()
 
 	op := txnbuild.InvokeHostFunction{
@@ -96,8 +129,9 @@ func SimulatePaddedInvokeContract(
 	baseFee int64,
 	padFactor float64,
 ) (SimulatedInvocation, error) {
+	ctx := context.Background()
 	for restoreAttempt := 0; restoreAttempt <= maxSimulationRestoreAttempts; restoreAttempt++ {
-		simResp, err := simulateInvokeContractResponse(st, txSourceKP, opSourceAddress, invokeArgs, baseFee)
+		simResp, err := simulateInvokeContractResponse(ctx, st, txSourceKP, opSourceAddress, invokeArgs, baseFee)
 		if err != nil {
 			return SimulatedInvocation{}, err
 		}
@@ -105,7 +139,7 @@ func SimulatePaddedInvokeContract(
 			if restoreAttempt == maxSimulationRestoreAttempts {
 				return SimulatedInvocation{}, fmt.Errorf("simulate: restore still required after %d attempts", restoreAttempt+1)
 			}
-			if err := submitSimulationRestore(st, txSourceKP, simResp.RestorePreamble); err != nil {
+			if err := submitSimulationRestore(ctx, st, txSourceKP, simResp.RestorePreamble); err != nil {
 				return SimulatedInvocation{}, fmt.Errorf("restore footprint: %w", err)
 			}
 			continue
@@ -122,7 +156,71 @@ func SimulatePaddedInvokeContract(
 	return SimulatedInvocation{}, fmt.Errorf("simulate: restoration attempts exhausted")
 }
 
-func submitSimulationRestore(st *state.State, fallbackSigner *keypair.Full, preamble *protocol.RestorePreamble) error {
+func RestoreInvokeContract(
+	ctx context.Context,
+	st *state.State,
+	txSourceKP *keypair.Full,
+	opSourceAddress string,
+	invokeArgs xdr.InvokeContractArgs,
+	baseFee int64,
+	options RestoreProbeOptions,
+) (RestoreProbeResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var result RestoreProbeResult
+	for restoreAttempt := 0; restoreAttempt <= maxSimulationRestoreAttempts; restoreAttempt++ {
+		simResp, err := simulateInvokeContractResponse(ctx, st, txSourceKP, opSourceAddress, invokeArgs, baseFee)
+		if err != nil {
+			return result, err
+		}
+		if simResp.RestorePreamble == nil {
+			sim, err := parseSimulatedInvocation(simResp)
+			if err != nil {
+				return result, err
+			}
+			PadSimulatedInvocation(&sim, options.PadFactor)
+			result.Simulation = sim
+			result.HasSimulation = true
+			// Protocol-23+ autorestore: when read-write entries are archived
+			// but not yet evicted, the simulator omits RestorePreamble and
+			// instead encodes the indices in SorobanResourcesExtV0. Surface
+			// that here so callers can distinguish a true noop from one that
+			// silently relies on autorestore at apply time.
+			if archived := sim.ArchivedSorobanEntries(); len(archived) > 0 {
+				result.RestoreNeeded = true
+				result.AutoRestoreKeys += len(archived)
+				result.ReadWriteKeys += len(archived)
+				result.ResourceFee += sim.ResourceFee
+			}
+			return result, nil
+		}
+
+		result.RestoreNeeded = true
+		sorobanData, err := restoreSorobanTransactionData(simResp.RestorePreamble)
+		if err != nil {
+			return result, err
+		}
+		result.ReadOnlyKeys += len(sorobanData.Resources.Footprint.ReadOnly)
+		result.ReadWriteKeys += len(sorobanData.Resources.Footprint.ReadWrite)
+		result.ResourceFee += sorobanData.ResourceFee
+
+		if options.DryRun {
+			return result, nil
+		}
+		if restoreAttempt == maxSimulationRestoreAttempts {
+			return result, fmt.Errorf("simulate: restore still required after %d attempts", restoreAttempt+1)
+		}
+		if err := submitSimulationRestore(ctx, st, txSourceKP, simResp.RestorePreamble); err != nil {
+			return result, fmt.Errorf("restore footprint: %w", err)
+		}
+		result.RestoreTransactions++
+	}
+
+	return result, fmt.Errorf("simulate: restoration attempts exhausted")
+}
+
+func submitSimulationRestore(ctx context.Context, st *state.State, fallbackSigner *keypair.Full, preamble *protocol.RestorePreamble) error {
 	sorobanData, err := restoreSorobanTransactionData(preamble)
 	if err != nil {
 		return err
@@ -137,7 +235,7 @@ func submitSimulationRestore(st *state.State, fallbackSigner *keypair.Full, prea
 	if st.NetworkPassphrase == "" {
 		return fmt.Errorf("missing network passphrase for restore transaction")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), simulateInvokeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, simulateInvokeTimeout)
 	defer cancel()
 	logger := log.New().WithField("phase", "benchmark restore")
 	return state.SubmitAndWait(
@@ -189,7 +287,17 @@ func parseSimulatedInvocation(simResp protocol.SimulateTransactionResponse) (Sim
 		ResourceFee: sorobanData.ResourceFee,
 		Footprint:   sorobanData.Resources.Footprint,
 		AuthEntries: authEntries,
+		Ext:         sorobanData.Ext,
 	}, nil
+}
+
+// ArchivedSorobanEntries returns the read-write footprint indices the
+// simulator marked for inline auto-restoration, or nil if none.
+func (s SimulatedInvocation) ArchivedSorobanEntries() []xdr.Uint32 {
+	if s.Ext.V != 1 || s.Ext.ResourceExt == nil {
+		return nil
+	}
+	return s.Ext.ResourceExt.ArchivedSorobanEntries
 }
 
 func PadSimulatedInvocation(sim *SimulatedInvocation, factor float64) {
