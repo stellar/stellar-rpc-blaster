@@ -274,8 +274,8 @@ Removes entries for accounts that no longer exist on-chain, useful after a netwo
   "rpc_url": "https://soroban-testnet.stellar.org",
   "network_passphrase": "Test SDF Network ; September 2015",
   "fee_payer_hash": "5d7a...hex-sha256...",
-  "account_indices": [1, 2, 3],
-  "sac_holder_indices": [1, 2, 3],
+  "account_ranges": ["1-4500"],
+  "sac_holder_ranges": ["1-900"],
   "assets": ["BLTA", "BLTB", "BLTC"],
   "sacs": ["C...", "C...", "C..."],
   "soroswap_factory_contract": "C...",
@@ -285,5 +285,7 @@ Removes entries for accounts that no longer exist on-chain, useful after a netwo
   "cleaned_up": false
 }
 ```
+
+Participant accounts are recorded as derivation-index **ranges**: each entry is a single index (`"5"`) or an inclusive contiguous run (`"1-4500"`), sorted ascending and non-overlapping. A freshly set-up pool is a single range; `sync` pruning or a partially failed teardown batch simply produce more ranges (`["1-3999", "4100-4500"]`). This keeps the file a few hundred bytes regardless of pool size — small enough to inline in a Kubernetes ConfigMap. Legacy files using flat `account_indices` / `sac_holder_indices` arrays are still read transparently and are upgraded to the range form on the next save.
 
 The file is written atomically (write to `.tmp`, then rename) to avoid corruption from interrupted writes. No raw seeds are stored on disk. The recorded `rpc_url` and `network_passphrase` are treated as part of the state identity and are validated before the state is reused.
