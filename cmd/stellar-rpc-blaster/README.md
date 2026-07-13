@@ -23,7 +23,7 @@ make build-rpc-blaster
   --ramp-up 30s
 ```
 
-Results are written to `./cmd/stellar-rpc-blaster/output/test-results-<timestamp>.json`.
+Results are written to `./output/test-results-<timestamp>.json`.
 
 ## Build
 
@@ -47,7 +47,7 @@ Execute a load test.
 | `--duration` | duration | *(required)* | `DURATION` | Test duration (e.g. `60s`, `5m`) |
 | `--ramp-up` | duration | `0` | `RAMP_UP` | Ramp-up period before reaching target RPS |
 | `--step-interval` | duration | `5s` | `STEP_INTERVAL` | Time between RPS step increases during ramp |
-| `--test-output-path` | string | `./cmd/stellar-rpc-blaster/output` | `TEST_OUTPUT_PATH` | Base directory for results JSON |
+| `--test-output-path` | string | `./output` | `TEST_OUTPUT_PATH` | Results output: a directory (timestamped `test-results-*.json` created inside) or an explicit `.json` file path |
 | `--input-data-path` | string | — | `INPUT_DATA_PATH` | Path to seed data file (from `generate`) |
 | `--serial` | bool | `false` | `SERIAL` | Run endpoints one at a time instead of concurrently |
 
