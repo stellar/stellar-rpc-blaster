@@ -87,7 +87,7 @@ func makeCommands() *cobra.Command {
 	commonFlags.String("rpc-url", "", "Target RPC server URL")
 
 	runCmd.Flags().String("config-path", "", "Path to config TOML file")
-	runCmd.Flags().String("test-output-path", "./cmd/stellar-rpc-blaster/output", "Base directory for run output (logs and results)")
+	runCmd.Flags().String("test-output-path", "./output", "Results output: a directory (timestamped test-results-*.json created inside) or an explicit .json file path")
 	runCmd.Flags().String("input-data-path", "", "Path to seed data file output by generate, required for data-dependent endpoints")
 	runCmd.Flags().Duration("duration", time.Duration(0), "Duration to run the test (e.g., 5m)")
 	runCmd.Flags().Duration("ramp-up", time.Duration(0), "Ramp-up time before reaching target RPS (e.g., 30s)")
@@ -95,7 +95,7 @@ func makeCommands() *cobra.Command {
 	runCmd.Flags().Bool("serial", false, "Run endpoints one at a time sequentially instead of concurrently")
 	runCmd.Flags().Int("error-percent", 50, "Threshold for error percentage to kill the test (e.g. 50 means kill at 50%)")
 
-	generateCmd.Flags().String("output", "./cmd/stellar-rpc-blaster/output/seed.json", "Path to seed data file output by generate")
+	generateCmd.Flags().String("output", "./output/seed.json", "Path to seed data file output by generate")
 	generateCmd.Flags().String("ledger-window", "", "Ledger range as START[,END] for data generation")
 	generateCmd.Flags().Uint32("count", 5000, "Number of ledgers to sample from the ledger window")
 
