@@ -241,3 +241,7 @@ Each timeline entry corresponds to one step interval (default 5s) and contains:
 | `p50_ms` ... `p99.9_ms` | Latency percentiles for this window only |
 
 The timeline reveals the degradation curve: scan for where `error_rate_pct` jumps from 0 and where `p99_ms` spikes — that's the RPS at which the RPC buckled.
+
+---
+
+> **Note:** This repository is not in scope for the Stellar Development Foundation bug bounty program. Vulnerabilities found in this repo are not eligible for rewards.
