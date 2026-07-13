@@ -42,6 +42,7 @@ type EndpointStats struct {
 	percentiles  map[float64]time.Duration
 	startRPS     float64
 	targetRPS    float64
+	limit        uint64 // effective per-request limit; 0 for endpoints without pagination
 	startTime    time.Time     // set on activation; zero means inactive
 	stepInterval time.Duration // window size for timeline snapshots
 	windows      []windowStats // per-step-interval accumulators
@@ -124,6 +125,7 @@ func NewAggregator(logger *log.Entry, settings config.Config, cancel context.Can
 			percentiles:  make(map[float64]time.Duration),
 			errorTypes:   make(map[string]ErrorResult),
 			startRPS:     float64(max(settings.GetEndpointStartRPS(endpointKey), 0)),
+			limit:        uint64(settings.GetEndpointLimit(endpointKey)),
 			stepInterval: stepInterval,
 		}
 		if !settings.Serial {
