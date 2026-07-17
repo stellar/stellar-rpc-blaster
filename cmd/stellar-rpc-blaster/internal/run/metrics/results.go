@@ -24,6 +24,7 @@ type EndpointResult struct {
 	Success       uint64                 `json:"success"`
 	Errors        uint64                 `json:"errors"`
 	TargetRPS     float64                `json:"target_rps"`
+	Limit         uint64                 `json:"limit,omitempty"`
 	Percentiles   map[string]float64     `json:"percentiles_ms"`
 	ErrorTypes    map[string]ErrorResult `json:"error_types,omitempty"`
 	Timeline      []StepSnapshot         `json:"-"`
@@ -92,6 +93,7 @@ func (a *Aggregator) Results() *Results {
 			Errors:        stats.errors,
 			ErrorTypes:    errorTypesCopy,
 			TargetRPS:     stats.targetRPS,
+			Limit:         stats.limit,
 			Percentiles:   make(map[string]float64),
 			Timeline:      timeline,
 		}

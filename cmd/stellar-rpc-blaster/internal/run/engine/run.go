@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 
@@ -103,10 +104,20 @@ func NewBlastEngine(
 // Run executes the blast according to the engine's configuration, sending results to the OutCh for aggregation
 func (b *BlastEngine) Run(ctx context.Context, logger *log.Entry, aggregator *blasterMetrics.Aggregator) {
 	if b.cfg.Serial {
-		for _, blast := range b.BlastSpecs {
+		for i, blast := range b.BlastSpecs {
 			if ctx.Err() != nil {
 				logger.Errorf("Endpoint blasts terminating early due to context error: %s", ctx.Err().Error())
 				return
+			}
+			// Cool off between endpoints so a struggling server can recover before the next blast
+			if i > 0 && b.cfg.Cooloff > 0 {
+				logger.Infof("Cooling off for %s before next endpoint", b.cfg.Cooloff)
+				select {
+				case <-time.After(b.cfg.Cooloff):
+				case <-ctx.Done():
+					logger.Errorf("Endpoint blasts terminating early during cooloff: %s", ctx.Err().Error())
+					return
+				}
 			}
 			aggregator.ActivateEndpoint(blast.EndpointKey)
 			logger.Infof("Serial mode: starting endpoint %s", blast.EndpointKey)

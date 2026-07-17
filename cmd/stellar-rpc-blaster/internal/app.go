@@ -142,13 +142,20 @@ func (a *App) runGenerate(ctx context.Context) error {
 	return g.Generate(ctx, a.logger, a.config)
 }
 
+// setOutput resolves TestOutputPath to a results file: an explicit .json path is
+// used as-is, anything else is treated as a directory and gets a timestamped filename.
 func (a *App) setOutput(runtimeSettings *config.RuntimeSettings) error {
-	if runtimeSettings.Mode == config.Run {
-		if err := os.MkdirAll(runtimeSettings.TestOutputPath, 0o755); err != nil {
-			return fmt.Errorf("could not create output directory: %w", err)
-		}
-		filename := fmt.Sprintf("test-results-%s.json", time.Now().Format("2006-01-02T15-04-05"))
-		runtimeSettings.TestOutputPath = filepath.Join(runtimeSettings.TestOutputPath, filename)
+	if runtimeSettings.Mode != config.Run {
+		return nil
 	}
+	path := runtimeSettings.TestOutputPath
+	if filepath.Ext(path) != ".json" {
+		filename := fmt.Sprintf("test-results-%s.json", time.Now().Format("2006-01-02T15-04-05"))
+		path = filepath.Join(path, filename)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("could not create output directory: %w", err)
+	}
+	runtimeSettings.TestOutputPath = path
 	return nil
 }
