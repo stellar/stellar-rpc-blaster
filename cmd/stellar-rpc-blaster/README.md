@@ -50,6 +50,7 @@ Execute a load test.
 | `--test-output-path` | string | `./output` | `TEST_OUTPUT_PATH` | Results output: a directory (timestamped `test-results-*.json` created inside) or an explicit `.json` file path |
 | `--input-data-path` | string | — | `INPUT_DATA_PATH` | Path to seed data file (from `generate`) |
 | `--serial` | bool | `false` | `SERIAL` | Run endpoints one at a time instead of concurrently |
+| `--cooloff` | duration | `0` | `COOLOFF` | Delay between endpoints in serial mode so one endpoint's failures don't cascade into the next (e.g. `30s`); requires `--serial` |
 
 ### `generate`
 
@@ -125,6 +126,8 @@ All configured endpoints blast simultaneously for the full `--duration`.
 ### Serial (`--serial`)
 
 Endpoints run one at a time. Each gets the full `--duration`, so total test time is `duration * number_of_endpoints`. Useful for isolating per-endpoint behavior without cross-endpoint interference.
+
+Pass `--cooloff <duration>` to insert a delay between successive endpoints, giving a struggling server time to recover so one endpoint's failures don't cascade into the next. With cooloff, total test time becomes `duration * number_of_endpoints + cooloff * (number_of_endpoints - 1)`. It only applies in serial mode.
 
 ## Ramp-Up and Stepped Pacer
 

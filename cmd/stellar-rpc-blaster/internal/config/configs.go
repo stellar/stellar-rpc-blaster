@@ -31,9 +31,10 @@ type Config struct {
 	Duration       time.Duration
 	RampUp         time.Duration
 	StepInterval   time.Duration
-	Serial         bool   // run endpoints one at a time instead of concurrently
-	TestOutputPath string // path to write JSON results
-	ErrorPercent   int    // threshold for error percentage to kill the test (e.g. 50 means 50%)
+	Serial         bool          // run endpoints one at a time instead of concurrently
+	Cooloff        time.Duration // delay between endpoints in serial mode so failures don't cascade
+	TestOutputPath string        // path to write JSON results
+	ErrorPercent   int           // threshold for error percentage to kill the test (e.g. 50 means 50%)
 
 	// Generate mode settings
 	OutputPath   string
@@ -74,6 +75,7 @@ type RuntimeSettings struct {
 	RampUp         time.Duration
 	StepInterval   time.Duration
 	Serial         bool
+	Cooloff        time.Duration
 	ErrorPercent   int
 
 	// Generate mode settings
@@ -117,6 +119,7 @@ func NewConfig(
 		cfg.RampUp = settings.RampUp
 		cfg.StepInterval = settings.StepInterval
 		cfg.Serial = settings.Serial
+		cfg.Cooloff = settings.Cooloff
 		cfg.TestOutputPath = settings.TestOutputPath
 		if err := cfg.processToml(settings.ConfigPath); err != nil {
 			return Config{}, err
@@ -162,6 +165,13 @@ func (c *Config) processToml(tomlPath string) error {
 func (c *Config) validateEndpointConfig() error {
 	if c.ErrorPercent < 0 || c.ErrorPercent > 100 {
 		return fmt.Errorf("error-percent must be between 0 and 100")
+	}
+
+	if c.Cooloff < 0 {
+		return fmt.Errorf("cooloff must not be negative")
+	}
+	if c.Cooloff > 0 && !c.Serial {
+		return fmt.Errorf("cooloff only applies in serial mode; pass --serial")
 	}
 
 	if c.RampUp > 0 {

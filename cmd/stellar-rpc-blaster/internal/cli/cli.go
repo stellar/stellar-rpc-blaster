@@ -50,6 +50,7 @@ func makeCommands() *cobra.Command {
 				cmd.Flags().Lookup("test-output-path"),
 				cmd.Flags().Lookup("input-data-path"),
 				cmd.Flags().Lookup("serial"),
+				cmd.Flags().Lookup("cooloff"),
 				cmd.Flags().Lookup("error-percent"),
 			)
 			settings.Mode = config.Run
@@ -93,6 +94,7 @@ func makeCommands() *cobra.Command {
 	runCmd.Flags().Duration("ramp-up", time.Duration(0), "Ramp-up time before reaching target RPS (e.g., 30s)")
 	runCmd.Flags().Duration("step-interval", time.Second*5, "Interval between steps during the test (e.g., 5s)")
 	runCmd.Flags().Bool("serial", false, "Run endpoints one at a time sequentially instead of concurrently")
+	runCmd.Flags().Duration("cooloff", time.Duration(0), "Delay between endpoints in serial mode so one endpoint's failures don't cascade into the next (e.g. 30s)")
 	runCmd.Flags().Int("error-percent", 50, "Threshold for error percentage to kill the test (e.g. 50 means kill at 50%)")
 
 	generateCmd.Flags().String("output", "./output/seed.json", "Path to seed data file output by generate")
@@ -118,6 +120,7 @@ func bindRunCliParameters(
 	testOutputPath *pflag.Flag,
 	inputDataPath *pflag.Flag,
 	serial *pflag.Flag,
+	cooloff *pflag.Flag,
 	errorPercent *pflag.Flag,
 ) config.RuntimeSettings {
 	bindFlag := func(flag *pflag.Flag) {
@@ -132,6 +135,7 @@ func bindRunCliParameters(
 	bindFlag(testOutputPath)
 	bindFlag(inputDataPath)
 	bindFlag(serial)
+	bindFlag(cooloff)
 	bindFlag(errorPercent)
 	settings := config.RuntimeSettings{}
 	settings.ConfigPath = viper.GetString(cfgPath.Name)
@@ -142,6 +146,7 @@ func bindRunCliParameters(
 	settings.TestOutputPath = viper.GetString(testOutputPath.Name)
 	settings.InputDataPath = viper.GetString(inputDataPath.Name)
 	settings.Serial = viper.GetBool(serial.Name)
+	settings.Cooloff = viper.GetViper().GetDuration(cooloff.Name)
 	settings.ErrorPercent = viper.GetInt(errorPercent.Name)
 
 	return settings
