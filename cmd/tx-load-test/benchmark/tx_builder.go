@@ -78,12 +78,15 @@ func buildSorobanSendTransactionBody(params sorobanSendTransactionParams) ([]byt
 //
 // Stellar-core enforces a self-induced surge price during sustained
 // Soroban-heavy traffic; the inclusion floor scales with how much resource
-// work each tx consumes. Sampling a 10k-100k inclusion fee on a tx whose
-// resource fee is several million stroops underbids that floor and shows up
-// as txINSUFFICIENT_FEE at submit time. Boosting the inclusion fee
-// proportionally is cheap on test networks (the fee payer is funded by
-// friendbot) and lets the fee-bump's totalFee = (numOps+1) * baseFee +
-// resourceFee actually clear the floor.
+// work each tx consumes. Sampling a low fill-the-gap inclusion fee (the usual
+// [benchmarkBaseFeeMin, benchmarkBaseFeeMax] band, a few hundred stroops) on a
+// tx whose resource fee is several million stroops underbids that floor and
+// shows up as txINSUFFICIENT_FEE at submit time. This threshold is only
+// crossed by expensive Soroban work such as autorestore -- steady-state
+// transfers have resource fees ~15k, far below heavyResourceFeeThreshold, so
+// the floor does not apply to them and the low fill-the-gap bids stand.
+// Boosting the inclusion fee for the heavy case lets the fee-bump's
+// totalFee = (numOps+1) * baseFee + resourceFee actually clear the floor.
 func benchmarkInnerBaseFee(resourceFee xdr.Int64) int64 {
 	baseFee := sampleBenchmarkBaseFee()
 	const heavyResourceFeeThreshold xdr.Int64 = 10_000_000
