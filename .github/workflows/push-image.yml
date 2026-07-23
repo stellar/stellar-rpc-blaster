@@ -4,8 +4,8 @@
 # workflows).
 #
 # Tags pushed:
-#   <registry>/tx-load-test:latest        -- tracks the default branch
-#   <registry>/tx-load-test:sha-<short>   -- immutable, for pinning in k8s
+#   <registry>/dev/tx-load-test:latest        -- tracks the default branch
+#   <registry>/dev/tx-load-test:sha-<short>   -- immutable, for pinning in k8s
 #
 # The weekly CronJob should pin the sha- tag, not :latest, so a run is never
 # silently retargeted by a new push.
@@ -54,7 +54,9 @@ jobs:
         run: |
           registry='${{ steps.ecr.outputs.ecr-registry }}'
           short_sha="$(git rev-parse --short=12 HEAD)"
-          echo "image=${registry}/tx-load-test" >> "$GITHUB_OUTPUT"
+          # The dev/ namespace is required: ecr-push only auto-creates (and
+          # the push role only allows) repositories under dev/, stg/, prd/.
+          echo "image=${registry}/dev/tx-load-test" >> "$GITHUB_OUTPUT"
           echo "sha_tag=sha-${short_sha}" >> "$GITHUB_OUTPUT"
 
       - name: Build image
