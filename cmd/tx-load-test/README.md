@@ -171,6 +171,7 @@ Before the benchmark starts, the tool queries the chosen RPC endpoint (either `-
 | `--account-preflight-sample` | `10` | Number of participant accounts to sample during runtime preflight |
 | `--trace-file` | *(disabled)* | Optional NDJSON file that captures every benchmark submit and poll request/response |
 | `--metrics-file` | `metrics/tx-load-test-metrics-<timestamp>-<mode>.ndjson` | Optional flattened benchmark metrics file path |
+| `--metrics-gcs-url` | *(disabled)* | Optional `gs://bucket/prefix/` destination; the metrics file is uploaded there after the run. A trailing slash appends the local filename (unique per run); auth uses Application Default Credentials |
 | `--log-level` | `info` | `debug`, `info`, `warn`, `error` |
 
 **Mode guide:**
