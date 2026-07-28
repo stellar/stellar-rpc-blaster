@@ -120,6 +120,28 @@ wait_healthy() {
     die "RPC did not report healthy on $RPC_URL within ${HEALTH_TIMEOUT_SECONDS}s"
 }
 
+# getHealth turns healthy before the captive core's query server is up, and
+# until then getLedgerEntries fails with "could not query captive core" (404).
+# Probe it with the all-zero account key — valid XDR on every network, the
+# entry never exists — until the query path answers without an error.
+PROBE_KEY=$(python3 -c 'import base64; print(base64.b64encode(bytes(40)).decode())')
+
+wait_query_ready() {
+    local deadline=$((SECONDS + HEALTH_TIMEOUT_SECONDS))
+    local body
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        body=$(curl -s -m 5 -X POST -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"getLedgerEntries","params":{"keys":["'"$PROBE_KEY"'"]}}' \
+            "$RPC_URL" 2>/dev/null || true)
+        if printf '%s' "$body" | grep -q '"result"' && \
+           ! printf '%s' "$body" | grep -q '"error"'; then
+            return 0
+        fi
+        sleep "$HEALTH_POLL_SECONDS"
+    done
+    die "getLedgerEntries still failing on $RPC_URL after ${HEALTH_TIMEOUT_SECONDS}s — captive core query server not ready"
+}
+
 # --- meta.json -------------------------------------------------------------
 
 IMAGE=$(docker inspect --format '{{.Config.Image}}' "$CONTAINER" 2>/dev/null || true)
@@ -175,7 +197,8 @@ for MODE in $(printf '%s' "$MODES" | tr ',' ' '); do
     echo "restarting stellar-rpc in $CONTAINER"
     docker exec "$CONTAINER" supervisorctl restart stellar-rpc
     wait_healthy
-    echo "RPC healthy"
+    wait_query_ready
+    echo "RPC healthy, query server ready"
 
     WINDOW_START=$(now_rfc3339)
 
