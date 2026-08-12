@@ -71,9 +71,6 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 				}
 				return
 			}
-			if a.done {
-				continue
-			}
 			if err := a.Record(sample); err != nil {
 				a.logger.Error(err)
 			}
