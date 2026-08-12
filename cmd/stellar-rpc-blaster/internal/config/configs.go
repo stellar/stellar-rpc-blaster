@@ -175,7 +175,7 @@ func (c *Config) validateEndpointConfig() error {
 	}
 
 	if c.RampUp > 0 {
-		if c.StepInterval < 0 || c.StepInterval%(5*time.Second) != 0 {
+		if c.StepInterval <= 0 || c.StepInterval%(5*time.Second) != 0 {
 			return fmt.Errorf("step-interval must be a positive multiple of 5s")
 		}
 		if c.StepInterval > c.RampUp {
