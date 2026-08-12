@@ -285,9 +285,13 @@ func (e *EndpointStats) String() string {
 
 func newErrorResult(sample Sample) ErrorResult {
 	now := time.Now()
+	errorMsg, errorCode := sample.Err, int(sample.Code)
+	if sample.RPCErr != nil {
+		errorMsg, errorCode = sample.RPCErr.Error(), int(sample.RPCErr.Code)
+	}
 	return ErrorResult{
-		ErrorMsg:  sample.Err,
-		ErrorCode: int(sample.Code),
+		ErrorMsg:  errorMsg,
+		ErrorCode: errorCode,
 		Count:     1,
 		FirstSeen: now,
 		LastSeen:  now,
