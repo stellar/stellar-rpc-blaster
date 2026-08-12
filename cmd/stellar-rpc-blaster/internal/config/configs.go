@@ -6,8 +6,10 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
+	"github.com/caarlos0/env/v11"
 	"github.com/pelletier/go-toml"
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
@@ -16,6 +18,8 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/run/parameters"
 	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
 )
+
+const DefaultErrorPercent = 50 // threshold for error percentage to kill the test, when not set anywhere
 
 type Config struct {
 	Endpoints map[string]EndpointConfig `toml:"endpoints"`
@@ -41,7 +45,14 @@ type Config struct {
 	LedgerWindow []uint32
 	Count        uint32
 
-	InputDataPath string `toml:"input_data_path"` // path to read seed data for data-dependent endpoints, output by generate mode
+	InputDataPath string // path to read seed data for data-dependent endpoints, output by generate mode
+}
+
+// Overrides are the settings settable in multiple places. Each source (config file,
+// CLI flag, env var) fills its own copy; a nil field means unset in that source.
+type Overrides struct {
+	ErrorPercent  *int    `toml:"error_percent" env:"ERROR_PERCENT"`
+	InputDataPath *string `toml:"input_data_path" env:"INPUT_DATA_PATH"`
 }
 
 type Mode int
@@ -70,13 +81,13 @@ type RuntimeSettings struct {
 	// Run mode settings
 	ConfigPath     string
 	TestOutputPath string
-	InputDataPath  string
+	InputDataPath  *string // nil unless set via CLI flag
 	Duration       time.Duration
 	RampUp         time.Duration
 	StepInterval   time.Duration
 	Serial         bool
 	Cooloff        time.Duration
-	ErrorPercent   int
+	ErrorPercent   *int // nil unless set via CLI flag
 
 	// Generate mode settings
 	OutputPath   string
@@ -121,20 +132,27 @@ func NewConfig(
 		cfg.Serial = settings.Serial
 		cfg.Cooloff = settings.Cooloff
 		cfg.TestOutputPath = settings.TestOutputPath
-		if err := cfg.processToml(settings.ConfigPath); err != nil {
+		toml, err := cfg.processToml(settings.ConfigPath)
+		if err != nil {
 			return Config{}, err
 		}
 		logger.Infof("Successfully loaded config from %s", settings.ConfigPath)
-		if settings.InputDataPath != "" && cfg.InputDataPath != "" {
-			return Config{}, fmt.Errorf("input-data-path provided in both CLI and config file; please provide in only one place")
-		} else if settings.InputDataPath != "" {
-			cfg.InputDataPath = settings.InputDataPath
+		var envs Overrides
+		if err := env.Parse(&envs); err != nil {
+			return Config{}, err
+		}
+		if cfg.InputDataPath, err = resolve("input-data-path", "",
+			toml.InputDataPath, settings.InputDataPath, envs.InputDataPath); err != nil {
+			return Config{}, err
+		}
+		if cfg.ErrorPercent, err = resolve("error-percent", DefaultErrorPercent,
+			toml.ErrorPercent, settings.ErrorPercent, envs.ErrorPercent); err != nil {
+			return Config{}, err
 		}
 		if err := cfg.validateEndpointConfig(); err != nil {
 			return Config{}, err
 		}
 		logger.Infof("Successfully loaded seed data from %s", cfg.InputDataPath)
-		cfg.ErrorPercent = settings.ErrorPercent
 	case Generate:
 		cfg.OutputPath = settings.OutputPath
 		cfg.LedgerWindow = settings.LedgerWindow
@@ -146,19 +164,39 @@ func NewConfig(
 	return cfg, nil
 }
 
-func (c *Config) processToml(tomlPath string) error {
-	// Load config TOML file
-	cfg, err := toml.LoadFile(tomlPath)
+func (c *Config) processToml(tomlPath string) (Overrides, error) {
+	var o Overrides
+	tree, err := toml.LoadFile(tomlPath)
 	if err != nil {
-		return fmt.Errorf("config file \"%s\" was not found: %w", tomlPath, err)
+		return o, fmt.Errorf("config file \"%s\" was not found: %w", tomlPath, err)
 	}
 
-	// Unmarshal TOML data into the Config struct
-	if err = cfg.Unmarshal(c); err != nil {
-		return fmt.Errorf("error unmarshalling TOML config: %w", err)
+	// Unmarshal TOML data into the Config struct, and multi-place settings into Overrides
+	if err = tree.Unmarshal(c); err == nil {
+		err = tree.Unmarshal(&o)
 	}
+	if err != nil {
+		return o, fmt.Errorf("error unmarshalling TOML config: %w", err)
+	}
+	return o, nil
+}
 
-	return nil
+// resolve returns a setting's single specified value, or the default if no source set it.
+// Setting it in more than one place (config file, CLI flag, env var) is an error.
+func resolve[T any](name string, def T, tomlV, flagV, envV *T) (T, error) {
+	var set []string
+	v := def
+	for i, p := range []*T{tomlV, flagV, envV} {
+		if p != nil {
+			set = append(set, [...]string{"config file", "CLI flag", "env var"}[i])
+			v = *p
+		}
+	}
+	if len(set) > 1 {
+		var zero T
+		return zero, fmt.Errorf("%s set in multiple places (%s); set it in only one", name, strings.Join(set, ", "))
+	}
+	return v, nil
 }
 
 // Ensure at least one endpoint is configured if launching a load test and data-dependent endpoints have input data
