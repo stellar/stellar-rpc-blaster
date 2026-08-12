@@ -2,8 +2,6 @@ package util
 
 import (
 	"math/rand/v2"
-
-	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 )
 
 // VaryLimit returns a random limit between 1 and the provided max limit.
@@ -18,34 +16,6 @@ func VaryFormat() string {
 		return "json"
 	}
 	return "base64"
-}
-
-// randomly decides whether to include a pagination cursor in the request, to vary request patterns for data-dependent endpoints that paginate
-// used by getEvents, getTransactions, getLedgers
-func VaryCursorBasedPagination(limit uint, cursor string) *protocol.LedgerPaginationOptions {
-	pagination := &protocol.LedgerPaginationOptions{
-		Limit: limit,
-	}
-	if rand.Float64() < PrCursor {
-		pagination.Cursor = cursor
-	}
-	return pagination
-}
-
-// used only by getEvents, which has a different pagination struct
-func VaryCursorBasedPaginationForEvents(limit uint, cursor string) *protocol.PaginationOptions {
-	pagination := &protocol.PaginationOptions{
-		Limit: limit,
-	}
-	if rand.Float64() < PrCursor {
-		c, err := protocol.ParseCursor(cursor)
-		if err != nil {
-			// if cursor parsing fails, fall back to no cursor rather than erroring out, since this is just for request variation
-			return &protocol.PaginationOptions{Limit: limit}
-		}
-		pagination.Cursor = &c
-	}
-	return pagination
 }
 
 // Chooses key count according to the distribution defined in PrKeyCount

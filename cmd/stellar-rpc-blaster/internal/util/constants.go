@@ -41,5 +41,4 @@ var PrKeyCount = []float64{0.8, 0.15, 0.05} // getLedgerEntries key distribution
 const (
 	LedgerKeyLimit         = 200
 	PrJson         float64 = 0.5 // probability of using "json" vs "xdr" format for transaction requests
-	PrCursor       float64 = 0.5 // probability of paginating with a cursor
 )
