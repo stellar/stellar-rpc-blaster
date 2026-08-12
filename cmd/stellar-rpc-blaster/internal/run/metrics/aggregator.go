@@ -119,7 +119,7 @@ func NewAggregator(logger *log.Entry, settings config.Config, cancel context.Can
 	sort.Strings(endpoints)
 	a.orderedEndpoints = endpoints // maintain order for consistent output
 
-	stepInterval := max(5, settings.StepInterval)
+	stepInterval := max(5*time.Second, settings.StepInterval)
 
 	for _, endpointKey := range endpoints {
 		a.stats[endpointKey] = &EndpointStats{
