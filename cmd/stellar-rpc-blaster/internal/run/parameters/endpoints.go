@@ -42,7 +42,7 @@ func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 		}
 		return result, nil
 
-	case "getTransactions":
+	case "getTransactions", "getLedgers":
 		lr := params.Output.LedgerRange
 		span := int(lr.Last) - int(lr.First)
 		if span <= 0 {
@@ -53,28 +53,13 @@ func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 		result := make([]map[string]any, count)
 		for i := range count {
 			start := lr.First + uint32(rand.IntN(span))
+			remaining := lr.Last - start
 			entry := map[string]any{
 				"startLedger": start,
-				"xdrFormat":   util.VaryFormat(),
-			}
-			result[i] = entry
-		}
-		return result, nil
-
-	case "getLedgers":
-		lr := params.Output.LedgerRange
-		span := int(lr.Last) - int(lr.First)
-		if span <= 0 {
-			return nil, fmt.Errorf("empty ledger range for %s", endpointKey)
-		}
-		count := min(span, maxNeededNumBodies, util.MaxNumPrebuiltBodies)
-
-		result := make([]map[string]any, count)
-		for i := range count {
-			start := lr.First + uint32(rand.IntN(span))
-			entry := map[string]any{
-				"startLedger": start,
-				"xdrFormat":   util.VaryFormat(),
+				"pagination": map[string]any{
+					"limit": min(limit, remaining),
+				},
+				"xdrFormat": util.VaryFormat(),
 			}
 			result[i] = entry
 		}
@@ -95,11 +80,15 @@ func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 			filters := eventBodies.BuildEventsFilters()
 			start := lr.First + uint32(rand.IntN(int(span)))
 			end := min(start+limit, lr.Last)
+			remaining := lr.Last - start
 			entry := map[string]any{
 				"startLedger": start,
 				"endLedger":   end,
-				"xdrFormat":   util.VaryFormat(),
-				"filters":     []map[string]any{filters},
+				"pagination": map[string]any{
+					"limit": min(limit, remaining),
+				},
+				"xdrFormat": util.VaryFormat(),
+				"filters":   []map[string]any{filters},
 			}
 			result[i] = entry
 		}
