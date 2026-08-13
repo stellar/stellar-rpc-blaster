@@ -12,10 +12,8 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
 )
 
-// The getEvents traffic model: a weighted mixture of behavioral archetypes measured from a
-// one-week production capture, re-joined uncapped against full ledger history. Each archetype
-// owns its joint window x filter x limit shape; sampling axes independently was measured to
-// mis-generate the dominant cost class ~3.4x, hence archetypes rather than marginals.
+// The getEvents traffic model is a weighted mixture of behavioral archetypes observed
+// in prod traffic. Each archetype owns its joint window x filter x limit shape.
 var eventsArchetypes = []eventsArchetype{
 	{"head-poll", 0.48, (*eventsSampler).headPoll},
 	{"deep-pager", 0.23, (*eventsSampler).deepPager},
@@ -111,44 +109,50 @@ func (s *eventsSampler) sample() (string, map[string]any) {
 
 // ---- archetype builders ----
 
-// headPoll: start at head/head-1; mix of open-ended, one-ledger windows, and the
-// observed exclusive-bound noop (endLedger == startLedger); mostly cold contracts
-// with a follower-on-emitter slice that catches fresh events.
+// headPoll: start at head/head-1 and query a mix of open-ended + one-ledger windows.
+// mostly cold contracts with a follower-on-emitter slice that catches fresh events.
 func (s *eventsSampler) headPoll() map[string]any {
 	start := s.head.Latest - uint32(s.pick([]float64{0.47, 0.53}))
 	body := s.body(start, s.contractFilter(0.10, false))
-	switch r := s.rng.Float64(); {
-	case r < 0.10:
-		body["endLedger"] = start // exclusive-bound client bug: valid, instant, empty
-	case r < 0.55: // open-ended: scans the ledger or two up to head
-	default:
-		body["endLedger"] = start + 1
+	if s.rng.Float64() < 0.5 {
+		body["endLedger"] = start + 1 // one-ledger window case
 	}
 	s.setLimit(body, []uint{100, 200}, []float64{0.75, 0.25})
 	return body
 }
 
-// deepPager: the lagging pollers — deep placement, stereotyped 250-ledger window,
-// limit 1000; cold pages, occasionally paging a real emitter's history.
+// deepPager: poll deep-placed 250-ledger window with a fatter tail (measured avg
+// window 421), limit 1000. polls mostly cold pages and rarely emitters or topics
 func (s *eventsSampler) deepPager() map[string]any {
 	start := s.placeDeep(0)
 	body := s.body(start, s.contractFilter(0.06, false))
-	body["endLedger"] = min(start+250, s.head.Latest)
+	span := []uint32{250, 2000}[s.pick([]float64{0.9, 0.1})]
+	body["endLedger"] = min(start+span, s.head.Latest)
 	s.setLimit(body, []uint{1000}, []float64{1})
 	return body
 }
 
-// tailPoll: mid-band pollers 10-10k behind, mostly bounded windows; carries the
-// topic-bearing and two-contract minority of the poll traffic.
+// tailPoll: mid-band pollers 10-10k behind, mostly bounded windows. carries the
+// topic-bearing and two-contract minority of the poll traffic. Open-ended depth is
+// bimodal per the measured mid-band.
 func (s *eventsSampler) tailPoll() map[string]any {
-	depth := 10 + uint32(s.rng.IntN(int(util.EventsDeepBandFloor)-10))
+	bounded := s.rng.Float64() < 0.70
+	var depth uint32
+	switch {
+	case bounded:
+		depth = 10 + uint32(s.rng.IntN(int(util.EventsDeepBandFloor)-10))
+	case s.rng.Float64() < 0.45:
+		depth = 10 + uint32(s.rng.IntN(240))
+	default:
+		depth = 1000 + uint32(s.rng.IntN(4000))
+	}
 	start := s.clampStart(s.head.Latest - depth)
 	filter := s.contractFilter(0, true)
 	if s.rng.Float64() < 0.03 {
 		filter["contractIds"] = []string{s.coldContract(), s.coldContract()}
 	}
 	body := s.body(start, filter)
-	if s.rng.Float64() < 0.70 {
+	if bounded {
 		span := []uint32{120, 250, 590}[s.pick([]float64{0.3, 0.5, 0.2})]
 		body["endLedger"] = min(start+span, s.head.Latest)
 	}
@@ -197,7 +201,7 @@ func (s *eventsSampler) deepScan() map[string]any {
 	return body
 }
 
-// firehose: no filters at all; matches everything instantly and early-exits at limit.
+// firehose: no filters at all. matches everything instantly and early-exits at limit.
 func (s *eventsSampler) firehose() map[string]any {
 	start := s.head.Latest - uint32(s.rng.IntN(2))
 	body := map[string]any{"startLedger": start}
@@ -285,9 +289,7 @@ func (s *eventsSampler) placeDeep(around uint32) uint32 {
 	} else if retention > util.EventsDeepBandFloor {
 		depth += uint32(s.rng.IntN(int(retention - util.EventsDeepBandFloor + 1)))
 	}
-	if depth > retention {
-		depth = retention
-	}
+	depth = min(depth, retention)
 	return s.head.Latest - depth
 }
 
@@ -316,8 +318,7 @@ func (s *eventsSampler) pick(weights []float64) int {
 	return len(weights) - 1
 }
 
-// coldPoolFromKeys harvests deployed-but-quiet contract IDs from seeded ledger keys,
-// excluding known emitters: real contracts that exist on-ledger but rarely emit.
+// coldPoolFromKeys gets deployed-but-quiet contract IDs from seeded ledger keys.
 func coldPoolFromKeys(keys []string, exclude []string, n int) []string {
 	seen := make(map[string]bool, n)
 	var out []string
@@ -331,7 +332,7 @@ func coldPoolFromKeys(keys []string, exclude []string, n int) []string {
 			continue
 		}
 		id := strkey.MustEncode(strkey.VersionByteContract, cid[:])
-		if seen[id] || slices.Contains(exclude, id) {
+		if seen[id] || slices.Contains(exclude, id) { // skip known emitters
 			continue
 		}
 		seen[id] = true
