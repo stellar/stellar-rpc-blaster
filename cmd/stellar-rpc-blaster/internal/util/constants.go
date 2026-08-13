@@ -22,6 +22,11 @@ const (
 	DefaultEventsPageLimit  uint32 = 100
 
 	DefaultSeedSliceSize uint32 = 64 // starting size for slices of bootstrapped seed data
+
+	// Caps on stored event seed data (counts keep accumulating past them)
+	MaxSeedEventContracts    = 20 // top emitter contracts kept, by observed emission count
+	MaxSeedTopicsPerContract = 8
+	MaxSeedParamSetsPerTopic = 5
 )
 
 // Configurable limits for run
@@ -41,4 +46,14 @@ var PrKeyCount = []float64{0.8, 0.15, 0.05} // getLedgerEntries key distribution
 const (
 	LedgerKeyLimit         = 200
 	PrJson         float64 = 0.5 // probability of using "json" vs "xdr" format for transaction requests
+)
+
+// getEvents traffic model, measured from a one-week production capture re-joined
+// uncapped against full ledger history (archetype mixture lives in run/parameters/events_archetypes.go)
+const (
+	EventsProfileVersion         = 1     // stamped into results JSON; bump when the events model changes
+	PrEventsJson         float64 = 0.015 // xdrFormat "json"; the key is omitted otherwise (base64 default)
+	EventsLeftEdgeMargin uint32  = 1000  // never place startLedger within this of the retention floor
+	EventsDeepBandFloor  uint32  = 10000 // "deep" placement means at least this far behind head
+	EventsColdPoolSize           = 50    // deployed-but-quiet contracts drawn from seed ledger keys
 )
