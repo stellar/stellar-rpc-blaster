@@ -84,21 +84,21 @@ func (c *ContractEvents) trim(n int) {
 
 // ContractsAndWeights returns emitter contract IDs with their emission counts as
 // weights, sorted for deterministic iteration.
-func (c ContractEvents) ContractsAndWeights() ([]string, []int) {
+func (c ContractEvents) ContractsAndWeights() ([]string, []float64) {
 	ids := slices.Sorted(maps.Keys(c.ContractIds))
-	weights := make([]int, len(ids))
+	weights := make([]float64, len(ids))
 	for i, id := range ids {
-		weights[i] = int(min(c.ContractIds[id].Count, 1<<31))
+		weights[i] = float64(c.ContractIds[id].Count)
 	}
 	return ids, weights
 }
 
 // TopicsAndWeights returns the contract's topic names with their emission counts as weights.
-func (t *TopicData) TopicsAndWeights() ([]string, []int) {
+func (t *TopicData) TopicsAndWeights() ([]string, []float64) {
 	names := slices.Sorted(maps.Keys(t.Topic))
-	weights := make([]int, len(names))
+	weights := make([]float64, len(names))
 	for i, name := range names {
-		weights[i] = int(min(t.Topic[name].Count, 1<<31))
+		weights[i] = float64(t.Topic[name].Count)
 	}
 	return names, weights
 }

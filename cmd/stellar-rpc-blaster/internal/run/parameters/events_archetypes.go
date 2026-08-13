@@ -13,7 +13,7 @@ import (
 )
 
 // The getEvents traffic model is a weighted mixture of behavioral archetypes observed
-// in prod traffic. Each archetype owns its joint window x filter x limit shape.
+// in prod traffic Each archetype owns its joint window x filter x limit shape.
 var eventsArchetypes = []eventsArchetype{
 	{"head-poll", 0.48, (*eventsSampler).headPoll},
 	{"deep-pager", 0.23, (*eventsSampler).deepPager},
@@ -27,8 +27,8 @@ var eventsArchetypes = []eventsArchetype{
 // Single-topic wildcard shapes and weights among topic-carrying filters
 // (V = observed segment, * = single-segment wildcard).
 var (
-	eventsTopicShapes   = []string{"V", "V*", "VV**", "V*V*"}
-	prEventsTopicShapes = []float64{0.27, 0.19, 0.27, 0.27}
+	eventsTopicShapes       = []string{"V", "V*", "VV**", "V*V*"}
+	eventsTopicShapeWeights = []float64{0.27, 0.19, 0.27, 0.27}
 )
 
 type eventsArchetype struct {
@@ -42,14 +42,19 @@ type eventsSampler struct {
 	rng            *rand.Rand
 	head           HeadInfo
 	emitters       []string
-	emitterWeights []int
+	emitterWeights []float64
 	events         seed.ContractEvents
 	cold           []string
-	coldWeights    []int
+	coldWeights    []float64
 	paramPool      []string // observed ScVal params, for realistic rare topic values
 	transferSym    string   // ScSymbol("transfer"), base64
 	limitOverride  uint32
 	weights        []float64
+}
+
+// chooseOne draws one item with probability weights[i]/sum(weights) using the sampler's rng.
+func chooseOne[T any](s *eventsSampler, items []T, weights []float64) T {
+	return util.WeightedChooseNSeeded(items, weights, 1, s.rng)[0]
 }
 
 func newEventsSampler(params *Parameters, limitOverride uint32, rng *rand.Rand) (*eventsSampler, error) {
@@ -65,9 +70,9 @@ func newEventsSampler(params *Parameters, limitOverride uint32, rng *rand.Rand) 
 		return nil, fmt.Errorf("seed data contains no contract-data ledger keys for the events cold pool — rerun generate")
 	}
 	// Zipf-ish reuse weights: real cold pollers concentrate on a few contracts
-	coldWeights := make([]int, len(cold))
+	coldWeights := make([]float64, len(cold))
 	for i := range coldWeights {
-		coldWeights[i] = len(cold) / (i + 1)
+		coldWeights[i] = 1 / float64(i+1)
 	}
 	sym := xdr.ScSymbol("transfer")
 	transferSym, err := xdr.MarshalBase64(xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &sym})
@@ -96,7 +101,7 @@ func newEventsSampler(params *Parameters, limitOverride uint32, rng *rand.Rand) 
 // sample draws one archetype and builds its request params map, returning the
 // archetype name for tests and histograms.
 func (s *eventsSampler) sample() (string, map[string]any) {
-	a := eventsArchetypes[s.pick(s.weights)]
+	a := chooseOne(s, eventsArchetypes, s.weights)
 	body := a.build(s)
 	if s.limitOverride != 0 {
 		body["pagination"] = map[string]any{"limit": s.limitOverride}
@@ -112,7 +117,7 @@ func (s *eventsSampler) sample() (string, map[string]any) {
 // headPoll: start at head/head-1 and query a mix of open-ended + one-ledger windows.
 // mostly cold contracts with a follower-on-emitter slice that catches fresh events.
 func (s *eventsSampler) headPoll() map[string]any {
-	start := s.head.Latest - uint32(s.pick([]float64{0.47, 0.53}))
+	start := s.head.Latest - chooseOne(s, []uint32{0, 1}, []float64{0.47, 0.53})
 	body := s.body(start, s.contractFilter(0.10, false))
 	if s.rng.Float64() < 0.5 {
 		body["endLedger"] = start + 1 // one-ledger window case
@@ -126,7 +131,7 @@ func (s *eventsSampler) headPoll() map[string]any {
 func (s *eventsSampler) deepPager() map[string]any {
 	start := s.placeDeep(0)
 	body := s.body(start, s.contractFilter(0.06, false))
-	span := []uint32{250, 2000}[s.pick([]float64{0.9, 0.1})]
+	span := chooseOne(s, []uint32{250, 2000}, []float64{0.9, 0.1})
 	body["endLedger"] = min(start+span, s.head.Latest)
 	s.setLimit(body, []uint{1000}, []float64{1})
 	return body
@@ -153,7 +158,7 @@ func (s *eventsSampler) tailPoll() map[string]any {
 	}
 	body := s.body(start, filter)
 	if bounded {
-		span := []uint32{120, 250, 590}[s.pick([]float64{0.3, 0.5, 0.2})]
+		span := chooseOne(s, []uint32{120, 250, 590}, []float64{0.3, 0.5, 0.2})
 		body["endLedger"] = min(start+span, s.head.Latest)
 	}
 	s.setLimit(body, []uint{100, 200}, []float64{0.6, 0.4})
@@ -185,7 +190,7 @@ func (s *eventsSampler) catchUp() map[string]any {
 }
 
 // deepScan: open-ended scans from the retention floor (with a ~30k-deep secondary
-// lobe); the server walks the window to head finding nothing.
+// scan type); the server walks the window to head finding nothing.
 func (s *eventsSampler) deepScan() map[string]any {
 	var start uint32
 	if s.rng.Float64() < 0.85 {
@@ -201,7 +206,7 @@ func (s *eventsSampler) deepScan() map[string]any {
 	return body
 }
 
-// firehose: no filters at all. matches everything instantly and early-exits at limit.
+// firehose: no filters at all. matches everything and early-exits at limit.
 func (s *eventsSampler) firehose() map[string]any {
 	start := s.head.Latest - uint32(s.rng.IntN(2))
 	body := map[string]any{"startLedger": start}
@@ -235,7 +240,7 @@ func (s *eventsSampler) contractFilter(prEmitter float64, topical bool) map[stri
 // shapedTopic overlays a measured wildcard shape on a real observed topic vector.
 func (s *eventsSampler) shapedTopic() []string {
 	vec := s.topicVector()
-	shape := eventsTopicShapes[s.pick(prEventsTopicShapes)]
+	shape := chooseOne(s, eventsTopicShapes, eventsTopicShapeWeights)
 	topic := make([]string, len(shape))
 	for i := range topic {
 		if shape[i] == 'V' && i < len(vec) {
@@ -251,20 +256,19 @@ func (s *eventsSampler) shapedTopic() []string {
 func (s *eventsSampler) topicVector() []string {
 	td := s.events.ContractIds[s.emitterContract()]
 	names, weights := td.TopicsAndWeights()
-	name := util.WeightedChooseN(names, weights, 1)[0]
-	vec := []string{name}
-	if params := td.Topic[name].Params; len(params) > 0 {
+	vec := []string{chooseOne(s, names, weights)}
+	if params := td.Topic[vec[0]].Params; len(params) > 0 {
 		vec = append(vec, params[s.rng.IntN(len(params))]...)
 	}
 	return vec
 }
 
 func (s *eventsSampler) coldContract() string {
-	return util.WeightedChooseN(s.cold, s.coldWeights, 1)[0]
+	return chooseOne(s, s.cold, s.coldWeights)
 }
 
 func (s *eventsSampler) emitterContract() string {
-	return util.WeightedChooseN(s.emitters, s.emitterWeights, 1)[0]
+	return chooseOne(s, s.emitters, s.emitterWeights)
 }
 
 // paramValue returns a real observed ScVal (base64) to use as a rare-but-real topic value.
@@ -275,8 +279,10 @@ func (s *eventsSampler) paramValue() string {
 	return s.paramPool[s.rng.IntN(len(s.paramPool))]
 }
 
+// setLimit sets a request's limit in the request body. the limit is chosen
+// from a list of limits according to the provided weights.
 func (s *eventsSampler) setLimit(body map[string]any, limits []uint, weights []float64) {
-	body["pagination"] = map[string]any{"limit": limits[s.pick(weights)]}
+	body["pagination"] = map[string]any{"limit": chooseOne(s, limits, weights)}
 }
 
 // placeDeep returns a start at least EventsDeepBandFloor behind head (or `around` deep
@@ -301,21 +307,6 @@ func (s *eventsSampler) clampStart(start uint32) uint32 {
 
 func (s *eventsSampler) floorLedger() uint32 {
 	return min(s.head.Oldest+util.EventsLeftEdgeMargin, s.head.Latest)
-}
-
-// pick returns i with probability weights[i] / sum(weights).
-func (s *eventsSampler) pick(weights []float64) int {
-	total := 0.0
-	for _, w := range weights {
-		total += w
-	}
-	r := s.rng.Float64() * total
-	for i, w := range weights {
-		if r -= w; r < 0 {
-			return i
-		}
-	}
-	return len(weights) - 1
 }
 
 // coldPoolFromKeys gets deployed-but-quiet contract IDs from seeded ledger keys.

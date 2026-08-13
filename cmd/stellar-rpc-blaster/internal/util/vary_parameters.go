@@ -2,6 +2,7 @@ package util
 
 import (
 	"math/rand/v2"
+	"slices"
 )
 
 // VaryLimit returns a random limit between 1 and the provided max limit.
@@ -61,46 +62,40 @@ func chooseNAtRandom[T any](items []T, n int, intN func(int) int) []T {
 	return result
 }
 
-// This chooses N items from T without replacement according to the item weights.
-// Does not replace so that filters don't have the same topic repeated.
-func WeightedChooseN[T any](items []T, weights []int, n int) []T {
-	return weightedChooseN(items, weights, n, rand.IntN)
-}
-
-// WeightedChooseNSeeded is like WeightedChooseN but uses a caller-provided rand source for deterministic testing.
-func WeightedChooseNSeeded[T any](items []T, weights []int, n int, rng *rand.Rand) []T {
-	return weightedChooseN(items, weights, n, rng.IntN)
-}
-
-func weightedChooseN[T any](items []T, weights []int, n int, intN func(int) int) []T {
+// WeightedChooseNSeeded chooses N items from T without replacement, each drawn with
+// probability weight[i]/sum(remaining weights), using the caller-provided rand source.
+func WeightedChooseNSeeded[T any](items []T, weights []float64, n int, rng *rand.Rand) []T {
 	if n >= len(items) {
 		return items
 	}
-	w := make([]int, len(weights))
-	copy(w, weights)
-
-	total := 0
+	w := slices.Clone(weights)
+	total := 0.0
 	for _, wt := range w {
 		total += wt
 	}
 
 	result := make([]T, 0, n)
 	for range n {
-		if total == 0 {
+		if total <= 0 {
 			break
 		}
-		r := intN(total)
-		cumulative := 0
+		r := rng.Float64() * total
+		chosen := -1
 		for i, wt := range w {
-			cumulative += wt
-			// If r is less than the cumulative weight, select this item
-			if r < cumulative {
-				result = append(result, items[i])
-				total -= w[i]
-				w[i] = 0
+			if wt == 0 {
+				continue
+			}
+			chosen = i // rounding can leave r a hair positive; falls back to the last weighted item
+			if r -= wt; r < 0 {
 				break
 			}
 		}
+		if chosen < 0 {
+			break
+		}
+		result = append(result, items[chosen])
+		total -= w[chosen]
+		w[chosen] = 0
 	}
 	return result
 }
