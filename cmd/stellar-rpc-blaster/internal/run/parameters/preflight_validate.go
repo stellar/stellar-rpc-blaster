@@ -54,5 +54,6 @@ func (p *Parameters) validateRetentionWindow(ctx context.Context, client endpoin
 			resp.LatestLedger,
 		)
 	}
+	p.Head = HeadInfo{Oldest: resp.OldestLedger, Latest: resp.LatestLedger}
 	return nil
 }

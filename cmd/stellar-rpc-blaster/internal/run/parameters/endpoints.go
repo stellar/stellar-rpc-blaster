@@ -66,31 +66,14 @@ func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 		return result, nil
 
 	case "getEvents":
-		lr := params.Output.LedgerRange
-		if lr.Last <= lr.First {
-			return nil, fmt.Errorf("empty ledger range for %s", endpointKey)
+		s, err := newEventsSampler(params, limit, rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())))
+		if err != nil {
+			return nil, fmt.Errorf("couldn't build %s sampler: %w", endpointKey, err)
 		}
-		lr.Last++ // treat as inclusive bound for getEvents
-		span := lr.Last - lr.First
-		eventBodies := params.Output.ContractEventData
 		count := min(maxNeededNumBodies, util.MaxNumPrebuiltBodies)
-
 		result := make([]map[string]any, count)
 		for i := range count {
-			filters := eventBodies.BuildEventsFilters()
-			start := lr.First + uint32(rand.IntN(int(span)))
-			end := min(start+limit, lr.Last)
-			remaining := lr.Last - start
-			entry := map[string]any{
-				"startLedger": start,
-				"endLedger":   end,
-				"pagination": map[string]any{
-					"limit": min(limit, remaining),
-				},
-				"xdrFormat": util.VaryFormat(),
-				"filters":   []map[string]any{filters},
-			}
-			result[i] = entry
+			_, result[i] = s.sample()
 		}
 		return result, nil
 	default:

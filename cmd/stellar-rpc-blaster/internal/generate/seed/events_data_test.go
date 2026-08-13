@@ -14,8 +14,7 @@ import (
 
 func newTestEventDataSeeder(client *rpcclient.Client) *EventDataSeeder {
 	return &EventDataSeeder{
-		rpcClient:    client,
-		uniqueTopics: make([]string, 0, util.DefaultSeedSliceSize),
+		rpcClient: client,
 		contractEvents: ContractEvents{
 			ContractIds: make(map[string]*TopicData, util.DefaultSeedSliceSize),
 		},

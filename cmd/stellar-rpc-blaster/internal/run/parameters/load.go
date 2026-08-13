@@ -12,12 +12,23 @@ import (
 type Parameters struct {
 	Output       seed.SeedData
 	SampleCounts map[string]int
+	Head         HeadInfo
+}
+
+// HeadInfo is the target RPC's live ledger window, captured during preflight;
+// recency-sensitive request builders anchor to it rather than the seeded range.
+type HeadInfo struct {
+	Oldest, Latest uint32
 }
 
 func GetParameters(dataPath string) (*Parameters, error) {
 	output, err := loadParameters(dataPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load parameters: %w", err)
+	}
+	if output.Version != seed.CurrentSeedVersion {
+		return nil, fmt.Errorf("seed data file %s has schema v%d, this build requires v%d — rerun generate",
+			dataPath, output.Version, seed.CurrentSeedVersion)
 	}
 
 	params := &Parameters{
@@ -44,8 +55,9 @@ func loadParameters(dataPath string) (seed.SeedData, error) {
 
 func (w *Parameters) fillCounts() {
 	w.SampleCounts = map[string]int{
-		"tx_hashes":   len(w.Output.TxHashes),
-		"ledger_keys": len(w.Output.LedgerKeys),
+		"tx_hashes":       len(w.Output.TxHashes),
+		"ledger_keys":     len(w.Output.LedgerKeys),
+		"contract_events": len(w.Output.ContractEventData.ContractIds),
 	}
 }
 

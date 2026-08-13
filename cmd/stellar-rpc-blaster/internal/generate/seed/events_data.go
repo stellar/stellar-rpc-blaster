@@ -13,22 +13,21 @@ import (
 // EventDataSeeder collects per-contract event topic associations with a shared topic dictionary.
 type EventDataSeeder struct {
 	rpcClient      *rpcclient.Client
-	uniqueTopics   []string // ordered list of unique topics
 	contractEvents ContractEvents
 }
 
 func NewEventDataSeeder(rpcClient *rpcclient.Client) Seeder {
 	return &EventDataSeeder{
-		rpcClient:    rpcClient,
-		uniqueTopics: make([]string, 0, util.DefaultSeedSliceSize),
+		rpcClient: rpcClient,
 		contractEvents: ContractEvents{
 			ContractIds: make(map[string]*TopicData, util.DefaultSeedSliceSize),
 		},
 	}
 }
 
-// WriteResults writes the accumulated event data to the SeedWriter.
+// WriteResults writes the accumulated event data to the SeedWriter, trimmed to the top emitters.
 func (s *EventDataSeeder) WriteResults(w *SeedWriter) {
+	s.contractEvents.trim(util.MaxSeedEventContracts)
 	w.ContractEventData = s.contractEvents
 }
 
