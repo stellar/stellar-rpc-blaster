@@ -8,6 +8,8 @@ import (
 	"math"
 	"slices"
 	"time"
+
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
 )
 
 // JSON serializable final results structure, holding results for all endpoints
@@ -25,6 +27,7 @@ type EndpointResult struct {
 	Errors        uint64                 `json:"errors"`
 	TargetRPS     float64                `json:"target_rps"`
 	Limit         uint64                 `json:"limit,omitempty"`
+	Profile       int                    `json:"traffic_profile,omitempty"` // version of the hard-coded traffic model, for cross-run comparability
 	Percentiles   map[string]float64     `json:"percentiles_ms"`
 	ErrorTypes    map[string]ErrorResult `json:"error_types,omitempty"`
 	Timeline      []StepSnapshot         `json:"-"`
@@ -96,6 +99,9 @@ func (a *Aggregator) Results() *Results {
 			Limit:         stats.limit,
 			Percentiles:   make(map[string]float64),
 			Timeline:      timeline,
+		}
+		if name == "getEvents" {
+			results.Endpoints[name].Profile = util.EventsProfileVersion
 		}
 		for p, d := range stats.percentiles {
 			key := fmt.Sprintf("p%.1f", p)
