@@ -95,7 +95,7 @@ func makeCommands() *cobra.Command {
 	runCmd.Flags().Duration("step-interval", time.Second*5, "Interval between steps during the test (e.g., 5s)")
 	runCmd.Flags().Bool("serial", false, "Run endpoints one at a time sequentially instead of concurrently")
 	runCmd.Flags().Duration("cooloff", time.Duration(0), "Delay between endpoints in serial mode so one endpoint's failures don't cascade into the next (e.g. 30s)")
-	runCmd.Flags().Int("error-percent", 50, "Threshold for error percentage to kill the test (e.g. 50 means kill at 50%)")
+	runCmd.Flags().Int("error-percent", config.DefaultErrorPercent, "Threshold for error percentage to kill the test (e.g. 50 means kill at 50%)")
 
 	generateCmd.Flags().String("output", "./output/seed.json", "Path to seed data file output by generate")
 	generateCmd.Flags().String("ledger-window", "", "Ledger range as START[,END] for data generation")
@@ -144,10 +144,17 @@ func bindRunCliParameters(
 	settings.RampUp = viper.GetViper().GetDuration(rampUp.Name)
 	settings.StepInterval = viper.GetViper().GetDuration(stepInterval.Name)
 	settings.TestOutputPath = viper.GetString(testOutputPath.Name)
-	settings.InputDataPath = viper.GetString(inputDataPath.Name)
 	settings.Serial = viper.GetBool(serial.Name)
 	settings.Cooloff = viper.GetViper().GetDuration(cooloff.Name)
-	settings.ErrorPercent = viper.GetInt(errorPercent.Name)
+	// multi-place settings carry the flag value only when explicitly passed; env/toml are resolved in config
+	if inputDataPath.Changed {
+		v := inputDataPath.Value.String()
+		settings.InputDataPath = &v
+	}
+	if errorPercent.Changed {
+		v, _ := strconv.Atoi(errorPercent.Value.String())
+		settings.ErrorPercent = &v
+	}
 
 	return settings
 }

@@ -120,7 +120,7 @@ func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 // EndpointNeedsData reports whether the endpoint requires seed data to build requests.
 func EndpointNeedsData(endpointKey string) (bool, error) {
 	switch endpointKey {
-	case "getTransaction", "getLedgerEntries", "getTransactions", "getLedgers", "getEvents", "simulateTransaction":
+	case "getTransaction", "getLedgerEntries", "getTransactions", "getLedgers", "getEvents":
 		return true, nil
 	case "getHealth", "getNetwork", "getVersionInfo", "getLatestLedger", "getFeeStats":
 		return false, nil

@@ -6,9 +6,9 @@ import (
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 )
 
-// VaryLimit returns a random limit between 1 and the provided max limit.
-func VaryLimit(limitMax uint) uint {
-	return uint(rand.Float64()*float64(limitMax-1) + 1)
+// VaryBetween returns a uniform random value in [lo, hi] inclusive.
+func VaryBetween(lo, hi uint) uint {
+	return lo + rand.N(hi-lo+1)
 }
 
 // VaryFormat determines whether to use "json" or "base64" format for transaction requests.
@@ -56,9 +56,9 @@ func VaryKeyCount() uint {
 	if r < PrKeyCount[0] {
 		return 1
 	} else if r < PrKeyCount[0]+PrKeyCount[1] {
-		return VaryLimit(10 - 1)
+		return VaryBetween(2, 10)
 	} else {
-		return VaryLimit(LedgerKeyLimit-50) + 50 // between 50 and LedgerKeyLimit
+		return VaryBetween(50, LedgerKeyLimit)
 	}
 }
 

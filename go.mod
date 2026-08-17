@@ -96,6 +96,7 @@ require (
 
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0
+	github.com/caarlos0/env/v11 v11.4.1
 	github.com/stellar/go-stellar-sdk v0.5.0
 	github.com/tsenart/vegeta/v12 v12.13.0
 )

@@ -71,9 +71,6 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 				}
 				return
 			}
-			if a.done {
-				continue
-			}
 			if err := a.Record(sample); err != nil {
 				a.logger.Error(err)
 			}
@@ -119,7 +116,7 @@ func NewAggregator(logger *log.Entry, settings config.Config, cancel context.Can
 	sort.Strings(endpoints)
 	a.orderedEndpoints = endpoints // maintain order for consistent output
 
-	stepInterval := max(5, settings.StepInterval)
+	stepInterval := max(5*time.Second, settings.StepInterval)
 
 	for _, endpointKey := range endpoints {
 		a.stats[endpointKey] = &EndpointStats{
@@ -285,9 +282,13 @@ func (e *EndpointStats) String() string {
 
 func newErrorResult(sample Sample) ErrorResult {
 	now := time.Now()
+	errorMsg, errorCode := sample.Err, int(sample.Code)
+	if sample.RPCErr != nil {
+		errorMsg, errorCode = sample.RPCErr.Error(), int(sample.RPCErr.Code)
+	}
 	return ErrorResult{
-		ErrorMsg:  sample.Err,
-		ErrorCode: int(sample.Code),
+		ErrorMsg:  errorMsg,
+		ErrorCode: errorCode,
 		Count:     1,
 		FirstSeen: now,
 		LastSeen:  now,
