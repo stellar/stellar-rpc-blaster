@@ -8,24 +8,36 @@ import (
 )
 
 // Builds a list of params maps for a data-dependent endpoint to vary request payloads.
+// A non-zero limit is a config override applied to every body (config validation
+// guarantees only paginated endpoints can carry one).
 func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Parameters, limit uint32) ([]map[string]any, error) {
+	result, err := buildEndpointParams(endpointKey, maxNeededNumBodies, params)
+	if limit != 0 {
+		for _, body := range result {
+			body["pagination"] = map[string]any{"limit": limit}
+		}
+	}
+	return result, err
+}
+
+func buildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Parameters) ([]map[string]any, error) {
 	if needs, err := EndpointNeedsData(endpointKey); err != nil {
 		return nil, err
 	} else if !needs {
 		return []map[string]any{{}}, nil
 	}
+	rng := rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
+	count := min(maxNeededNumBodies, util.MaxNumPrebuiltBodies)
 
 	switch endpointKey {
 	case "getTransaction":
 		// Hash-stream model: mostly repolls of recently polled hashes, fresh draws
 		// split between seeded (found) hashes and a small never-landing pool.
-		rng := rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
 		hashes := params.Output.TxHashes
-		neverLand := make([]string, util.TxRecentWindow)
+		neverLand := make([]string, 8) // small: dead hashes get re-polled, like real never-landing targets
 		for i := range neverLand {
-			neverLand[i] = randomTxHash(rng)
+			neverLand[i] = fmt.Sprintf("%016x%016x%016x%016x", rng.Uint64(), rng.Uint64(), rng.Uint64(), rng.Uint64())
 		}
-		count := min(maxNeededNumBodies, util.MaxNumPrebuiltBodies)
 		result := make([]map[string]any, count)
 		var recent []string
 		for i := range count {
@@ -47,7 +59,7 @@ func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 
 	case "getLedgerEntries":
 		keys := params.Output.LedgerKeys
-		count := min(len(keys), maxNeededNumBodies, util.MaxNumPrebuiltBodies)
+		count := min(len(keys), count)
 		result := make([]map[string]any, count)
 		for i := range count {
 			n := min(util.VaryKeyCount(), uint(len(keys)))
@@ -64,38 +76,30 @@ func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 		if params.Head.Latest == 0 {
 			return nil, fmt.Errorf("%s bodies need a preflight-captured ledger head", endpointKey)
 		}
-		rng := rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
 		prNear := util.PrTxsNearHead
 		if endpointKey == "getLedgers" {
 			prNear = util.PrLedgersNearHead
 		}
-		count := min(maxNeededNumBodies, util.MaxNumPrebuiltBodies)
 		result := make([]map[string]any, count)
 		for i := range count {
 			entry := map[string]any{"startLedger": headStart(rng, params.Head, prNear)}
-			switch {
-			case limit != 0:
-				entry["pagination"] = map[string]any{"limit": limit}
-			case endpointKey == "getTransactions": // essentially always the max
+			if endpointKey == "getTransactions" { // essentially always the max
 				entry["pagination"] = map[string]any{"limit": util.MaxTxPageLimit}
-			default: // getLedgers limit mix; 0 = key omitted (server default of 50)
-				if l := chooseOne(rng, []uint{1, 5, 20, 0}, []float64{0.4, 0.28, 0.07, 0.25}); l != 0 {
-					entry["pagination"] = map[string]any{"limit": l}
-				}
+			} else if l := chooseOne(rng, []uint{1, 5, 20, 0}, []float64{0.4, 0.28, 0.07, 0.25}); l != 0 {
+				entry["pagination"] = map[string]any{"limit": l} // getLedgers mix; 0 = key omitted (server default of 50)
 			}
 			result[i] = entry
 		}
 		return result, nil
 
 	case "getEvents":
-		s, err := newEventsSampler(params, limit, rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())))
+		s, err := newEventsSampler(params, rng)
 		if err != nil {
 			return nil, fmt.Errorf("couldn't build %s sampler: %w", endpointKey, err)
 		}
-		count := min(maxNeededNumBodies, util.MaxNumPrebuiltBodies)
 		result := make([]map[string]any, count)
 		for i := range count {
-			_, result[i] = s.sample()
+			result[i] = s.sample()
 		}
 		return result, nil
 	default:
@@ -104,23 +108,13 @@ func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 }
 
 // headStart draws a startLedger within 1k of head prNear of the time, else uniformly
-// across the deeper lag band, clamped into [oldest+margin, latest].
+// across the deeper lag band.
 func headStart(rng *rand.Rand, head HeadInfo, prNear float64) uint32 {
-	retention := head.Latest - head.Oldest
 	depth := uint32(rng.IntN(1000))
-	if rng.Float64() >= prNear && retention > 1000 {
+	if retention := head.Latest - head.Floor(); rng.Float64() >= prNear && retention > 1000 {
 		depth = 1000 + uint32(rng.IntN(int(retention-1000)))
 	}
-	depth = min(depth, retention)
-	return max(head.Latest-depth, min(head.Oldest+util.EventsLeftEdgeMargin, head.Latest))
-}
-
-func randomTxHash(rng *rand.Rand) string {
-	var b [32]byte
-	for i := range b {
-		b[i] = byte(rng.IntN(256))
-	}
-	return fmt.Sprintf("%x", b)
+	return head.Clamp(head.Latest - depth)
 }
 
 // EndpointNeedsData reports whether the endpoint requires seed data to build requests.
@@ -133,4 +127,16 @@ func EndpointNeedsData(endpointKey string) (bool, error) {
 	default:
 		return false, fmt.Errorf("unknown endpoint %q", endpointKey)
 	}
+}
+
+const trafficProfileVersion = 2 // bump when any endpoint's traffic model changes
+
+// ProfileVersion returns the traffic-model version stamped into results for
+// modeled endpoints (0 = endpoint has no model).
+func ProfileVersion(endpointKey string) int {
+	switch endpointKey {
+	case "getEvents", "getTransaction", "getTransactions", "getLedgers":
+		return trafficProfileVersion
+	}
+	return 0
 }

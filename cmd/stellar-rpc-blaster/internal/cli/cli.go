@@ -133,10 +133,8 @@ func bindRunCliParameters(
 	bindFlag(rampUp)
 	bindFlag(stepInterval)
 	bindFlag(testOutputPath)
-	bindFlag(inputDataPath)
 	bindFlag(serial)
 	bindFlag(cooloff)
-	bindFlag(errorPercent)
 	settings := config.RuntimeSettings{}
 	settings.ConfigPath = viper.GetString(cfgPath.Name)
 	settings.RpcUrl = viper.GetString(rpcUrl.Name)

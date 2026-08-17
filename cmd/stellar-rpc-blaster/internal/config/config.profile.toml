@@ -1,41 +1,30 @@
 # Realistic traffic mix, measured over one week of production traffic on a public
-# mainnet 7-day RPC service (~38M requests, Aug 2026; two load-balanced machines,
-# both captured, near-identical mixes; ledgers 63,680,746-63,788,137, 5.62s avg close). rps values below are the observed per-method
-# shares scaled to ~100 RPS aggregate — scale them all together to change intensity.
-# For reference, the whole service (both machines combined) averaged ~64 RPS, saw
-# ~106 at the p90 hour, and peaked around 520; each machine carried half of that.
-#
-# Observed shares, renormalized over blaster-supported endpoints:
-#   getLedgerEntries 82.0%   getEvents 4.5%    getHealth 4.4%   getTransaction 4.2%
-#   getLatestLedger   3.4%   getTransactions 0.7%   getLedgers 0.4%   getNetwork 0.4%
-# The three tail endpoints round up to 1 rps here (integer rps floor).
-# Excluded: simulateTransaction (21.8% of raw traffic; not supported by the blaster)
-# and sendTransaction (0.2%; would mutate chain state).
-#
-# Omitted limits let each endpoint's traffic model choose per-request limits;
-# a set limit acts as an explicit override for every request.
+# mainnet 7-day RPC service (~38M requests, Aug 2026 ledgers 63,680,746-63,788,137, 5.62s avg close).
+# Excludes send/simulateTransaction + getLedgerEntries and is renormalized to 100 RPS aggregate.
+# rps values below are the observed per-method shares scaled to ~100 RPS aggregate.
+
 input_data_path = "./output/seed.json"
 
 [endpoints.getLedgerEntries]
 rps = 0 # excluded from this suite; it sustains >1500 RPS alone and never binds first
 
 [endpoints.getEvents]
-rps = 4
+rps = 25
 
 [endpoints.getHealth]
-rps = 4
+rps = 24
 
 [endpoints.getTransaction]
-rps = 4
+rps = 24
 
 [endpoints.getLatestLedger]
-rps = 3
+rps = 19
 
 [endpoints.getTransactions]
-rps = 1
+rps = 4
 
 [endpoints.getLedgers]
-rps = 1
+rps = 2
 
 [endpoints.getNetwork]
-rps = 1
+rps = 2

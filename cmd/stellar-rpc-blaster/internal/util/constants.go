@@ -51,11 +51,10 @@ const (
 // against full ledger history (the getEvents archetype mixture lives in
 // run/parameters/events_archetypes.go; the rest inline in endpoints.go)
 const (
-	TrafficProfileVersion        = 2     // stamped into results JSON; bump when any endpoint model changes
-	PrEventsJson         float64 = 0.015 // xdrFormat "json"; the key is omitted otherwise (base64 default)
-	EventsLeftEdgeMargin uint32  = 1000  // never place startLedger within this of the retention floor
-	EventsDeepBandFloor  uint32  = 10000 // "deep" placement means at least this far behind head
-	EventsColdPoolSize           = 50    // deployed-but-quiet contracts drawn from seed ledger keys
+	PrEventsJson        float64 = 0.015 // xdrFormat "json"; the key is omitted otherwise (base64 default)
+	LeftEdgeMargin      uint32  = 1000  // never place startLedger within this of the retention floor (all endpoints)
+	EventsDeepBandFloor uint32  = 10000 // "deep" placement means at least this far behind head
+	EventsColdPoolSize          = 50    // deployed-but-quiet contracts drawn from seed ledger keys
 
 	PrTxRepoll        float64 = 0.6  // getTransaction requests re-polling a recently polled hash (measured 50-70%)
 	PrTxNotFound      float64 = 0.12 // fresh polls targeting hashes that never land (7% never-land + 5.2% pre-landing)

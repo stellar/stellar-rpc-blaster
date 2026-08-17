@@ -9,15 +9,11 @@ import (
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 )
 
-func event(contractID, topic string, params ...string) protocol.EventInfo {
-	return protocol.EventInfo{ContractID: contractID, TopicXDR: append([]string{topic}, params...)}
-}
-
 func TestAddEventDataDedupThenTrim(t *testing.T) {
 	c := ContractEvents{ContractIds: map[string]*TopicData{}}
-	c.AddEventData(event("C0", "t1", "p1"))
-	c.AddEventData(event("C0", "t1", "p1")) // duplicate params: counted, not stored twice
-	c.AddEventData(event("C0", "t1", "p2"))
+	c.AddEventData(stubEvent(0, "C0", "t1", "p1"))
+	c.AddEventData(stubEvent(0, "C0", "t1", "p1")) // duplicate params: counted, not stored twice
+	c.AddEventData(stubEvent(0, "C0", "t1", "p2"))
 	c.AddEventData(protocol.EventInfo{ContractID: "C0", TopicXDR: nil}) // zero-topic: ignored
 
 	td := c.ContractIds["C0"]
@@ -28,7 +24,7 @@ func TestAddEventDataDedupThenTrim(t *testing.T) {
 	for i := 1; i < 30; i++ {
 		id := fmt.Sprintf("C%02d", i)
 		for range i + 1 {
-			c.AddEventData(event(id, "t"))
+			c.AddEventData(stubEvent(0, id, "t"))
 		}
 	}
 	c.trim(3)

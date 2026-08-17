@@ -9,7 +9,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/run/parameters"
 )
 
 // JSON serializable final results structure, holding results for all endpoints
@@ -100,10 +100,7 @@ func (a *Aggregator) Results() *Results {
 			Percentiles:   make(map[string]float64),
 			Timeline:      timeline,
 		}
-		switch name {
-		case "getEvents", "getTransaction", "getTransactions", "getLedgers":
-			results.Endpoints[name].Profile = util.TrafficProfileVersion
-		}
+		results.Endpoints[name].Profile = parameters.ProfileVersion(name) // omitempty drops the 0 of unmodeled endpoints
 		for p, d := range stats.percentiles {
 			key := fmt.Sprintf("p%.1f", p)
 			results.Endpoints[name].Percentiles[key] = float64(d.Nanoseconds()) / 1e6 // ms

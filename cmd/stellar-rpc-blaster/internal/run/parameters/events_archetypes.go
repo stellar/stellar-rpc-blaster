@@ -37,6 +37,21 @@ type eventsArchetype struct {
 	build  func(*eventsSampler) map[string]any
 }
 
+var (
+	archetypeWeights = func() []float64 {
+		w := make([]float64, len(eventsArchetypes))
+		for i, a := range eventsArchetypes {
+			w[i] = a.weight
+		}
+		return w
+	}()
+	transferSym = func() string { // ScSymbol("transfer"), base64
+		sym := xdr.ScSymbol("transfer")
+		b64, _ := xdr.MarshalBase64(xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &sym}) // can't fail, sym is valid
+		return b64
+	}()
+)
+
 // eventsSampler holds the pools and live-head anchor that archetype builders draw from.
 type eventsSampler struct {
 	rng            *rand.Rand
@@ -47,9 +62,6 @@ type eventsSampler struct {
 	cold           []string
 	coldWeights    []float64
 	paramPool      []string // observed ScVal params, for realistic rare topic values
-	transferSym    string   // ScSymbol("transfer"), base64
-	limitOverride  uint32
-	weights        []float64
 }
 
 // chooseOne draws one item with probability weights[i]/sum(weights).
@@ -57,7 +69,7 @@ func chooseOne[T any](rng *rand.Rand, items []T, weights []float64) T {
 	return util.WeightedChooseNSeeded(items, weights, 1, rng)[0]
 }
 
-func newEventsSampler(params *Parameters, limitOverride uint32, rng *rand.Rand) (*eventsSampler, error) {
+func newEventsSampler(params *Parameters, rng *rand.Rand) (*eventsSampler, error) {
 	if params == nil || params.Head.Latest == 0 {
 		return nil, fmt.Errorf("getEvents sampler needs seed data and a preflight-captured ledger head")
 	}
@@ -78,12 +90,7 @@ func newEventsSampler(params *Parameters, limitOverride uint32, rng *rand.Rand) 
 	for i := range coldWeights {
 		coldWeights[i] = 1 / float64(i+1)
 	}
-	sym := xdr.ScSymbol("transfer")
-	transferSym, err := xdr.MarshalBase64(xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &sym})
-	if err != nil {
-		return nil, err
-	}
-	s := &eventsSampler{
+	return &eventsSampler{
 		rng:            rng,
 		head:           params.Head,
 		emitters:       emitters,
@@ -92,28 +99,16 @@ func newEventsSampler(params *Parameters, limitOverride uint32, rng *rand.Rand) 
 		cold:           cold,
 		coldWeights:    coldWeights,
 		paramPool:      collectParams(params.Output.ContractEventData),
-		transferSym:    transferSym,
-		limitOverride:  limitOverride,
-		weights:        make([]float64, len(eventsArchetypes)),
-	}
-	for i, a := range eventsArchetypes {
-		s.weights[i] = a.weight
-	}
-	return s, nil
+	}, nil
 }
 
-// sample draws one archetype and builds its request params map, returning the
-// archetype name for tests and histograms.
-func (s *eventsSampler) sample() (string, map[string]any) {
-	a := chooseOne(s.rng, eventsArchetypes, s.weights)
-	body := a.build(s)
-	if s.limitOverride != 0 {
-		body["pagination"] = map[string]any{"limit": s.limitOverride}
-	}
+// sample draws one archetype and builds its request params map.
+func (s *eventsSampler) sample() map[string]any {
+	body := chooseOne(s.rng, eventsArchetypes, archetypeWeights).build(s)
 	if s.rng.Float64() < util.PrEventsJson {
 		body["xdrFormat"] = "json"
 	}
-	return a.name, body
+	return body
 }
 
 // ---- archetype builders ----
@@ -155,7 +150,7 @@ func (s *eventsSampler) tailPoll() map[string]any {
 	default:
 		depth = 1000 + uint32(s.rng.IntN(4000))
 	}
-	start := s.clampStart(s.head.Latest - depth)
+	start := s.head.Clamp(s.head.Latest - depth)
 	filter := s.contractFilter(0, 1.0/3)
 	if s.rng.Float64() < 0.03 {
 		filter["contractIds"] = []string{s.coldContract(), s.coldContract()}
@@ -177,8 +172,8 @@ func (s *eventsSampler) transferWatcher() map[string]any {
 	body := map[string]any{
 		"startLedger": start,
 		"filters": []map[string]any{
-			{"type": "contract", "topics": [][]string{{s.transferSym, "*", wallet, "*"}}},
-			{"type": "contract", "topics": [][]string{{s.transferSym, wallet, "*", "*"}}},
+			{"type": "contract", "topics": [][]string{{transferSym, "*", wallet, "*"}}},
+			{"type": "contract", "topics": [][]string{{transferSym, wallet, "*", "*"}}},
 		},
 	}
 	s.setLimit(body, []uint{100}, []float64{1})
@@ -187,7 +182,7 @@ func (s *eventsSampler) transferWatcher() map[string]any {
 
 // catchUp: tuned-window catch-up reads on real emitters; the matching minority.
 func (s *eventsSampler) catchUp() map[string]any {
-	start := s.clampStart(s.head.Latest - uint32(10+s.rng.IntN(240)))
+	start := s.head.Clamp(s.head.Latest - uint32(10+s.rng.IntN(240)))
 	body := s.body(start, map[string]any{"type": "contract", "contractIds": []string{s.emitterContract()}})
 	s.setLimit(body, []uint{100, 200}, []float64{0.7, 0.3})
 	return body
@@ -198,7 +193,7 @@ func (s *eventsSampler) catchUp() map[string]any {
 func (s *eventsSampler) deepScan() map[string]any {
 	var start uint32
 	if s.rng.Float64() < 0.85 {
-		start = s.clampStart(s.head.Oldest + util.EventsLeftEdgeMargin + uint32(s.rng.IntN(1000)))
+		start = s.head.Clamp(s.head.Floor() + uint32(s.rng.IntN(1000)))
 	} else {
 		start = s.placeDeep(30_000)
 	}
@@ -278,7 +273,7 @@ func (s *eventsSampler) emitterContract() string {
 // paramValue returns a real observed ScVal (base64) to use as a rare-but-real topic value.
 func (s *eventsSampler) paramValue() string {
 	if len(s.paramPool) == 0 {
-		return s.transferSym
+		return transferSym
 	}
 	return s.paramPool[s.rng.IntN(len(s.paramPool))]
 }
@@ -292,25 +287,14 @@ func (s *eventsSampler) setLimit(body map[string]any, limits []uint, weights []f
 // placeDeep returns a start at least EventsDeepBandFloor behind head (or `around` deep
 // when non-zero), clamped into the placeable window.
 func (s *eventsSampler) placeDeep(around uint32) uint32 {
-	retention := s.head.Latest - s.floorLedger()
+	retention := s.head.Latest - s.head.Floor()
 	depth := util.EventsDeepBandFloor
 	if around != 0 {
 		depth = around + uint32(s.rng.IntN(5000))
 	} else if retention > util.EventsDeepBandFloor {
 		depth += uint32(s.rng.IntN(int(retention - util.EventsDeepBandFloor + 1)))
 	}
-	depth = min(depth, retention)
-	return s.head.Latest - depth
-}
-
-// clampStart bounds a start into [oldest+margin, latest]; small retention windows
-// degrade deep placements toward the floor rather than erroring.
-func (s *eventsSampler) clampStart(start uint32) uint32 {
-	return min(max(start, s.floorLedger()), s.head.Latest)
-}
-
-func (s *eventsSampler) floorLedger() uint32 {
-	return min(s.head.Oldest+util.EventsLeftEdgeMargin, s.head.Latest)
+	return s.head.Latest - min(depth, retention)
 }
 
 // coldPoolFromKeys gets deployed-but-quiet contract IDs from seeded ledger keys.

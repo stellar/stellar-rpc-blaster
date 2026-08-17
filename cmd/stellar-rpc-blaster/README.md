@@ -102,11 +102,10 @@ start_rps = 10
 | Endpoint | Seed Data Used |
 |----------|---------------|
 | `getTransaction` | Transaction hashes |
-| `simulateTransaction` | Transaction hashes |
 | `getLedgerEntries` | Ledger keys |
-| `getTransactions` | Ledger ranges |
-| `getLedgers` | Ledger ranges |
-| `getEvents` | Contract IDs, topics, parameters |
+| `getTransactions` | Live ledger head (captured at preflight) |
+| `getLedgers` | Live ledger head (captured at preflight) |
+| `getEvents` | Contract IDs, topics, parameters + live ledger head |
 
 ### Validation Rules
 
@@ -162,7 +161,7 @@ Steps: 6   StepSize: (50 - 10) / 6 ≈ 6.67 RPS/step
 
 The `generate` command samples ledgers from a live RPC and extracts:
 
-- **Transaction hashes** — used by `getTransaction` and `simulateTransaction`
+- **Transaction hashes** — used by `getTransaction`
 - **Ledger keys** — XDR-encoded keys used by `getLedgerEntries`
 - **Contract events** — contract IDs, event topics, and parameters used by `getEvents`
 

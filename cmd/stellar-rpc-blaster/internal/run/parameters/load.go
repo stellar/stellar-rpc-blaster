@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/generate/seed"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
 )
 
 type Parameters struct {
@@ -19,6 +20,18 @@ type Parameters struct {
 // recency-sensitive request builders anchor to it rather than the seeded range.
 type HeadInfo struct {
 	Oldest, Latest uint32
+}
+
+// Floor is the lowest safe startLedger: outside the left-edge margin of the
+// retention floor so in-flight requests can't age out mid-run.
+func (h HeadInfo) Floor() uint32 {
+	return min(h.Oldest+util.LeftEdgeMargin, h.Latest)
+}
+
+// Clamp bounds a start into [Floor, Latest]; small retention windows degrade
+// deep placements toward the floor rather than erroring.
+func (h HeadInfo) Clamp(start uint32) uint32 {
+	return min(max(start, h.Floor()), h.Latest)
 }
 
 func GetParameters(dataPath string) (*Parameters, error) {
