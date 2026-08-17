@@ -12,8 +12,8 @@
 # Excluded: simulateTransaction (21.8% of raw traffic; not supported by the blaster)
 # and sendTransaction (0.2%; would mutate chain state).
 #
-# Omitted limits use data-aligned defaults (getLedgers 5, getTransactions 200); an omitted
-# getEvents limit lets the archetype traffic model choose per-request limits.
+# Omitted limits let each endpoint's traffic model choose per-request limits;
+# a set limit acts as an explicit override for every request.
 input_data_path = "./output/seed.json"
 
 [endpoints.getLedgerEntries]

@@ -52,9 +52,9 @@ type eventsSampler struct {
 	weights        []float64
 }
 
-// chooseOne draws one item with probability weights[i]/sum(weights) using the sampler's rng.
-func chooseOne[T any](s *eventsSampler, items []T, weights []float64) T {
-	return util.WeightedChooseNSeeded(items, weights, 1, s.rng)[0]
+// chooseOne draws one item with probability weights[i]/sum(weights).
+func chooseOne[T any](rng *rand.Rand, items []T, weights []float64) T {
+	return util.WeightedChooseNSeeded(items, weights, 1, rng)[0]
 }
 
 func newEventsSampler(params *Parameters, limitOverride uint32, rng *rand.Rand) (*eventsSampler, error) {
@@ -101,7 +101,7 @@ func newEventsSampler(params *Parameters, limitOverride uint32, rng *rand.Rand) 
 // sample draws one archetype and builds its request params map, returning the
 // archetype name for tests and histograms.
 func (s *eventsSampler) sample() (string, map[string]any) {
-	a := chooseOne(s, eventsArchetypes, s.weights)
+	a := chooseOne(s.rng, eventsArchetypes, s.weights)
 	body := a.build(s)
 	if s.limitOverride != 0 {
 		body["pagination"] = map[string]any{"limit": s.limitOverride}
@@ -117,8 +117,8 @@ func (s *eventsSampler) sample() (string, map[string]any) {
 // headPoll: start at head/head-1 and query a mix of open-ended + one-ledger windows.
 // mostly cold contracts with a follower-on-emitter slice that catches fresh events.
 func (s *eventsSampler) headPoll() map[string]any {
-	start := s.head.Latest - chooseOne(s, []uint32{0, 1}, []float64{0.47, 0.53})
-	body := s.body(start, s.contractFilter(0.10, false))
+	start := s.head.Latest - chooseOne(s.rng, []uint32{0, 1}, []float64{0.47, 0.53})
+	body := s.body(start, s.contractFilter(0.10, 0.25))
 	if s.rng.Float64() < 0.5 {
 		body["endLedger"] = start + 1 // one-ledger window case
 	}
@@ -130,8 +130,8 @@ func (s *eventsSampler) headPoll() map[string]any {
 // window 421), limit 1000. polls mostly cold pages and rarely emitters or topics
 func (s *eventsSampler) deepPager() map[string]any {
 	start := s.placeDeep(0)
-	body := s.body(start, s.contractFilter(0.06, false))
-	span := chooseOne(s, []uint32{250, 2000}, []float64{0.9, 0.1})
+	body := s.body(start, s.contractFilter(0.06, 0))
+	span := chooseOne(s.rng, []uint32{250, 2000}, []float64{0.9, 0.1})
 	body["endLedger"] = min(start+span, s.head.Latest)
 	s.setLimit(body, []uint{1000}, []float64{1})
 	return body
@@ -152,13 +152,13 @@ func (s *eventsSampler) tailPoll() map[string]any {
 		depth = 1000 + uint32(s.rng.IntN(4000))
 	}
 	start := s.clampStart(s.head.Latest - depth)
-	filter := s.contractFilter(0, true)
+	filter := s.contractFilter(0, 1.0/3)
 	if s.rng.Float64() < 0.03 {
 		filter["contractIds"] = []string{s.coldContract(), s.coldContract()}
 	}
 	body := s.body(start, filter)
 	if bounded {
-		span := chooseOne(s, []uint32{120, 250, 590}, []float64{0.3, 0.5, 0.2})
+		span := chooseOne(s.rng, []uint32{120, 250, 590}, []float64{0.3, 0.5, 0.2})
 		body["endLedger"] = min(start+span, s.head.Latest)
 	}
 	s.setLimit(body, []uint{100, 200}, []float64{0.6, 0.4})
@@ -198,7 +198,7 @@ func (s *eventsSampler) deepScan() map[string]any {
 	} else {
 		start = s.placeDeep(30_000)
 	}
-	body := s.body(start, s.contractFilter(0, false))
+	body := s.body(start, s.contractFilter(0, 0))
 	if s.rng.Float64() < 0.06 {
 		delete(body, "filters")
 	}
@@ -224,14 +224,14 @@ func (s *eventsSampler) body(start uint32, filter map[string]any) map[string]any
 }
 
 // contractFilter builds a single-contract filter: cold by default, emitter with
-// probability prEmitter, single wildcard-shaped topic with probability 1/3 when topical.
-func (s *eventsSampler) contractFilter(prEmitter float64, topical bool) map[string]any {
+// probability prEmitter, single wildcard-shaped topic with probability prTopic.
+func (s *eventsSampler) contractFilter(prEmitter, prTopic float64) map[string]any {
 	cid := s.coldContract()
 	if s.rng.Float64() < prEmitter {
 		cid = s.emitterContract()
 	}
 	filter := map[string]any{"type": "contract", "contractIds": []string{cid}}
-	if topical && s.rng.Float64() < 1.0/3 {
+	if s.rng.Float64() < prTopic {
 		filter["topics"] = [][]string{s.shapedTopic()}
 	}
 	return filter
@@ -240,7 +240,7 @@ func (s *eventsSampler) contractFilter(prEmitter float64, topical bool) map[stri
 // shapedTopic overlays a measured wildcard shape on a real observed topic vector.
 func (s *eventsSampler) shapedTopic() []string {
 	vec := s.topicVector()
-	shape := chooseOne(s, eventsTopicShapes, eventsTopicShapeWeights)
+	shape := chooseOne(s.rng, eventsTopicShapes, eventsTopicShapeWeights)
 	topic := make([]string, len(shape))
 	for i := range topic {
 		if shape[i] == 'V' && i < len(vec) {
@@ -256,7 +256,7 @@ func (s *eventsSampler) shapedTopic() []string {
 func (s *eventsSampler) topicVector() []string {
 	td := s.events.ContractIds[s.emitterContract()]
 	names, weights := td.TopicsAndWeights()
-	vec := []string{chooseOne(s, names, weights)}
+	vec := []string{chooseOne(s.rng, names, weights)}
 	if params := td.Topic[vec[0]].Params; len(params) > 0 {
 		vec = append(vec, params[s.rng.IntN(len(params))]...)
 	}
@@ -264,11 +264,11 @@ func (s *eventsSampler) topicVector() []string {
 }
 
 func (s *eventsSampler) coldContract() string {
-	return chooseOne(s, s.cold, s.coldWeights)
+	return chooseOne(s.rng, s.cold, s.coldWeights)
 }
 
 func (s *eventsSampler) emitterContract() string {
-	return chooseOne(s, s.emitters, s.emitterWeights)
+	return chooseOne(s.rng, s.emitters, s.emitterWeights)
 }
 
 // paramValue returns a real observed ScVal (base64) to use as a rare-but-real topic value.
@@ -282,7 +282,7 @@ func (s *eventsSampler) paramValue() string {
 // setLimit sets a request's limit in the request body. the limit is chosen
 // from a list of limits according to the provided weights.
 func (s *eventsSampler) setLimit(body map[string]any, limits []uint, weights []float64) {
-	body["pagination"] = map[string]any{"limit": chooseOne(s, limits, weights)}
+	body["pagination"] = map[string]any{"limit": chooseOne(s.rng, limits, weights)}
 }
 
 // placeDeep returns a start at least EventsDeepBandFloor behind head (or `around` deep
