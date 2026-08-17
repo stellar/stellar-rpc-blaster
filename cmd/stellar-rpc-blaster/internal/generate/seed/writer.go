@@ -28,7 +28,6 @@ func NewSeedWriter(path string, ledgerRange Range) (*SeedWriter, error) {
 	sw := SeedWriter{
 		WriteCloser: f,
 	}
-	sw.Version = CurrentSeedVersion
 	sw.LedgerRange = ledgerRange
 	return &sw, nil
 }

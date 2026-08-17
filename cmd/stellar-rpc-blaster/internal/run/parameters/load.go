@@ -26,10 +26,6 @@ func GetParameters(dataPath string) (*Parameters, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load parameters: %w", err)
 	}
-	if output.Version != seed.CurrentSeedVersion {
-		return nil, fmt.Errorf("seed data file %s has schema v%d, this build requires v%d — rerun generate",
-			dataPath, output.Version, seed.CurrentSeedVersion)
-	}
 
 	params := &Parameters{
 		Output: output,

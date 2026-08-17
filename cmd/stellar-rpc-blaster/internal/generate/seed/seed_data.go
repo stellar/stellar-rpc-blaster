@@ -10,20 +10,15 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
 )
 
-const CurrentSeedVersion = 2 // bump when SeedData's schema changes incompatibly
-
 // SeedData is the unified struct for writing and reading seed data across run and generate
 type SeedData struct {
-	Version           int            `json:"version"`
 	LedgerRange       Range          `json:"ledger_range"`
 	TxHashes          []string       `json:"tx_hashes"`
 	ContractEventData ContractEvents `json:"contract_events"`
 	LedgerKeys        []string       `json:"ledger_keys"`
 }
 
-// ContractEvents maps contract IDs to their observed event data. Stored payload is
-// capped (top contracts, few topics, few deduped param vectors) while counts keep
-// accumulating, so emission weights survive the caps without unbounded seed growth.
+// ContractEvents maps contract IDs to their observed event data.
 type ContractEvents struct {
 	ContractIds map[string]*TopicData `json:"contract_ids"`
 }
@@ -56,13 +51,14 @@ func (c *ContractEvents) AddEventData(eventData protocol.EventInfo) {
 	pt := td.Topic[name]
 	if pt == nil {
 		if len(td.Topic) >= util.MaxSeedTopicsPerContract {
-			return
+			return // cap reached, don't store new topics/params to avoid unbounded growth
 		}
 		pt = &ParamTopics{}
 		td.Topic[name] = pt
 	}
 	pt.Count++
 
+	// add the params if they're unique AND we're under the param cap
 	if len(pt.Params) < util.MaxSeedParamSetsPerTopic &&
 		!slices.ContainsFunc(pt.Params, func(p []string) bool { return slices.Equal(p, params) }) {
 		pt.Params = append(pt.Params, params)
@@ -75,6 +71,7 @@ func (c *ContractEvents) trim(n int) {
 		return
 	}
 	ids := slices.SortedFunc(maps.Keys(c.ContractIds), func(a, b string) int {
+		// sort on emission count descending (then contract ID ascending if counts equal)
 		return cmp.Or(cmp.Compare(c.ContractIds[b].Count, c.ContractIds[a].Count), cmp.Compare(a, b))
 	})
 	for _, id := range ids[n:] {

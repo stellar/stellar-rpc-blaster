@@ -62,8 +62,12 @@ func newEventsSampler(params *Parameters, limitOverride uint32, rng *rand.Rand) 
 		return nil, fmt.Errorf("getEvents sampler needs seed data and a preflight-captured ledger head")
 	}
 	emitters, emitterWeights := params.Output.ContractEventData.ContractsAndWeights()
-	if len(emitters) == 0 {
-		return nil, fmt.Errorf("seed data contains no contract events")
+	total := 0.0
+	for _, w := range emitterWeights {
+		total += w
+	}
+	if total == 0 { // covers empty seeds and pre-emission-count seed files alike
+		return nil, fmt.Errorf("seed data contains no contract event counts — rerun generate")
 	}
 	cold := coldPoolFromKeys(params.Output.LedgerKeys, emitters, util.EventsColdPoolSize)
 	if len(cold) == 0 {
