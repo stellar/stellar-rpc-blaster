@@ -17,9 +17,8 @@ const (
 // Configurable limits for generate
 const (
 	// Default pagination limits that occur in RPC when pagination is used without a limit
-	DefaultTxPageLimit      uint32 = 50
-	DefaultLedgersPageLimit uint32 = 50
-	DefaultEventsPageLimit  uint32 = 100
+	DefaultTxPageLimit     uint32 = 50
+	DefaultEventsPageLimit uint32 = 100
 
 	DefaultSeedSliceSize uint32 = 64 // starting size for slices of bootstrapped seed data
 
@@ -48,12 +47,19 @@ const (
 	PrJson         float64 = 0.5 // probability of using "json" vs "xdr" format for transaction requests
 )
 
-// getEvents traffic model, measured from a one-week production capture re-joined
-// uncapped against full ledger history (archetype mixture lives in run/parameters/events_archetypes.go)
+// Traffic models measured from a one-week production capture re-joined uncapped
+// against full ledger history (the getEvents archetype mixture lives in
+// run/parameters/events_archetypes.go; the rest inline in endpoints.go)
 const (
-	EventsProfileVersion         = 1     // stamped into results JSON; bump when the events model changes
+	TrafficProfileVersion        = 2     // stamped into results JSON; bump when any endpoint model changes
 	PrEventsJson         float64 = 0.015 // xdrFormat "json"; the key is omitted otherwise (base64 default)
 	EventsLeftEdgeMargin uint32  = 1000  // never place startLedger within this of the retention floor
 	EventsDeepBandFloor  uint32  = 10000 // "deep" placement means at least this far behind head
 	EventsColdPoolSize           = 50    // deployed-but-quiet contracts drawn from seed ledger keys
+
+	PrTxRepoll        float64 = 0.6  // getTransaction requests re-polling a recently polled hash (measured 50-70%)
+	PrTxNotFound      float64 = 0.12 // fresh polls targeting hashes that never land (7% never-land + 5.2% pre-landing)
+	TxRecentWindow            = 8    // recently-polled hashes eligible for repoll
+	PrTxsNearHead     float64 = 0.98 // getTransactions starts within 1k ledgers of head
+	PrLedgersNearHead float64 = 0.65 // getLedgers starts within 1k ledgers of head
 )

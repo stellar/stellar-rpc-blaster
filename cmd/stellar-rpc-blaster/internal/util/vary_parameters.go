@@ -10,8 +10,8 @@ func VaryLimit(limitMax uint) uint {
 	return uint(rand.Float64()*float64(limitMax-1) + 1)
 }
 
-// VaryFormat determines whether to use "json" or "base64" format for transaction requests.
-// Used by all data-dependent endpoints.
+// VaryFormat determines whether to use "json" or "base64" format.
+// Used by getLedgerEntries; the modeled endpoints omit the key (base64 default).
 func VaryFormat() string {
 	if rand.Float64() < PrJson {
 		return "json"

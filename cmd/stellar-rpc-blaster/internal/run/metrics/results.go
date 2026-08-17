@@ -100,8 +100,9 @@ func (a *Aggregator) Results() *Results {
 			Percentiles:   make(map[string]float64),
 			Timeline:      timeline,
 		}
-		if name == "getEvents" {
-			results.Endpoints[name].Profile = util.EventsProfileVersion
+		switch name {
+		case "getEvents", "getTransaction", "getTransactions", "getLedgers":
+			results.Endpoints[name].Profile = util.TrafficProfileVersion
 		}
 		for p, d := range stats.percentiles {
 			key := fmt.Sprintf("p%.1f", p)

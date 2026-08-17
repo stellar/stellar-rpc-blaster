@@ -238,21 +238,13 @@ func (c *Config) GetEndpointStartRPS(key string) int {
 	return -1
 }
 
-// GetEndpointLimit returns the effective pagination limit: the configured value if set,
-// else the endpoint default. getEvents has no default — 0 means the traffic model owns
-// per-request limits, and a non-zero config value acts as an explicit override.
+// GetEndpointLimit returns the configured pagination limit. 0 means the endpoint's
+// traffic model owns per-request limits; a non-zero value acts as an explicit override.
 func (c *Config) GetEndpointLimit(key string) uint32 {
-	if ep, ok := c.Endpoints[key]; ok && ep.Limit != 0 {
-		return ep.Limit // if limits are set in toml as non-zero, use them
+	if ep, ok := c.Endpoints[key]; ok {
+		return ep.Limit
 	}
-	switch key {
-	case "getTransactions":
-		return util.DefaultTxPageLimit
-	case "getLedgers":
-		return util.DefaultLedgersPageLimit
-	default:
-		return 0
-	}
+	return 0
 }
 
 func (c *Config) GetEndpointMaxLimit(key string) uint32 {
