@@ -130,11 +130,11 @@ func NewConfig(
 		} else if settings.InputDataPath != "" {
 			cfg.InputDataPath = settings.InputDataPath
 		}
+		cfg.ErrorPercent = settings.ErrorPercent
 		if err := cfg.validateEndpointConfig(); err != nil {
 			return Config{}, err
 		}
 		logger.Infof("Successfully loaded seed data from %s", cfg.InputDataPath)
-		cfg.ErrorPercent = settings.ErrorPercent
 	case Generate:
 		cfg.OutputPath = settings.OutputPath
 		cfg.LedgerWindow = settings.LedgerWindow
