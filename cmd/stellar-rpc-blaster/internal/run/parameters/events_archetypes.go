@@ -136,7 +136,7 @@ func (s *eventsSampler) deepPager() map[string]any {
 	start := s.placeDeep(0)
 	body := s.body(start, s.contractFilter(0.06, 0))
 	span := chooseOne(s.rng, []uint32{250, 2000}, []float64{0.9, 0.1})
-	body["endLedger"] = min(start+span, s.head.Latest)
+	body["endLedger"] = min(start+span, s.head.Latest+1) // +1: endLedger is exclusive
 	s.setLimit(body, []uint{1000}, []float64{1})
 	return body
 }
@@ -163,7 +163,7 @@ func (s *eventsSampler) tailPoll() map[string]any {
 	body := s.body(start, filter)
 	if bounded {
 		span := chooseOne(s.rng, []uint32{120, 250, 590}, []float64{0.3, 0.5, 0.2})
-		body["endLedger"] = min(start+span, s.head.Latest)
+		body["endLedger"] = min(start+span, s.head.Latest+1) // +1: endLedger is exclusive
 	}
 	s.setLimit(body, []uint{100, 200}, []float64{0.6, 0.4})
 	return body
