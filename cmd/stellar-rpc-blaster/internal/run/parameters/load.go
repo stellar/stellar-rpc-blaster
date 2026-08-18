@@ -65,6 +65,16 @@ func (h HeadInfo) Back(depth uint32) uint32 {
 	return h.Latest - min(depth, h.Latest-h.Floor())
 }
 
+// Warnings returns advisory conditions that degrade the configured endpoints'
+// traffic realism without blocking the run.
+func (p *Parameters) Warnings(endpointKeys []string) []string {
+	var warnings []string
+	if slices.Contains(endpointKeys, "getEvents") && len(collectWallets(p.Output.ContractEventData)) == 0 {
+		warnings = append(warnings, "seed data has no account-address event params; transfer-watcher bodies degrade to head-polls")
+	}
+	return warnings
+}
+
 func GetParameters(dataPath string) (*Parameters, error) {
 	output, err := loadParameters(dataPath)
 	if err != nil {

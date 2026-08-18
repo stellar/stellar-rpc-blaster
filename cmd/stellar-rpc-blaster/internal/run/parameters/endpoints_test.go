@@ -54,6 +54,16 @@ func modelParams(t *testing.T) *Parameters {
 	for i := range hashes {
 		hashes[i] = fmt.Sprintf("%064x", i+1)
 	}
+	addr := func(b byte) string {
+		var raw xdr.Uint256
+		raw[0] = b
+		b64, err := xdr.MarshalBase64(xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &xdr.ScAddress{
+			Type:      xdr.ScAddressTypeScAddressTypeAccount,
+			AccountId: &xdr.AccountId{Type: xdr.PublicKeyTypePublicKeyTypeEd25519, Ed25519: &raw},
+		}})
+		require.NoError(t, err)
+		return b64
+	}
 	emitter, _ := testContractID(t, 0xE1)
 	keys := make([]string, 60)
 	for i := range keys {
@@ -65,7 +75,7 @@ func modelParams(t *testing.T) *Parameters {
 			TxHashes: hashes,
 			ContractEventData: seed.ContractEvents{ContractIds: map[string]*seed.TopicData{
 				emitter: {Count: 100, Topic: map[string]*seed.ParamTopics{
-					symb("transfer"): {Count: 80, Params: [][]string{{symb("alice"), symb("bob")}}},
+					symb("transfer"): {Count: 80, Params: [][]string{{addr(0xAA), addr(0xAB), symb("amount")}}},
 					symb("mint"):     {Count: 20, Params: [][]string{{symb("carol")}}},
 				}},
 			}},
@@ -145,14 +155,20 @@ func TestEndpointModel(t *testing.T) {
 	}
 }
 
-// getEvents: the cold pool must never overlap any observed emitter — including
-// ones trimmed out of the stored seed — or match rates silently inflate.
+// getEvents: the cold pool must never overlap any observed emitter or match rates inflate.
 func eventsModelOk(t *testing.T, params *Parameters, _ []map[string]any) {
 	s, err := newEventsSampler(params, rand.New(rand.NewPCG(1, 2)))
 	require.NoError(t, err)
 	require.NotEmpty(t, s.cold)
 	for _, cold := range s.cold {
 		require.NotContains(t, params.Output.EmitterIds, cold)
+	}
+	// wallet values must be account addresses, not arbitrary observed params
+	require.Len(t, s.wallets, 2)
+	for _, w := range s.wallets {
+		var v xdr.ScVal
+		require.NoError(t, xdr.SafeUnmarshalBase64(w, &v))
+		require.Equal(t, xdr.ScValTypeScvAddress, v.Type)
 	}
 }
 

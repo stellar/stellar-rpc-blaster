@@ -61,7 +61,7 @@ type eventsSampler struct {
 	events         seed.ContractEvents
 	cold           []string
 	coldWeights    []float64
-	paramPool      []string // observed ScVal params, for realistic rare topic values
+	wallets        []string // observed account-address ScVals, for realistic rare wallet values
 }
 
 // chooseOne draws one item with probability weights[i]/sum(weights).
@@ -103,7 +103,7 @@ func newEventsSampler(params *Parameters, rng *rand.Rand) (*eventsSampler, error
 		events:         params.Output.ContractEventData,
 		cold:           cold,
 		coldWeights:    coldWeights,
-		paramPool:      collectParams(params.Output.ContractEventData),
+		wallets:        collectWallets(params.Output.ContractEventData),
 	}, nil
 }
 
@@ -172,8 +172,11 @@ func (s *eventsSampler) tailPoll() map[string]any {
 // transferWatcher: the wallet watcher — two topics-only filters matching a transfer
 // where the wallet is sender or receiver; open-ended tail-follow from head.
 func (s *eventsSampler) transferWatcher() map[string]any {
+	if len(s.wallets) == 0 {
+		return s.headPoll() // seed observed no wallet addresses to watch; warned upstream
+	}
 	start := s.head.Back(uint32(s.rng.IntN(3)))
-	wallet := s.paramValue()
+	wallet := s.wallets[s.rng.IntN(len(s.wallets))]
 	body := map[string]any{
 		"startLedger": start,
 		"filters": []map[string]any{
@@ -275,14 +278,6 @@ func (s *eventsSampler) emitterContract() string {
 	return chooseOne(s.rng, s.emitters, s.emitterWeights)
 }
 
-// paramValue returns a real observed ScVal (base64) to use as a rare-but-real topic value.
-func (s *eventsSampler) paramValue() string {
-	if len(s.paramPool) == 0 {
-		return transferSym
-	}
-	return s.paramPool[s.rng.IntN(len(s.paramPool))]
-}
-
 // setLimit sets a request's limit in the request body. the limit is chosen
 // from a list of limits according to the provided weights.
 func (s *eventsSampler) setLimit(body map[string]any, limits []uint, weights []float64) {
@@ -330,12 +325,18 @@ func coldPoolFromKeys(keys []string, exclude []string, n int) []string {
 	return out
 }
 
-func collectParams(events seed.ContractEvents) []string {
+// collectWallets gathers the account-address ScVals observed in event params
+func collectWallets(events seed.ContractEvents) []string {
 	var out []string
 	for _, td := range events.ContractIds {
 		for _, pt := range td.Topic {
 			for _, params := range pt.Params {
-				out = append(out, params...)
+				for _, p := range params {
+					var v xdr.ScVal
+					if xdr.SafeUnmarshalBase64(p, &v) == nil && v.Type == xdr.ScValTypeScvAddress {
+						out = append(out, p)
+					}
+				}
 			}
 		}
 	}
