@@ -15,7 +15,7 @@ type SeedData struct {
 	LedgerRange       Range          `json:"ledger_range"`
 	TxHashes          []string       `json:"tx_hashes"`
 	ContractEventData ContractEvents `json:"contract_events"`
-	EmitterIds        []string       `json:"emitter_ids"` // every observed emitter, pre-trim; excluded from the events cold pool
+	EmitterIds        []string       `json:"emitter_ids"` // every observed emitter, pre-trim, excluded from the events cold pool
 	LedgerKeys        []string       `json:"ledger_keys"`
 }
 

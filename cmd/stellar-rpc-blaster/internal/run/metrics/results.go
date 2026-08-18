@@ -7,6 +7,7 @@ import (
 	"maps"
 	"math"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/run/parameters"
@@ -99,10 +100,11 @@ func (a *Aggregator) Results() *Results {
 			ErrorTypes:    errorTypesCopy,
 			TargetRPS:     stats.targetRPS,
 			Limit:         stats.limit,
-			Profile:       parameters.ProfileVersion(name), // omitempty drops the 0 of unmodeled endpoints
 			Percentiles:   make(map[string]float64),
 			Timeline:      timeline,
 		}
+		endpoint, _, _ := strings.Cut(name, "/") // archetype streams carry their endpoint's profile
+		results.Endpoints[name].Profile = parameters.ProfileVersion(endpoint)
 		for p, d := range stats.percentiles {
 			key := fmt.Sprintf("p%.1f", p)
 			results.Endpoints[name].Percentiles[key] = float64(d.Nanoseconds()) / 1e6 // ms
@@ -122,7 +124,34 @@ func marshalOpen(v any, prefix, indent string) ([]byte, error) {
 	return bytes.TrimRight(data[:bytes.LastIndexByte(data, '}')], "\n "+prefix), nil
 }
 
-// MarshalJSON produces indented JSON but keeps each timeline entry on a single line.
+// writeEndpoint writes one endpoint entry as indented JSON at the given pad,
+// keeping each timeline entry on a single line.
+func writeEndpoint(buf *bytes.Buffer, pad, name string, ep *EndpointResult) error {
+	epJson, err := marshalOpen(ep, pad, "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(buf, "\n%s%q: ", pad, name)
+	buf.Write(epJson)
+
+	if len(ep.Timeline) > 0 {
+		fmt.Fprintf(buf, ",\n%s  \"timeline\": [\n", pad)
+		for _, snap := range ep.Timeline {
+			snapJson, err := json.Marshal(snap)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(buf, "%s    %s,\n", pad, snapJson)
+		}
+		buf.Truncate(buf.Len() - 2)
+		fmt.Fprintf(buf, "\n%s  ]", pad)
+	}
+	fmt.Fprintf(buf, "\n%s}", pad)
+	return nil
+}
+
+// MarshalJSON produces indented JSON with slash-keyed streams ("getEvents/head-poll")
+// nested under their endpoint: {"getEvents": {"head-poll": {...}, ...}}.
 func (r Results) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	type resultsAlias Results
@@ -133,32 +162,31 @@ func (r Results) MarshalJSON() ([]byte, error) {
 	buf.Write(top)
 	buf.WriteString(",\n  \"endpoints\": {")
 
-	// Write each endpoint's main stats as indented JSON
+	open := "" // the nested endpoint object currently being written, if any
 	for i, name := range slices.Sorted(maps.Keys(r.Endpoints)) {
-		ep := r.Endpoints[name]
+		endpoint, stream, nested := strings.Cut(name, "/")
+		if open != "" && (!nested || endpoint != open) {
+			buf.WriteString("\n    }") // close the previous endpoint's stream object
+			open = ""
+		}
 		if i > 0 {
 			buf.WriteByte(',')
 		}
-		epJson, err := marshalOpen(ep, "    ", "  ")
-		if err != nil {
+		if !nested {
+			if err := writeEndpoint(&buf, "    ", name, r.Endpoints[name]); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if endpoint != open {
+			fmt.Fprintf(&buf, "\n    %q: {", endpoint)
+			open = endpoint
+		}
+		if err := writeEndpoint(&buf, "      ", stream, r.Endpoints[name]); err != nil {
 			return nil, err
 		}
-		fmt.Fprintf(&buf, "\n    %q: ", name)
-		buf.Write(epJson)
-
-		// Write timeline as compact JSON array
-		if len(ep.Timeline) > 0 {
-			buf.WriteString(",\n      \"timeline\": [\n")
-			for _, snap := range ep.Timeline {
-				snapJson, err := json.Marshal(snap)
-				if err != nil {
-					return nil, err
-				}
-				fmt.Fprintf(&buf, "        %s,\n", snapJson)
-			}
-			buf.Truncate(buf.Len() - 2)
-			buf.WriteString("\n      ]")
-		}
+	}
+	if open != "" {
 		buf.WriteString("\n    }")
 	}
 

@@ -2,4 +2,3 @@
 /output/*
 !/output/.gitkeep
 /stellar-rpc-blaster
-/blaster-extras/*

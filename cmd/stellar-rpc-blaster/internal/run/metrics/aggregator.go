@@ -3,7 +3,8 @@ package blasterMetrics
 import (
 	"context"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/log"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/config"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/run/parameters"
 )
 
 var capturedPercentiles = []float64{50, 95, 99, 99.9} // treat as const
@@ -118,25 +120,39 @@ func NewAggregator(logger *log.Entry, settings config.Config, cancel context.Can
 		writeOutputPath: settings.TestOutputPath,
 		rngSeed:         settings.RngSeed,
 	}
-	sort.Strings(endpoints)
-	a.orderedEndpoints = endpoints // maintain order for consistent output
-
 	stepInterval := max(5, settings.StepInterval)
 
 	for _, endpointKey := range endpoints {
-		a.stats[endpointKey] = &EndpointStats{
-			percentiles:  make(map[float64]time.Duration),
-			errorTypes:   make(map[string]ErrorResult),
-			startRPS:     float64(max(settings.GetEndpointStartRPS(endpointKey), 0)),
-			limit:        uint64(settings.GetEndpointLimit(endpointKey)),
-			stepInterval: stepInterval,
-		}
-		if !settings.Serial {
-			a.stats[endpointKey].startTime = time.Now()
+		for _, key := range statKeys(endpointKey) {
+			a.stats[key] = &EndpointStats{
+				percentiles:  make(map[float64]time.Duration),
+				errorTypes:   make(map[string]ErrorResult),
+				startRPS:     float64(max(settings.GetEndpointStartRPS(endpointKey), 0)),
+				limit:        uint64(settings.GetEndpointLimit(endpointKey)),
+				stepInterval: stepInterval,
+			}
+			if !settings.Serial {
+				a.stats[key].startTime = time.Now()
+			}
 		}
 	}
+	a.orderedEndpoints = slices.Sorted(maps.Keys(a.stats)) // maintain order for consistent output
 
 	return &a
+}
+
+// statKeys expands an endpoint into its reporting streams: getEvents results are
+// tracked and reported per archetype rather than as one monolith.
+func statKeys(endpointKey string) []string {
+	if endpointKey != "getEvents" {
+		return []string{endpointKey}
+	}
+	names := parameters.EventsArchetypeNames()
+	keys := make([]string, len(names))
+	for i, name := range names {
+		keys[i] = endpointKey + "/" + name
+	}
+	return keys
 }
 
 // mergedHistogram builds a combined histogram from all windows.
@@ -214,7 +230,9 @@ func (a *Aggregator) Record(sample Sample) error {
 func (a *Aggregator) ActivateEndpoint(endpointKey string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.stats[endpointKey].startTime = time.Now()
+	for _, key := range statKeys(endpointKey) {
+		a.stats[key].startTime = time.Now()
+	}
 }
 
 // checkErrorPercent returns the highest error percentage of any single endpoint's

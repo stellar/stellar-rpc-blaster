@@ -8,24 +8,25 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
 )
 
-// Builds a list of params maps for a data-dependent endpoint to vary request payloads.
-// A non-zero limit is a config override applied to every body (config validation
-// guarantees only paginated endpoints can carry one).
-func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Parameters, limit uint32) ([]map[string]any, error) {
-	result, err := buildEndpointParams(endpointKey, maxNeededNumBodies, params)
+// Builds a list of params maps for a data-dependent endpoint to vary request payloads,
+// plus per-body labels (nil except for getEvents, whose results are reported per
+// archetype). A non-zero limit is a config override applied to every body (config
+// validation guarantees only paginated endpoints can carry one).
+func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Parameters, limit uint32) ([]map[string]any, []string, error) {
+	result, labels, err := buildEndpointParams(endpointKey, maxNeededNumBodies, params)
 	if limit != 0 {
 		for _, body := range result {
 			body["pagination"] = map[string]any{"limit": limit}
 		}
 	}
-	return result, err
+	return result, labels, err
 }
 
-func buildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Parameters) ([]map[string]any, error) {
+func buildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Parameters) ([]map[string]any, []string, error) {
 	if needs, err := EndpointNeedsData(endpointKey); err != nil {
-		return nil, err
+		return nil, nil, err
 	} else if !needs {
-		return []map[string]any{{}}, nil
+		return []map[string]any{{}}, nil, nil
 	}
 	rng := rand.New(rand.NewPCG(params.RngSeed, endpointStream(endpointKey)))
 	count := min(maxNeededNumBodies, util.MaxNumPrebuiltBodies)
@@ -47,7 +48,7 @@ func buildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 			}
 			result[i] = map[string]any{"hash": hash}
 		}
-		return result, nil
+		return result, nil, nil
 
 	case "getLedgerEntries":
 		keys := params.Output.LedgerKeys
@@ -62,11 +63,11 @@ func buildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 				"xdrFormat": util.VaryFormat(rng),
 			}
 		}
-		return result, nil
+		return result, nil, nil
 
 	case "getTransactions", "getLedgers":
 		if params.Head.Latest == 0 {
-			return nil, fmt.Errorf("%s bodies need a preflight-captured ledger head", endpointKey)
+			return nil, nil, fmt.Errorf("%s bodies need a preflight-captured ledger head", endpointKey)
 		}
 		prNear := util.PrTxsNearHead
 		if endpointKey == "getLedgers" {
@@ -82,20 +83,21 @@ func buildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 			}
 			result[i] = entry
 		}
-		return result, nil
+		return result, nil, nil
 
 	case "getEvents":
 		s, err := newEventsSampler(params, rng)
 		if err != nil {
-			return nil, fmt.Errorf("couldn't build %s sampler: %w", endpointKey, err)
+			return nil, nil, fmt.Errorf("couldn't build %s sampler: %w", endpointKey, err)
 		}
 		result := make([]map[string]any, count)
+		labels := make([]string, count)
 		for i := range count {
-			result[i] = s.sample()
+			labels[i], result[i] = s.sample()
 		}
-		return result, nil
+		return result, labels, nil
 	default:
-		return nil, fmt.Errorf("unsupported endpoint %s", endpointKey)
+		return nil, nil, fmt.Errorf("unsupported endpoint %s", endpointKey)
 	}
 }
 

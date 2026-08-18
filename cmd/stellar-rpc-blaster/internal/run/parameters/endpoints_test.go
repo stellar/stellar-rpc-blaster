@@ -151,9 +151,15 @@ func TestEndpointModel(t *testing.T) {
 	for endpoint, m := range models {
 		t.Run(endpoint, func(t *testing.T) {
 			params := modelParams(t)
-			bodies, err := BuildEndpointParams(endpoint, nModelBodies, params, 0)
+			bodies, labels, err := BuildEndpointParams(endpoint, nModelBodies, params, 0)
 			require.NoError(t, err)
 			require.Len(t, bodies, nModelBodies)
+			if endpoint == "getEvents" { // per-archetype labels attribute events results
+				require.Len(t, labels, nModelBodies)
+				require.Subset(t, EventsArchetypeNames(), labels)
+			} else {
+				require.Nil(t, labels)
+			}
 			for _, body := range bodies {
 				raw, err := json.Marshal(body)
 				require.NoError(t, err)
@@ -166,7 +172,7 @@ func TestEndpointModel(t *testing.T) {
 			if endpoint == "getTransaction" {
 				return // nothing paginated to override
 			}
-			bodies, err = BuildEndpointParams(endpoint, 100, params, 77)
+			bodies, _, err = BuildEndpointParams(endpoint, 100, params, 77)
 			require.NoError(t, err)
 			for _, body := range bodies {
 				require.EqualValues(t, map[string]any{"limit": uint32(77)}, body["pagination"],
@@ -200,7 +206,7 @@ func TestEndpointModelTinyWindow(t *testing.T) {
 	params := modelParams(t)
 	params.Head = HeadInfo{Oldest: 1, Latest: 5}
 	for _, endpoint := range []string{"getEvents", "getTransactions", "getLedgers"} {
-		bodies, err := BuildEndpointParams(endpoint, 500, params, 0)
+		bodies, _, err := BuildEndpointParams(endpoint, 500, params, 0)
 		require.NoError(t, err, endpoint)
 		for _, body := range bodies {
 			start := body["startLedger"].(uint32)
