@@ -3,6 +3,8 @@ package seed
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
@@ -25,8 +27,10 @@ func NewEventDataSeeder(rpcClient *rpcclient.Client) Seeder {
 	}
 }
 
-// WriteResults writes the accumulated event data to the SeedWriter, trimmed to the top emitters.
+// WriteResults writes the accumulated event data to the SeedWriter (trimmed to the
+// top emitters)
 func (s *EventDataSeeder) WriteResults(w *SeedWriter) {
+	w.EmitterIds = slices.Sorted(maps.Keys(s.contractEvents.ContractIds))
 	s.contractEvents.trim(util.MaxSeedEventContracts)
 	w.ContractEventData = s.contractEvents
 }

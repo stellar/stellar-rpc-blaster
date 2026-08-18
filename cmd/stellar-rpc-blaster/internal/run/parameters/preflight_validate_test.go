@@ -13,6 +13,19 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
 )
 
+// seededParams returns Parameters whose seed fields are all populated, so the
+// per-endpoint seed-field check passes and tests exercise the retention logic.
+func seededParams(first, last uint32) *Parameters {
+	return &Parameters{Output: seed.SeedData{
+		LedgerRange: seed.Range{First: first, Last: last},
+		TxHashes:    []string{"h"},
+		LedgerKeys:  []string{"k"},
+		ContractEventData: seed.ContractEvents{
+			ContractIds: map[string]*seed.TopicData{"C": {Count: 1}},
+		},
+	}}
+}
+
 func TestValidatorChecksSeedStartForSeededEndpoints(t *testing.T) {
 	client := util.NewMockRPCClient(t, func(method string, _ json.RawMessage) any {
 		return protocol.GetHealthResponse{
@@ -20,7 +33,7 @@ func TestValidatorChecksSeedStartForSeededEndpoints(t *testing.T) {
 			OldestLedger: 100,
 		}
 	})
-	params := &Parameters{Output: seed.SeedData{LedgerRange: seed.Range{First: 123, Last: 456}}}
+	params := seededParams(123, 456)
 
 	err := params.ValidateConfiguredEndpoints(
 		context.Background(),
@@ -37,7 +50,7 @@ func TestValidatorSkipsStaticEndpoints(t *testing.T) {
 			OldestLedger: 100,
 		}
 	})
-	params := &Parameters{Output: seed.SeedData{LedgerRange: seed.Range{First: 123, Last: 456}}}
+	params := seededParams(123, 456)
 
 	err := params.ValidateConfiguredEndpoints(
 		context.Background(),
@@ -54,7 +67,7 @@ func TestValidatorRejectsStaleStart(t *testing.T) {
 			OldestLedger: 300,
 		}
 	})
-	params := &Parameters{Output: seed.SeedData{LedgerRange: seed.Range{First: 123, Last: 350}}}
+	params := seededParams(123, 350)
 
 	err := params.ValidateConfiguredEndpoints(
 		context.Background(),
@@ -71,7 +84,7 @@ func TestValidatorRejectsMissingLatestLedger(t *testing.T) {
 			OldestLedger: 100,
 		}
 	})
-	params := &Parameters{Output: seed.SeedData{LedgerRange: seed.Range{First: 123, Last: 456}}}
+	params := seededParams(123, 456)
 
 	err := params.ValidateConfiguredEndpoints(
 		context.Background(),

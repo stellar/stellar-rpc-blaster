@@ -3,17 +3,43 @@ package parameters
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
-	"strings"
+	"slices"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/generate/seed"
 	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
 )
 
 type Parameters struct {
-	Output       seed.SeedData
-	SampleCounts map[string]int
-	Head         HeadInfo
+	Output seed.SeedData
+	Head   HeadInfo
+}
+
+// seed fields each endpoint draws from; endpoints absent here need none.
+var endpointSeedFields = map[string][]string{
+	"getTransaction":   {"tx_hashes"},
+	"getLedgerEntries": {"ledger_keys"},
+	"getEvents":        {"contract_events", "ledger_keys"},
+}
+
+// missingSeedFields returns the seed fields the given endpoints need but the loaded
+// seed data lacks, so runs only require the data they'll actually draw from.
+func (p *Parameters) missingSeedFields(endpointKeys []string) []string {
+	counts := map[string]int{
+		"tx_hashes":       len(p.Output.TxHashes),
+		"ledger_keys":     len(p.Output.LedgerKeys),
+		"contract_events": len(p.Output.ContractEventData.ContractIds),
+	}
+	missing := map[string]bool{}
+	for _, key := range endpointKeys {
+		for _, field := range endpointSeedFields[key] {
+			if counts[field] == 0 {
+				missing[field] = true
+			}
+		}
+	}
+	return slices.Sorted(maps.Keys(missing))
 }
 
 // HeadInfo is the target RPC's live ledger window, captured during preflight;
@@ -34,18 +60,17 @@ func (h HeadInfo) Clamp(start uint32) uint32 {
 	return min(max(start, h.Floor()), h.Latest)
 }
 
+// Back returns the startLedger depth ledgers behind head capped at the floor.
+func (h HeadInfo) Back(depth uint32) uint32 {
+	return h.Latest - min(depth, h.Latest-h.Floor())
+}
+
 func GetParameters(dataPath string) (*Parameters, error) {
 	output, err := loadParameters(dataPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load parameters: %w", err)
 	}
-
-	params := &Parameters{
-		Output: output,
-	}
-	params.fillCounts()
-
-	return params, params.Validate()
+	return &Parameters{Output: output}, nil
 }
 
 func loadParameters(dataPath string) (seed.SeedData, error) {
@@ -60,25 +85,4 @@ func loadParameters(dataPath string) (seed.SeedData, error) {
 		return seed.SeedData{}, fmt.Errorf("failed to decode seed data: %w", err)
 	}
 	return output, nil
-}
-
-func (w *Parameters) fillCounts() {
-	w.SampleCounts = map[string]int{
-		"tx_hashes":       len(w.Output.TxHashes),
-		"ledger_keys":     len(w.Output.LedgerKeys),
-		"contract_events": len(w.Output.ContractEventData.ContractIds),
-	}
-}
-
-func (w *Parameters) Validate() error {
-	missingFields := []string{}
-	for key, count := range w.SampleCounts {
-		if count == 0 {
-			missingFields = append(missingFields, key)
-		}
-	}
-	if len(missingFields) > 0 {
-		return fmt.Errorf("sample counts for the following fields are zero: %s", strings.Join(missingFields, ", "))
-	}
-	return nil
 }

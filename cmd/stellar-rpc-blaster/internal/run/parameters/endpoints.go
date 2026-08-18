@@ -114,7 +114,7 @@ func headStart(rng *rand.Rand, head HeadInfo, prNear float64) uint32 {
 	if retention := head.Latest - head.Floor(); rng.Float64() >= prNear && retention > 1000 {
 		depth = 1000 + uint32(rng.IntN(int(retention-1000)))
 	}
-	return head.Clamp(head.Latest - depth)
+	return head.Back(depth)
 }
 
 // EndpointNeedsData reports whether the endpoint requires seed data to build requests.

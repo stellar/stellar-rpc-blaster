@@ -59,6 +59,7 @@ func modelParams(t *testing.T) *Parameters {
 	for i := range keys {
 		_, keys[i] = testContractID(t, byte(i+1))
 	}
+	trimmedEmitter, _ := testContractID(t, 0x01) // present in keys, trimmed out of contract_events
 	return &Parameters{
 		Output: seed.SeedData{
 			TxHashes: hashes,
@@ -68,6 +69,7 @@ func modelParams(t *testing.T) *Parameters {
 					symb("mint"):     {Count: 20, Params: [][]string{{symb("carol")}}},
 				}},
 			}},
+			EmitterIds: []string{emitter, trimmedEmitter},
 			LedgerKeys: keys,
 		},
 		Head: HeadInfo{Oldest: testOldest, Latest: testLatest},
@@ -143,13 +145,29 @@ func TestEndpointModel(t *testing.T) {
 	}
 }
 
-// getEvents: the cold pool must never overlap the emitters, or match rates silently inflate.
+// getEvents: the cold pool must never overlap any observed emitter — including
+// ones trimmed out of the stored seed — or match rates silently inflate.
 func eventsModelOk(t *testing.T, params *Parameters, _ []map[string]any) {
 	s, err := newEventsSampler(params, rand.New(rand.NewPCG(1, 2)))
 	require.NoError(t, err)
 	require.NotEmpty(t, s.cold)
 	for _, cold := range s.cold {
-		require.NotContains(t, s.emitters, cold)
+		require.NotContains(t, params.Output.EmitterIds, cold)
+	}
+}
+
+// TestEndpointModelTinyWindow pins the saturating placement: no uint32 wraparound
+// or below-floor starts when the ledger window is smaller than every placement band.
+func TestEndpointModelTinyWindow(t *testing.T) {
+	params := modelParams(t)
+	params.Head = HeadInfo{Oldest: 1, Latest: 5}
+	for _, endpoint := range []string{"getEvents", "getTransactions", "getLedgers"} {
+		bodies, err := BuildEndpointParams(endpoint, 500, params, 0)
+		require.NoError(t, err, endpoint)
+		for _, body := range bodies {
+			start := body["startLedger"].(uint32)
+			require.True(t, start >= 1 && start <= 5, "%s startLedger %d out of window", endpoint, start)
+		}
 	}
 }
 

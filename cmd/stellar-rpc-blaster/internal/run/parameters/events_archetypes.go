@@ -81,7 +81,12 @@ func newEventsSampler(params *Parameters, rng *rand.Rand) (*eventsSampler, error
 	if total == 0 { // covers empty seeds and pre-emission-count seed files alike
 		return nil, fmt.Errorf("seed data contains no contract event counts — rerun generate")
 	}
-	cold := coldPoolFromKeys(params.Output.LedgerKeys, emitters, util.EventsColdPoolSize)
+	// exclude every observed emitter, not just the trimmed top ones kept in the seed
+	exclude := params.Output.EmitterIds
+	if len(exclude) == 0 {
+		exclude = emitters
+	}
+	cold := coldPoolFromKeys(params.Output.LedgerKeys, exclude, util.EventsColdPoolSize)
 	if len(cold) == 0 {
 		return nil, fmt.Errorf("seed data contains no contract-data ledger keys for the events cold pool — rerun generate")
 	}
@@ -116,7 +121,7 @@ func (s *eventsSampler) sample() map[string]any {
 // headPoll: start at head/head-1 and query a mix of open-ended + one-ledger windows.
 // mostly cold contracts with a follower-on-emitter slice that catches fresh events.
 func (s *eventsSampler) headPoll() map[string]any {
-	start := s.head.Latest - chooseOne(s.rng, []uint32{0, 1}, []float64{0.47, 0.53})
+	start := s.head.Back(chooseOne(s.rng, []uint32{0, 1}, []float64{0.47, 0.53}))
 	body := s.body(start, s.contractFilter(0.10, 0.25))
 	if s.rng.Float64() < 0.5 {
 		body["endLedger"] = start + 1 // one-ledger window case
@@ -150,7 +155,7 @@ func (s *eventsSampler) tailPoll() map[string]any {
 	default:
 		depth = 1000 + uint32(s.rng.IntN(4000))
 	}
-	start := s.head.Clamp(s.head.Latest - depth)
+	start := s.head.Back(depth)
 	filter := s.contractFilter(0, 1.0/3)
 	if s.rng.Float64() < 0.03 {
 		filter["contractIds"] = []string{s.coldContract(), s.coldContract()}
@@ -167,7 +172,7 @@ func (s *eventsSampler) tailPoll() map[string]any {
 // transferWatcher: the wallet watcher — two topics-only filters matching a transfer
 // where the wallet is sender or receiver; open-ended tail-follow from head.
 func (s *eventsSampler) transferWatcher() map[string]any {
-	start := s.head.Latest - uint32(s.rng.IntN(3))
+	start := s.head.Back(uint32(s.rng.IntN(3)))
 	wallet := s.paramValue()
 	body := map[string]any{
 		"startLedger": start,
@@ -182,7 +187,7 @@ func (s *eventsSampler) transferWatcher() map[string]any {
 
 // catchUp: tuned-window catch-up reads on real emitters; the matching minority.
 func (s *eventsSampler) catchUp() map[string]any {
-	start := s.head.Clamp(s.head.Latest - uint32(10+s.rng.IntN(240)))
+	start := s.head.Back(uint32(10 + s.rng.IntN(240)))
 	body := s.body(start, map[string]any{"type": "contract", "contractIds": []string{s.emitterContract()}})
 	s.setLimit(body, []uint{100, 200}, []float64{0.7, 0.3})
 	return body
@@ -207,7 +212,7 @@ func (s *eventsSampler) deepScan() map[string]any {
 
 // firehose: no filters at all. matches everything and early-exits at limit.
 func (s *eventsSampler) firehose() map[string]any {
-	start := s.head.Latest - uint32(s.rng.IntN(2))
+	start := s.head.Back(uint32(s.rng.IntN(2)))
 	body := map[string]any{"startLedger": start}
 	s.setLimit(body, []uint{1, 100, 200}, []float64{0.85, 0.075, 0.075})
 	return body
@@ -287,19 +292,21 @@ func (s *eventsSampler) setLimit(body map[string]any, limits []uint, weights []f
 // placeDeep returns a start at least EventsDeepBandFloor behind head (or `around` deep
 // when non-zero), clamped into the placeable window.
 func (s *eventsSampler) placeDeep(around uint32) uint32 {
-	retention := s.head.Latest - s.head.Floor()
 	depth := util.EventsDeepBandFloor
 	if around != 0 {
 		depth = around + uint32(s.rng.IntN(5000))
-	} else if retention > util.EventsDeepBandFloor {
+	} else if retention := s.head.Latest - s.head.Floor(); retention > util.EventsDeepBandFloor {
 		depth += uint32(s.rng.IntN(int(retention - util.EventsDeepBandFloor + 1)))
 	}
-	return s.head.Latest - min(depth, retention)
+	return s.head.Back(depth)
 }
 
 // coldPoolFromKeys gets deployed-but-quiet contract IDs from seeded ledger keys.
 func coldPoolFromKeys(keys []string, exclude []string, n int) []string {
-	seen := make(map[string]bool, n)
+	skip := make(map[string]bool, len(exclude)+n) // known emitters + already-pooled IDs
+	for _, id := range exclude {
+		skip[id] = true
+	}
 	var out []string
 	for _, k := range keys {
 		var key xdr.LedgerKey
@@ -311,10 +318,10 @@ func coldPoolFromKeys(keys []string, exclude []string, n int) []string {
 			continue
 		}
 		id := strkey.MustEncode(strkey.VersionByteContract, cid[:])
-		if seen[id] || slices.Contains(exclude, id) { // skip known emitters
+		if skip[id] {
 			continue
 		}
-		seen[id] = true
+		skip[id] = true
 		out = append(out, id)
 		if len(out) == n {
 			break
