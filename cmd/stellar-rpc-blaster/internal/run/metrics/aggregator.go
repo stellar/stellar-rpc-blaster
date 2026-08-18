@@ -46,6 +46,7 @@ type EndpointStats struct {
 	startRPS     float64
 	targetRPS    float64
 	limit        uint64        // effective per-request limit; 0 for endpoints without pagination
+	rpsShare     float64       // fraction of the endpoint's RPS this stream carries (1 except archetype sub-streams)
 	startTime    time.Time     // set on activation; zero means inactive
 	stepInterval time.Duration // window size for timeline snapshots
 	windows      []windowStats // per-step-interval accumulators
@@ -123,36 +124,32 @@ func NewAggregator(logger *log.Entry, settings config.Config, cancel context.Can
 	stepInterval := max(5, settings.StepInterval)
 
 	for _, endpointKey := range endpoints {
-		for _, key := range statKeys(endpointKey) {
-			a.stats[key] = &EndpointStats{
+		newStats := func(share float64) *EndpointStats {
+			s := &EndpointStats{
 				percentiles:  make(map[float64]time.Duration),
 				errorTypes:   make(map[string]ErrorResult),
-				startRPS:     float64(max(settings.GetEndpointStartRPS(endpointKey), 0)),
+				startRPS:     float64(max(settings.GetEndpointStartRPS(endpointKey), 0)) * share,
 				limit:        uint64(settings.GetEndpointLimit(endpointKey)),
 				stepInterval: stepInterval,
+				rpsShare:     share,
 			}
 			if !settings.Serial {
-				a.stats[key].startTime = time.Now()
+				s.startTime = time.Now()
+			}
+			return s
+		}
+		a.stats[endpointKey] = newStats(1)
+		// getEvents samples are also tracked per archetype, as sub-streams
+		// carrying their share of the endpoint's RPS
+		if endpointKey == "getEvents" {
+			for name, share := range parameters.EventsArchetypeShares() {
+				a.stats[endpointKey+"/"+name] = newStats(share)
 			}
 		}
 	}
 	a.orderedEndpoints = slices.Sorted(maps.Keys(a.stats)) // maintain order for consistent output
 
 	return &a
-}
-
-// statKeys expands an endpoint into its reporting streams: getEvents results are
-// tracked and reported per archetype rather than as one monolith.
-func statKeys(endpointKey string) []string {
-	if endpointKey != "getEvents" {
-		return []string{endpointKey}
-	}
-	names := parameters.EventsArchetypeNames()
-	keys := make([]string, len(names))
-	for i, name := range names {
-		keys[i] = endpointKey + "/" + name
-	}
-	return keys
 }
 
 // mergedHistogram builds a combined histogram from all windows.
@@ -172,23 +169,35 @@ func (e *EndpointStats) refreshPercentiles() {
 	}
 }
 
+// Record books a sample into its endpoint's stream, and additionally into the
+// endpoint's archetype sub-stream when the sample carries one.
 func (a *Aggregator) Record(sample Sample) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if _, ok := a.stats[sample.Endpoint]; !ok {
-		return fmt.Errorf("unknown endpoint in sample: %s", sample.Endpoint)
+	keys := []string{sample.Endpoint}
+	if sample.Archetype != "" {
+		keys = append(keys, sample.Endpoint+"/"+sample.Archetype)
 	}
+	for _, key := range keys {
+		epStats, ok := a.stats[key]
+		if !ok {
+			return fmt.Errorf("unknown endpoint in sample: %s", key)
+		}
+		if epStats.startTime.IsZero() {
+			return nil
+		}
+		epStats.record(sample)
+	}
+	return nil
+}
 
-	epStats := a.stats[sample.Endpoint]
-	if epStats.startTime.IsZero() {
-		return nil
-	}
-	epStats.targetRPS = sample.CurrentRPS
+func (e *EndpointStats) record(sample Sample) {
+	e.targetRPS = sample.CurrentRPS * e.rpsShare
 	if sample.OK {
-		epStats.success++
+		e.success++
 	} else {
-		epStats.errors++
+		e.errors++
 		var errKey string
 		if sample.RPCErr != nil {
 			errKey = sample.RPCErr.Error()
@@ -198,40 +207,39 @@ func (a *Aggregator) Record(sample Sample) error {
 			errKey = strconv.Itoa(int(sample.Code))
 		}
 
-		if existing, ok := epStats.errorTypes[errKey]; ok {
+		if existing, ok := e.errorTypes[errKey]; ok {
 			existing.Count++
 			existing.LastSeen = time.Now()
-			epStats.errorTypes[errKey] = existing
+			e.errorTypes[errKey] = existing
 		} else {
-			epStats.errorTypes[errKey] = newErrorResult(sample)
+			e.errorTypes[errKey] = newErrorResult(sample)
 		}
 	}
 	// Bucket into per-step-interval window (windows are the source of truth for histograms)
 	latencyMicros := int64(sample.Latency / time.Microsecond)
-	elapsed := time.Since(epStats.startTime)
-	idx := int(elapsed / epStats.stepInterval)
-	for len(epStats.windows) <= idx {
-		epStats.windows = append(epStats.windows, windowStats{
+	idx := int(time.Since(e.startTime) / e.stepInterval)
+	for len(e.windows) <= idx {
+		e.windows = append(e.windows, windowStats{
 			histogram: hdrhistogram.New(1, 60000000, 3),
 		})
 	}
-	w := &epStats.windows[idx]
-	w.targetRPS = sample.CurrentRPS
+	w := &e.windows[idx]
+	w.targetRPS = sample.CurrentRPS * e.rpsShare
 	w.histogram.RecordValue(latencyMicros)
 	if sample.OK {
 		w.success++
 	} else {
 		w.errors++
 	}
-
-	return nil
 }
 
 func (a *Aggregator) ActivateEndpoint(endpointKey string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	for _, key := range statKeys(endpointKey) {
-		a.stats[key].startTime = time.Now()
+	for key, stats := range a.stats {
+		if key == endpointKey || strings.HasPrefix(key, endpointKey+"/") {
+			stats.startTime = time.Now()
+		}
 	}
 }
 
@@ -240,9 +248,9 @@ func (a *Aggregator) ActivateEndpoint(endpointKey string) {
 // never evaluate a partially-filled window.
 func (a *Aggregator) checkErrorPercent() int {
 	var worst int
-	for _, stats := range a.stats {
-		if len(stats.windows) < 2 {
-			continue
+	for key, stats := range a.stats {
+		if strings.Contains(key, "/") || len(stats.windows) < 2 {
+			continue // archetype sub-streams are reporting-only; the endpoint stream governs the kill switch
 		}
 		w := stats.windows[len(stats.windows)-2]
 		total := w.success + w.errors
@@ -270,8 +278,8 @@ func (a *Aggregator) String() string {
 
 	for _, endpointName := range a.orderedEndpoints {
 		endpointStats := a.stats[endpointName]
-		if !endpointStats.startTime.IsZero() {
-			fmt.Fprintf(&line, "\n%-20s: %s", endpointName, endpointStats)
+		if !endpointStats.startTime.IsZero() && !strings.Contains(endpointName, "/") {
+			fmt.Fprintf(&line, "\n%-20s: %s", endpointName, endpointStats) // sub-streams report in the JSON only
 		}
 	}
 	line.WriteString("\n")

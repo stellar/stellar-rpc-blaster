@@ -93,7 +93,7 @@ func TestEndpointParamsReproducible(t *testing.T) {
 	build := func(endpoint string, seed uint64, n int) []map[string]any {
 		params := modelParams(t)
 		params.RngSeed = seed
-		bodies, err := BuildEndpointParams(endpoint, n, params, 0)
+		bodies, _, err := BuildEndpointParams(endpoint, n, params, 0)
 		require.NoError(t, err)
 		return bodies
 	}

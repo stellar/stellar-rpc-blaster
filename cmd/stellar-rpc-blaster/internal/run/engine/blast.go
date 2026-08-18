@@ -52,9 +52,9 @@ func flushBlastResults(
 		elapsed := time.Since(start)
 		expectedRPS := pacer.Rate(elapsed)
 
-		endpoint := endpointKey
+		var archetype string
 		if _, label, ok := strings.Cut(result.URL, "?label="); ok {
-			endpoint += "/" + label // labeled bodies report as their own stream
+			archetype = label // labeled bodies also report as a sub-stream of their endpoint
 		}
 
 		ok := result.Error == "" && result.Code >= 200 && result.Code < 300
@@ -69,7 +69,8 @@ func flushBlastResults(
 
 		select {
 		case out <- blasterMetrics.Sample{
-			Endpoint:   endpoint,
+			Endpoint:   endpointKey,
+			Archetype:  archetype,
 			CurrentRPS: expectedRPS,
 			Latency:    result.Latency,
 			Code:       result.Code,

@@ -161,6 +161,15 @@ func EventsArchetypeNames() []string {
 	return names
 }
 
+// EventsArchetypeShares maps each archetype label to its share of getEvents traffic.
+func EventsArchetypeShares() map[string]float64 {
+	shares := make(map[string]float64, len(eventsArchetypes))
+	for _, a := range eventsArchetypes {
+		shares[a.name] = a.weight
+	}
+	return shares
+}
+
 // ---- archetype builders ----
 
 // headPoll: start at head/head-1 and query a mix of open-ended + one-ledger windows.

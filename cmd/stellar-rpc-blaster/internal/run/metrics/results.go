@@ -24,15 +24,16 @@ type Results struct {
 
 // EndpointResult holds final stats for one endpoint
 type EndpointResult struct {
-	TotalRequests uint64                 `json:"total_requests"`
-	Success       uint64                 `json:"success"`
-	Errors        uint64                 `json:"errors"`
-	TargetRPS     float64                `json:"target_rps"`
-	Limit         uint64                 `json:"limit,omitempty"`
-	Profile       int                    `json:"traffic_profile,omitempty"` // version of the hard-coded traffic model, for cross-run comparability
-	Percentiles   map[string]float64     `json:"percentiles_ms"`
-	ErrorTypes    map[string]ErrorResult `json:"error_types,omitempty"`
-	Timeline      []StepSnapshot         `json:"-"`
+	TotalRequests uint64                     `json:"total_requests"`
+	Success       uint64                     `json:"success"`
+	Errors        uint64                     `json:"errors"`
+	TargetRPS     float64                    `json:"target_rps"`
+	Limit         uint64                     `json:"limit,omitempty"`
+	Profile       int                        `json:"traffic_profile,omitempty"` // version of the hard-coded traffic model, for cross-run comparability
+	Percentiles   map[string]float64         `json:"percentiles_ms"`
+	ErrorTypes    map[string]ErrorResult     `json:"error_types,omitempty"`
+	Timeline      []StepSnapshot             `json:"-"`
+	Archetypes    map[string]*EndpointResult `json:"-"` // per-archetype sub-stream results, written after the overall entry
 }
 
 // StepSnapshot captures metrics for a single step-interval window
@@ -93,22 +94,31 @@ func (a *Aggregator) Results() *Results {
 			})
 		}
 
-		results.Endpoints[name] = &EndpointResult{
+		endpoint, archetype, isSubStream := strings.Cut(name, "/")
+		entry := &EndpointResult{
 			TotalRequests: totalRequests,
 			Success:       stats.success,
 			Errors:        stats.errors,
 			ErrorTypes:    errorTypesCopy,
 			TargetRPS:     stats.targetRPS,
 			Limit:         stats.limit,
+			Profile:       parameters.ProfileVersion(endpoint),
 			Percentiles:   make(map[string]float64),
 			Timeline:      timeline,
 		}
-		endpoint, _, _ := strings.Cut(name, "/") // archetype streams carry their endpoint's profile
-		results.Endpoints[name].Profile = parameters.ProfileVersion(endpoint)
 		for p, d := range stats.percentiles {
-			key := fmt.Sprintf("p%.1f", p)
-			results.Endpoints[name].Percentiles[key] = float64(d.Nanoseconds()) / 1e6 // ms
+			entry.Percentiles[fmt.Sprintf("p%.1f", p)] = float64(d.Nanoseconds()) / 1e6 // ms
 		}
+		if !isSubStream {
+			results.Endpoints[name] = entry
+			continue
+		}
+		// orderedEndpoints is sorted, so an endpoint precedes its sub-streams
+		parent := results.Endpoints[endpoint]
+		if parent.Archetypes == nil {
+			parent.Archetypes = make(map[string]*EndpointResult)
+		}
+		parent.Archetypes[archetype] = entry
 	}
 
 	return results
@@ -146,12 +156,24 @@ func writeEndpoint(buf *bytes.Buffer, pad, name string, ep *EndpointResult) erro
 		buf.Truncate(buf.Len() - 2)
 		fmt.Fprintf(buf, "\n%s  ]", pad)
 	}
+	if len(ep.Archetypes) > 0 {
+		fmt.Fprintf(buf, ",\n%s  \"archetypes\": {", pad)
+		for i, name := range slices.Sorted(maps.Keys(ep.Archetypes)) {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			if err := writeEndpoint(buf, pad+"    ", name, ep.Archetypes[name]); err != nil {
+				return err
+			}
+		}
+		fmt.Fprintf(buf, "\n%s  }", pad)
+	}
 	fmt.Fprintf(buf, "\n%s}", pad)
 	return nil
 }
 
-// MarshalJSON produces indented JSON with slash-keyed streams ("getEvents/head-poll")
-// nested under their endpoint: {"getEvents": {"head-poll": {...}, ...}}.
+// MarshalJSON produces indented JSON, keeping each timeline entry on a single line
+// and nesting archetype sub-stream results inside their endpoint's entry.
 func (r Results) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	type resultsAlias Results
@@ -162,32 +184,13 @@ func (r Results) MarshalJSON() ([]byte, error) {
 	buf.Write(top)
 	buf.WriteString(",\n  \"endpoints\": {")
 
-	open := "" // the nested endpoint object currently being written, if any
 	for i, name := range slices.Sorted(maps.Keys(r.Endpoints)) {
-		endpoint, stream, nested := strings.Cut(name, "/")
-		if open != "" && (!nested || endpoint != open) {
-			buf.WriteString("\n    }") // close the previous endpoint's stream object
-			open = ""
-		}
 		if i > 0 {
 			buf.WriteByte(',')
 		}
-		if !nested {
-			if err := writeEndpoint(&buf, "    ", name, r.Endpoints[name]); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		if endpoint != open {
-			fmt.Fprintf(&buf, "\n    %q: {", endpoint)
-			open = endpoint
-		}
-		if err := writeEndpoint(&buf, "      ", stream, r.Endpoints[name]); err != nil {
+		if err := writeEndpoint(&buf, "    ", name, r.Endpoints[name]); err != nil {
 			return nil, err
 		}
-	}
-	if open != "" {
-		buf.WriteString("\n    }")
 	}
 
 	buf.WriteString("\n  }\n}")
