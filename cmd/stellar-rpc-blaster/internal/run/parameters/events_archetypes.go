@@ -2,8 +2,10 @@ package parameters
 
 import (
 	"fmt"
+	"maps"
 	"math/rand/v2"
 	"slices"
+	"strings"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -24,11 +26,42 @@ var eventsArchetypes = []eventsArchetype{
 	{"firehose", 0.02, (*eventsSampler).firehose},
 }
 
-// Single-topic wildcard shapes and weights among topic-carrying filters
-// (V = observed segment, * = single-segment wildcard).
+// A topicMix is one archetype's measured distribution over topic filter shapes, written
+// position-wise over an event's topics: "V" is a real value from an event (i.e.
+// filled with a positionally corresponding value from an observed event vector),
+// "*" matches any one value, "**" any number at the tail.
+type topicMix struct {
+	shapes  [][]string
+	weights []float64
+}
+
+// newTopicMix sorts by topic filter shape so draws stay reproducible.
+func newTopicMix(m map[string]float64) topicMix {
+	var mix topicMix
+	for _, shape := range slices.Sorted(maps.Keys(m)) {
+		mix.shapes = append(mix.shapes, strings.Fields(shape))
+		mix.weights = append(mix.weights, m[shape])
+	}
+	return mix
+}
+
+// Distribution of topic-matcher shapes for each archetype, measured per depth band
+// from production data.
+// To be concrete: the first "V" in a topic shape corresponds to the event-name
+// Symbol (e.g. transfer, deposit, fee, etc.), and the following positions are
+// topics that serve as arguments (e.g. addresses, amounts, etc.)
 var (
-	eventsTopicShapes       = []string{"V", "V*", "VV**", "V*V*"}
-	eventsTopicShapeWeights = []float64{0.27, 0.19, 0.27, 0.27}
+	headPollTopics = newTopicMix(map[string]float64{
+		"V": 0.279, "V *": 0.245, "**": 0.195, "V * V *": 0.100,
+		"V V * *": 0.100, "V V": 0.050, "*": 0.031,
+	})
+	tailPollTopics = newTopicMix(map[string]float64{
+		"V": 0.437, "V V * *": 0.116, "V * V *": 0.116, "V *": 0.088,
+		"V V *": 0.079, "V V": 0.058, "**": 0.055, "V **": 0.051,
+	})
+	deepTopics = newTopicMix(map[string]float64{
+		"V V *": 0.664, "V": 0.319, "V V V": 0.010, "V V": 0.007,
+	})
 )
 
 type eventsArchetype struct {
@@ -122,7 +155,7 @@ func (s *eventsSampler) sample() map[string]any {
 // mostly cold contracts with a follower-on-emitter slice that catches fresh events.
 func (s *eventsSampler) headPoll() map[string]any {
 	start := s.head.Back(chooseOne(s.rng, []uint32{0, 1}, []float64{0.47, 0.53}))
-	body := s.body(start, s.contractFilter(0.10, 0.25))
+	body := s.body(start, s.contractFilter(0.10, 0.379, headPollTopics))
 	if s.rng.Float64() < 0.5 {
 		body["endLedger"] = start + 1 // one-ledger window case
 	}
@@ -134,7 +167,7 @@ func (s *eventsSampler) headPoll() map[string]any {
 // window 421), limit 1000. polls mostly cold pages and rarely emitters or topics
 func (s *eventsSampler) deepPager() map[string]any {
 	start := s.placeDeep()
-	body := s.body(start, s.contractFilter(0.06, 0))
+	body := s.body(start, s.contractFilter(0.06, 0.005, deepTopics))
 	span := chooseOne(s.rng, []uint32{250, 2000}, []float64{0.9, 0.1})
 	body["endLedger"] = min(start+span, s.head.Latest+1) // +1: endLedger is exclusive
 	s.setLimit(body, []uint{1000}, []float64{1})
@@ -142,8 +175,8 @@ func (s *eventsSampler) deepPager() map[string]any {
 }
 
 // tailPoll: mid-band pollers 10-10k behind, mostly bounded windows. carries the
-// topic-bearing and two-contract minority of the poll traffic. Open-ended depth is
-// bimodal per the measured mid-band.
+// two-contract minority of the poll traffic, and only rarely a topic — the mid-band is
+// where topic filters are scarcest. Open-ended depth is bimodal per the measured band.
 func (s *eventsSampler) tailPoll() map[string]any {
 	bounded := s.rng.Float64() < 0.70
 	var depth uint32
@@ -156,7 +189,7 @@ func (s *eventsSampler) tailPoll() map[string]any {
 		depth = 1000 + uint32(s.rng.IntN(4000))
 	}
 	start := s.head.Back(depth)
-	filter := s.contractFilter(0, 1.0/3)
+	filter := s.contractFilter(0, 0.015, tailPollTopics)
 	if s.rng.Float64() < 0.03 {
 		filter["contractIds"] = []string{s.coldContract(), s.coldContract()}
 	}
@@ -180,8 +213,8 @@ func (s *eventsSampler) transferWatcher() map[string]any {
 	body := map[string]any{
 		"startLedger": start,
 		"filters": []map[string]any{
-			{"type": "contract", "topics": [][]string{{transferSym, "*", wallet, "*"}}},
-			{"type": "contract", "topics": [][]string{{transferSym, wallet, "*", "*"}}},
+			topicsOnlyFilter(transferSym, wallet, "*"), // wallet as sender
+			topicsOnlyFilter(transferSym, "*", wallet), // wallet as receiver
 		},
 	}
 	s.setLimit(body, []uint{100}, []float64{1})
@@ -199,17 +232,24 @@ func (s *eventsSampler) catchUp() map[string]any {
 // deepScan: open-ended scans from the retention floor (with a ~30k-deep secondary
 // scan type); the server walks the window to head finding nothing.
 func (s *eventsSampler) deepScan() map[string]any {
-	var start uint32
-	if s.rng.Float64() < 0.85 {
+	var (
+		start                          uint32
+		prFromFloor                    = 0.85
+		prMatchEverything, prWithTopic = 0.06, 0.005
+	)
+
+	if s.rng.Float64() < prFromFloor {
 		start = min(s.head.Floor()+uint32(s.rng.IntN(1000)), s.head.Latest)
 	} else {
 		start = s.head.Back(30_000 + uint32(s.rng.IntN(5000)))
 	}
-	body := s.body(start, s.contractFilter(0, 0))
-	if s.rng.Float64() < 0.06 {
+
+	body := s.body(start, s.contractFilter(0, prWithTopic, deepTopics))
+	if s.rng.Float64() < prMatchEverything {
 		delete(body, "filters")
 	}
-	s.setLimit(body, []uint{100, 1000}, []float64{0.5, 0.5})
+
+	s.setLimit(body, []uint{100, 1000}, []float64{0.5, 0.5}) // 50:50 chance of limit=100 vs. limit=1000
 	return body
 }
 
@@ -231,29 +271,40 @@ func (s *eventsSampler) body(start uint32, filter map[string]any) map[string]any
 }
 
 // contractFilter builds a single-contract filter: cold by default, emitter with
-// probability prEmitter, single wildcard-shaped topic with probability prTopic.
-func (s *eventsSampler) contractFilter(prEmitter, prTopic float64) map[string]any {
+// probability prEmitter, and with probability prTopic one topic matcher shaped by the
+// calling archetype's measured shape mix.
+func (s *eventsSampler) contractFilter(prEmitter, prTopic float64, mix topicMix) map[string]any {
 	cid := s.coldContract()
 	if s.rng.Float64() < prEmitter {
 		cid = s.emitterContract()
 	}
 	filter := map[string]any{"type": "contract", "contractIds": []string{cid}}
 	if s.rng.Float64() < prTopic {
-		filter["topics"] = [][]string{s.shapedTopic(cid)}
+		filter["topics"] = [][]string{s.shapedTopic(cid, mix)}
 	}
 	return filter
 }
 
-// shapedTopic overlays a measured wildcard shape on a topic vector cid really emitted.
-func (s *eventsSampler) shapedTopic(cid string) []string {
+// topicsOnlyFilter builds a filter carrying just the given topic segments, padded with a
+// trailing wildcard to the four-segment shape these matchers are measured to have.
+func topicsOnlyFilter(segments ...string) map[string]any {
+	return map[string]any{"type": "contract", "topics": [][]string{append(segments, "*")}}
+}
+
+// shapedTopic fills one of the mix's shapes with a topic vector cid really emitted.
+// Wildcards pass through verbatim, keeping "**" distinct from a pair of "*".
+func (s *eventsSampler) shapedTopic(cid string, mix topicMix) []string {
+	shape := chooseOne(s.rng, mix.shapes, mix.weights)
 	vec := s.topicVector(cid)
-	shape := chooseOne(s.rng, eventsTopicShapes, eventsTopicShapeWeights)
 	topic := make([]string, len(shape))
-	for i := range topic {
-		if shape[i] == 'V' && i < len(vec) {
-			topic[i] = vec[i]
-		} else {
-			topic[i] = "*"
+	for i, seg := range shape {
+		switch {
+		case seg == "*", seg == "**":
+			topic[i] = seg
+		case seg == "V" && i < len(vec):
+			topic[i] = vec[i] // fill with the corresponding observed value from the event vector
+		default:
+			topic[i] = "*" // shape wants a value this vector doesn't reach
 		}
 	}
 	return topic

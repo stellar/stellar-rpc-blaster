@@ -178,6 +178,7 @@ func TestEndpointModel(t *testing.T) {
 
 // getEvents: the cold pool must never overlap any observed emitter or match rates inflate.
 func eventsModelOk(t *testing.T, params *Parameters, _ []map[string]any) {
+
 	s, err := newEventsSampler(params, rand.New(rand.NewPCG(1, 2)))
 	require.NoError(t, err)
 	require.NotEmpty(t, s.cold)

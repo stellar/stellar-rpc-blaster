@@ -139,7 +139,7 @@ func EndpointNeedsData(endpointKey string) (bool, error) {
 	}
 }
 
-const trafficProfileVersion = 2 // bump when any endpoint's traffic model changes
+const trafficProfileVersion = 3 // bump when any endpoint's traffic model changes
 
 // ProfileVersion returns the traffic-model version stamped into results for
 // modeled endpoints (0 = endpoint has no model).
