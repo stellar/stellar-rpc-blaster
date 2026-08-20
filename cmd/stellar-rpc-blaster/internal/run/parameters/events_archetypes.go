@@ -133,7 +133,7 @@ func (s *eventsSampler) headPoll() map[string]any {
 // deepPager: poll deep-placed 250-ledger window with a fatter tail (measured avg
 // window 421), limit 1000. polls mostly cold pages and rarely emitters or topics
 func (s *eventsSampler) deepPager() map[string]any {
-	start := s.placeDeep(0)
+	start := s.placeDeep()
 	body := s.body(start, s.contractFilter(0.06, 0))
 	span := chooseOne(s.rng, []uint32{250, 2000}, []float64{0.9, 0.1})
 	body["endLedger"] = min(start+span, s.head.Latest+1) // +1: endLedger is exclusive
@@ -201,9 +201,9 @@ func (s *eventsSampler) catchUp() map[string]any {
 func (s *eventsSampler) deepScan() map[string]any {
 	var start uint32
 	if s.rng.Float64() < 0.85 {
-		start = s.head.Clamp(s.head.Floor() + uint32(s.rng.IntN(1000)))
+		start = min(s.head.Floor()+uint32(s.rng.IntN(1000)), s.head.Latest)
 	} else {
-		start = s.placeDeep(30_000)
+		start = s.head.Back(30_000 + uint32(s.rng.IntN(5000)))
 	}
 	body := s.body(start, s.contractFilter(0, 0))
 	if s.rng.Float64() < 0.06 {
@@ -239,14 +239,14 @@ func (s *eventsSampler) contractFilter(prEmitter, prTopic float64) map[string]an
 	}
 	filter := map[string]any{"type": "contract", "contractIds": []string{cid}}
 	if s.rng.Float64() < prTopic {
-		filter["topics"] = [][]string{s.shapedTopic()}
+		filter["topics"] = [][]string{s.shapedTopic(cid)}
 	}
 	return filter
 }
 
-// shapedTopic overlays a measured wildcard shape on a real observed topic vector.
-func (s *eventsSampler) shapedTopic() []string {
-	vec := s.topicVector()
+// shapedTopic overlays a measured wildcard shape on a topic vector cid really emitted.
+func (s *eventsSampler) shapedTopic(cid string) []string {
+	vec := s.topicVector(cid)
 	shape := chooseOne(s.rng, eventsTopicShapes, eventsTopicShapeWeights)
 	topic := make([]string, len(shape))
 	for i := range topic {
@@ -259,9 +259,14 @@ func (s *eventsSampler) shapedTopic() []string {
 	return topic
 }
 
-// topicVector reconstructs a full observed [name, params...] vector from a random emitter.
-func (s *eventsSampler) topicVector() []string {
-	td := s.events.ContractIds[s.emitterContract()]
+// topicVector reconstructs a full observed [name, params...] vector emitted by cid.
+// cold contracts have no observed topics, so they borrow a random emitter's vector —
+// nothing they emit matches anyway, and the filter shape is what we're reproducing.
+func (s *eventsSampler) topicVector(cid string) []string {
+	td := s.events.ContractIds[cid]
+	if td == nil {
+		td = s.events.ContractIds[s.emitterContract()]
+	}
 	names, weights := td.TopicsAndWeights()
 	vec := []string{chooseOne(s.rng, names, weights)}
 	if params := td.Topic[vec[0]].Params; len(params) > 0 {
@@ -284,13 +289,10 @@ func (s *eventsSampler) setLimit(body map[string]any, limits []uint, weights []f
 	body["pagination"] = map[string]any{"limit": chooseOne(s.rng, limits, weights)}
 }
 
-// placeDeep returns a start at least EventsDeepBandFloor behind head (or `around` deep
-// when non-zero), clamped into the placeable window.
-func (s *eventsSampler) placeDeep(around uint32) uint32 {
+// placeDeep returns a start uniformly across the deep band [EventsDeepBandFloor, retention].
+func (s *eventsSampler) placeDeep() uint32 {
 	depth := util.EventsDeepBandFloor
-	if around != 0 {
-		depth = around + uint32(s.rng.IntN(5000))
-	} else if retention := s.head.Latest - s.head.Floor(); retention > util.EventsDeepBandFloor {
+	if retention := s.head.Latest - s.head.Floor(); retention > util.EventsDeepBandFloor {
 		depth += uint32(s.rng.IntN(int(retention - util.EventsDeepBandFloor + 1)))
 	}
 	return s.head.Back(depth)
