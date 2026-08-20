@@ -2,6 +2,7 @@ package parameters
 
 import (
 	"fmt"
+	"hash/fnv"
 	"math/rand/v2"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
@@ -26,7 +27,7 @@ func buildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 	} else if !needs {
 		return []map[string]any{{}}, nil
 	}
-	rng := rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
+	rng := rand.New(rand.NewPCG(params.RngSeed, endpointStream(endpointKey)))
 	count := min(maxNeededNumBodies, util.MaxNumPrebuiltBodies)
 
 	switch endpointKey {
@@ -62,12 +63,12 @@ func buildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 		count := min(len(keys), count)
 		result := make([]map[string]any, count)
 		for i := range count {
-			n := min(util.VaryKeyCount(), uint(len(keys)))
+			n := min(util.VaryKeyCount(rng), uint(len(keys)))
 			// Pick n distinct random keys
-			keys := util.ChooseNAtRandom(keys, int(n))
+			keys := util.ChooseNAtRandomSeeded(keys, int(n), rng)
 			result[i] = map[string]any{
 				"keys":      keys,
-				"xdrFormat": util.VaryFormat(),
+				"xdrFormat": util.VaryFormat(rng),
 			}
 		}
 		return result, nil
@@ -105,6 +106,15 @@ func buildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 	default:
 		return nil, fmt.Errorf("unsupported endpoint %s", endpointKey)
 	}
+}
+
+// endpointStream derives a per-endpoint PCG stream from the endpoint name, so one root
+// seed gives every endpoint an independent draw sequence. Keyed by name, not position,
+// so enabling or reordering endpoints doesn't perturb the others.
+func endpointStream(endpointKey string) uint64 {
+	h := fnv.New64a()
+	h.Write([]byte(endpointKey)) // can't fail
+	return h.Sum64()
 }
 
 // headStart draws a startLedger within 1k of head prNear of the time, else uniformly

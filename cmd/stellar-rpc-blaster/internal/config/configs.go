@@ -36,6 +36,8 @@ type Config struct {
 	TestOutputPath string        // path to write JSON results
 	ErrorPercent   int           // threshold for error percentage to kill the test (e.g. 50 means 50%)
 
+	RngSeed uint64 `toml:"rng_seed"`
+
 	// Generate mode settings
 	OutputPath   string
 	LedgerWindow []uint32
@@ -129,6 +131,9 @@ func NewConfig(
 			return Config{}, fmt.Errorf("input-data-path provided in both CLI and config file; please provide in only one place")
 		} else if settings.InputDataPath != "" {
 			cfg.InputDataPath = settings.InputDataPath
+		}
+		if cfg.RngSeed == 0 {
+			cfg.RngSeed = uint64(time.Now().UnixNano()) // use random seed if not provided in the config
 		}
 		cfg.ErrorPercent = settings.ErrorPercent
 		if err := cfg.validateEndpointConfig(); err != nil {

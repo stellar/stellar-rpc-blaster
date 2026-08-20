@@ -60,6 +60,7 @@ func NewBlastEngine(
 		for _, warning := range sharedParams.Warnings(cfg.GetActiveEndpoints()) {
 			logger.Warn(warning)
 		}
+		sharedParams.RngSeed = cfg.RngSeed
 	}
 
 	// Construct each endpoint's blast config

@@ -44,7 +44,7 @@ const (
 var PrKeyCount = []float64{0.8, 0.15, 0.05} // getLedgerEntries key distribution (80% 1 key, 15% [2,10], 5% [50,200])
 const (
 	LedgerKeyLimit         = 200
-	PrJson         float64 = 0.5 // probability of using "json" vs "xdr" format for transaction requests
+	PrJson         float64 = 0.5 // probability of using "json" vs "xdr" format for getLedgerEntries requests
 )
 
 // Traffic models measured from a one-week production capture re-joined uncapped

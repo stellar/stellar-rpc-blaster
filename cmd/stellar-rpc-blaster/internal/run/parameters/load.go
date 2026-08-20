@@ -12,8 +12,9 @@ import (
 )
 
 type Parameters struct {
-	Output seed.SeedData
-	Head   HeadInfo
+	Output  seed.SeedData
+	Head    HeadInfo
+	RngSeed uint64
 }
 
 // seed fields each endpoint draws from; endpoints absent here need none.

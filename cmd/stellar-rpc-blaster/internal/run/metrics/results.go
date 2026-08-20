@@ -16,6 +16,7 @@ import (
 type Results struct {
 	Start           time.Time                  `json:"start"`
 	End             time.Time                  `json:"end"`
+	Seed            uint64                     `json:"seed"`
 	DurationSeconds float64                    `json:"duration_seconds"`
 	Endpoints       map[string]*EndpointResult `json:"-"`
 }
@@ -59,6 +60,7 @@ func (a *Aggregator) Results() *Results {
 	results := &Results{
 		Start:           a.start.UTC(),
 		End:             time.Now().UTC(),
+		Seed:            a.rngSeed,
 		DurationSeconds: durationSeconds,
 		Endpoints:       make(map[string]*EndpointResult, len(a.stats)),
 	}
@@ -97,10 +99,10 @@ func (a *Aggregator) Results() *Results {
 			ErrorTypes:    errorTypesCopy,
 			TargetRPS:     stats.targetRPS,
 			Limit:         stats.limit,
+			Profile:       parameters.ProfileVersion(name), // omitempty drops the 0 of unmodeled endpoints
 			Percentiles:   make(map[string]float64),
 			Timeline:      timeline,
 		}
-		results.Endpoints[name].Profile = parameters.ProfileVersion(name) // omitempty drops the 0 of unmodeled endpoints
 		for p, d := range stats.percentiles {
 			key := fmt.Sprintf("p%.1f", p)
 			results.Endpoints[name].Percentiles[key] = float64(d.Nanoseconds()) / 1e6 // ms
