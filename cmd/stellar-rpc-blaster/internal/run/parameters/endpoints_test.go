@@ -86,6 +86,27 @@ func modelParams(t *testing.T) *Parameters {
 	}
 }
 
+// TestEndpointParamsReproducible checks the run-level seed fully determines every
+// data endpoint's bodies, and that endpoints draw independent streams from that one
+// seed rather than opening on the same ledger and warming each other's caches.
+func TestEndpointParamsReproducible(t *testing.T) {
+	build := func(endpoint string, seed uint64, n int) []map[string]any {
+		params := modelParams(t)
+		params.RngSeed = seed
+		bodies, err := BuildEndpointParams(endpoint, n, params, 0)
+		require.NoError(t, err)
+		return bodies
+	}
+	for _, endpoint := range []string{"getTransaction", "getLedgerEntries", "getTransactions", "getLedgers", "getEvents"} {
+		t.Run(endpoint, func(t *testing.T) {
+			require.Equal(t, build(endpoint, 12345, 200), build(endpoint, 12345, 200), "one seed must replay identically")
+			require.NotEqual(t, build(endpoint, 12345, 200), build(endpoint, 999, 200), "the seed must actually drive the draws")
+		})
+	}
+	require.NotEqual(t, build("getTransactions", 777, 20)[0]["startLedger"], build("getLedgers", 777, 20)[0]["startLedger"],
+		"head-anchored endpoints must draw independent streams from the same root seed")
+}
+
 // TestEndpointModel checks, for every modeled endpoint: each body passes the SDK's
 // server-side validation, a configured limit overrides the model's own, and the
 // model-specific properties that aren't direct parameter echoes hold.
