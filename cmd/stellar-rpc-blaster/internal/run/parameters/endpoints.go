@@ -32,27 +32,18 @@ func buildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 
 	switch endpointKey {
 	case "getTransaction":
-		// Hash-stream model: mostly repolls of recently polled hashes, fresh draws
-		// split between seeded (found) hashes and a small never-landing pool.
+		// Hash-stream model: fresh draws of hashes split between seeded (found)
+		// hashes and a small never-landing pool.
 		hashes := params.Output.TxHashes
 		neverLand := make([]string, 8) // small: dead hashes get re-polled, like real never-landing targets
 		for i := range neverLand {
 			neverLand[i] = fmt.Sprintf("%016x%016x%016x%016x", rng.Uint64(), rng.Uint64(), rng.Uint64(), rng.Uint64())
 		}
 		result := make([]map[string]any, count)
-		var recent []string
 		for i := range count {
-			var hash string
-			if len(recent) > 0 && rng.Float64() < util.PrTxRepoll {
-				hash = recent[rng.IntN(len(recent))]
-			} else {
-				hash = hashes[rng.IntN(len(hashes))]
-				if rng.Float64() < util.PrTxNotFound {
-					hash = neverLand[rng.IntN(len(neverLand))]
-				}
-				if recent = append(recent, hash); len(recent) > util.TxRecentWindow {
-					recent = recent[1:]
-				}
+			hash := hashes[rng.IntN(len(hashes))]
+			if rng.Float64() < util.PrTxNotFound {
+				hash = neverLand[rng.IntN(len(neverLand))]
 			}
 			result[i] = map[string]any{"hash": hash}
 		}

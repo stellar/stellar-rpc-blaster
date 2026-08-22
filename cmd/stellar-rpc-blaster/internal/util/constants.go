@@ -56,9 +56,7 @@ const (
 	EventsDeepBandFloor uint32  = 10000 // "deep" placement means at least this far behind head
 	EventsColdPoolSize          = 50    // deployed-but-quiet contracts drawn from seed ledger keys
 
-	PrTxRepoll        float64 = 0.6  // getTransaction requests re-polling a recently polled hash (measured 50-70%)
 	PrTxNotFound      float64 = 0.12 // fresh polls targeting hashes that never land (7% never-land + 5.2% pre-landing)
-	TxRecentWindow            = 8    // recently-polled hashes eligible for repoll
 	PrTxsNearHead     float64 = 0.98 // getTransactions starts within 1k ledgers of head
 	PrLedgersNearHead float64 = 0.65 // getLedgers starts within 1k ledgers of head
 )
