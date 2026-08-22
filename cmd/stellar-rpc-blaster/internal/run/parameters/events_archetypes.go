@@ -16,6 +16,7 @@ import (
 
 // The getEvents traffic model is a weighted mixture of behavioral archetypes observed
 // in prod traffic Each archetype owns its joint window x filter x limit shape.
+// Proportions are derived from observations of production getEvents traffic.
 var eventsArchetypes = []eventsArchetype{
 	{"head-poll", 0.48, (*eventsSampler).headPoll},
 	{"deep-pager", 0.23, (*eventsSampler).deepPager},
@@ -179,10 +180,20 @@ func (s *eventsSampler) deepPager() map[string]any {
 // where topic filters are scarcest. Open-ended depth is bimodal per the measured band.
 func (s *eventsSampler) tailPoll() map[string]any {
 	bounded := s.rng.Float64() < 0.70
-	var depth uint32
+	var depth, span uint32
 	switch {
 	case bounded:
-		depth = 10 + uint32(s.rng.IntN(int(util.EventsDeepBandFloor)-10))
+		// bounded polls cluster in three depth bands whose share and median window couple,
+		// i.e.: shallow pollers read ~120-ledger windows, the 250-1k band catches up
+		// to head with ~590, and the deep band pages ~250 at a time
+		switch chooseOne(s.rng, []int{0, 1, 2}, []float64{0.25, 0.4, 0.35}) {
+		case 0:
+			depth, span = 10+uint32(s.rng.IntN(240)), 120
+		case 1:
+			depth, span = 250+uint32(s.rng.IntN(750)), 590
+		default:
+			depth, span = 1000+uint32(s.rng.IntN(9000)), 250
+		}
 	case s.rng.Float64() < 0.45:
 		depth = 10 + uint32(s.rng.IntN(240))
 	default:
@@ -195,7 +206,6 @@ func (s *eventsSampler) tailPoll() map[string]any {
 	}
 	body := s.body(start, filter)
 	if bounded {
-		span := chooseOne(s.rng, []uint32{120, 250, 590}, []float64{0.3, 0.5, 0.2})
 		body["endLedger"] = min(start+span, s.head.Latest+1) // +1: endLedger is exclusive
 	}
 	s.setLimit(body, []uint{100, 200}, []float64{0.6, 0.4})
@@ -225,7 +235,7 @@ func (s *eventsSampler) transferWatcher() map[string]any {
 func (s *eventsSampler) catchUp() map[string]any {
 	start := s.head.Back(uint32(10 + s.rng.IntN(240)))
 	body := s.body(start, map[string]any{"type": "contract", "contractIds": []string{s.emitterContract()}})
-	s.setLimit(body, []uint{100, 200}, []float64{0.7, 0.3})
+	s.setLimit(body, []uint{100, 200}, []float64{0.75, 0.25}) // near-head split is ~3:1 between limit=100 vs. 200
 	return body
 }
 
@@ -249,7 +259,7 @@ func (s *eventsSampler) deepScan() map[string]any {
 		delete(body, "filters")
 	}
 
-	s.setLimit(body, []uint{100, 1000}, []float64{0.5, 0.5}) // 50:50 chance of limit=100 vs. limit=1000
+	s.setLimit(body, []uint{100}, []float64{1}) // nearly all observed used limit=100
 	return body
 }
 
@@ -257,6 +267,7 @@ func (s *eventsSampler) deepScan() map[string]any {
 func (s *eventsSampler) firehose() map[string]any {
 	start := s.head.Back(uint32(s.rng.IntN(2)))
 	body := map[string]any{"startLedger": start}
+	// no-filter requests measured 85% limit=1, remainder split evenly across the common poll limits
 	s.setLimit(body, []uint{1, 100, 200}, []float64{0.85, 0.075, 0.075})
 	return body
 }

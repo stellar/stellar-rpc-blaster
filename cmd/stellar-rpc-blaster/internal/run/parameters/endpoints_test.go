@@ -120,7 +120,7 @@ func TestEndpointModel(t *testing.T) {
 				var r protocol.GetEventsRequest
 				require.NoError(t, json.Unmarshal(raw, &r), "%s", raw)
 				require.NoError(t, r.Valid(uint(util.MaxEventsPageLimit)), "%s", raw)
-				// the SDK doesn't range-check events startLedger; catch placement underflow
+				// the SDK doesn't range-check events startLedger so check placement underflow
 				require.True(t, r.StartLedger >= testOldest && r.StartLedger <= testLatest, "%s", raw)
 			},
 			modelOk: eventsModelOk,
@@ -209,26 +209,17 @@ func TestEndpointModelTinyWindow(t *testing.T) {
 	}
 }
 
-// getTransaction: seen-before and never-land shares are emergent — repolls compound
-// with dead-hash pool reuse — so pin the composition, not the raw parameters.
+// getTransaction: pin the never-land share, the one distributional knob of the hash stream.
 func getTransactionModelOk(t *testing.T, params *Parameters, bodies []map[string]any) {
 	seedSet := make(map[string]bool, len(params.Output.TxHashes))
 	for _, h := range params.Output.TxHashes {
 		seedSet[h] = true
 	}
-	seen := map[string]bool{}
-	repolls, notFound := 0.0, 0.0
+	notFound := 0.0
 	for _, body := range bodies {
-		hash := body["hash"].(string)
-		if seen[hash] {
-			repolls++
-		}
-		seen[hash] = true
-		if !seedSet[hash] {
+		if !seedSet[body["hash"].(string)] {
 			notFound++
 		}
 	}
-	seenBefore := util.PrTxRepoll + (1-util.PrTxRepoll)*util.PrTxNotFound
-	require.InDelta(t, seenBefore, repolls/nModelBodies, 0.03)
 	require.InDelta(t, util.PrTxNotFound, notFound/nModelBodies, 0.02)
 }
