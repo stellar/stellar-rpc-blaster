@@ -8,12 +8,15 @@ import (
 	"math"
 	"slices"
 	"time"
+
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/run/parameters"
 )
 
 // JSON serializable final results structure, holding results for all endpoints
 type Results struct {
 	Start           time.Time                  `json:"start"`
 	End             time.Time                  `json:"end"`
+	Seed            uint64                     `json:"seed"`
 	DurationSeconds float64                    `json:"duration_seconds"`
 	Endpoints       map[string]*EndpointResult `json:"-"`
 }
@@ -25,6 +28,7 @@ type EndpointResult struct {
 	Errors        uint64                 `json:"errors"`
 	TargetRPS     float64                `json:"target_rps"`
 	Limit         uint64                 `json:"limit,omitempty"`
+	Profile       int                    `json:"traffic_profile,omitempty"` // version of the hard-coded traffic model, for cross-run comparability
 	Percentiles   map[string]float64     `json:"percentiles_ms"`
 	ErrorTypes    map[string]ErrorResult `json:"error_types,omitempty"`
 	Timeline      []StepSnapshot         `json:"-"`
@@ -56,6 +60,7 @@ func (a *Aggregator) Results() *Results {
 	results := &Results{
 		Start:           a.start.UTC(),
 		End:             time.Now().UTC(),
+		Seed:            a.rngSeed,
 		DurationSeconds: durationSeconds,
 		Endpoints:       make(map[string]*EndpointResult, len(a.stats)),
 	}
@@ -94,6 +99,7 @@ func (a *Aggregator) Results() *Results {
 			ErrorTypes:    errorTypesCopy,
 			TargetRPS:     stats.targetRPS,
 			Limit:         stats.limit,
+			Profile:       parameters.ProfileVersion(name), // omitempty drops the 0 of unmodeled endpoints
 			Percentiles:   make(map[string]float64),
 			Timeline:      timeline,
 		}

@@ -22,6 +22,7 @@ var capturedPercentiles = []float64{50, 95, 99, 99.9} // treat as const
 type Aggregator struct {
 	logger          *log.Entry
 	writeOutputPath string
+	rngSeed         uint64
 	cancel          context.CancelFunc
 
 	stats            map[string]*EndpointStats
@@ -115,6 +116,7 @@ func NewAggregator(logger *log.Entry, settings config.Config, cancel context.Can
 		duration:        duration,
 		errorPercent:    settings.ErrorPercent,
 		writeOutputPath: settings.TestOutputPath,
+		rngSeed:         settings.RngSeed,
 	}
 	sort.Strings(endpoints)
 	a.orderedEndpoints = endpoints // maintain order for consistent output

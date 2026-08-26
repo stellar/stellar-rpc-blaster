@@ -57,6 +57,10 @@ func NewBlastEngine(
 		if err := sharedParams.ValidateConfiguredEndpoints(ctx, cfg.RpcClient, cfg.GetActiveEndpoints()); err != nil {
 			return nil, fmt.Errorf("preflight seed validation failed (try rerunning `generate`): %w", err)
 		}
+		for _, warning := range sharedParams.Warnings(cfg.GetActiveEndpoints()) {
+			logger.Warn(warning)
+		}
+		sharedParams.RngSeed = cfg.RngSeed
 	}
 
 	// Construct each endpoint's blast config

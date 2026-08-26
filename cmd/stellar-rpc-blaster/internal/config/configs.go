@@ -36,6 +36,8 @@ type Config struct {
 	TestOutputPath string        // path to write JSON results
 	ErrorPercent   int           // threshold for error percentage to kill the test (e.g. 50 means 50%)
 
+	RngSeed uint64 `toml:"rng_seed"`
+
 	// Generate mode settings
 	OutputPath   string
 	LedgerWindow []uint32
@@ -130,11 +132,14 @@ func NewConfig(
 		} else if settings.InputDataPath != "" {
 			cfg.InputDataPath = settings.InputDataPath
 		}
+		if cfg.RngSeed == 0 {
+			cfg.RngSeed = uint64(time.Now().UnixNano()) // use random seed if not provided in the config
+		}
+		cfg.ErrorPercent = settings.ErrorPercent
 		if err := cfg.validateEndpointConfig(); err != nil {
 			return Config{}, err
 		}
 		logger.Infof("Successfully loaded seed data from %s", cfg.InputDataPath)
-		cfg.ErrorPercent = settings.ErrorPercent
 	case Generate:
 		cfg.OutputPath = settings.OutputPath
 		cfg.LedgerWindow = settings.LedgerWindow
@@ -238,21 +243,13 @@ func (c *Config) GetEndpointStartRPS(key string) int {
 	return -1
 }
 
-// GetEndpointLimit returns the configured limit, or 0 if omitted.
+// GetEndpointLimit returns the configured pagination limit. 0 means the endpoint's
+// traffic model owns per-request limits; a non-zero value acts as an explicit override.
 func (c *Config) GetEndpointLimit(key string) uint32 {
-	if ep, ok := c.Endpoints[key]; ok && ep.Limit != 0 {
-		return ep.Limit // if limits are set in toml as non-zero, use them
+	if ep, ok := c.Endpoints[key]; ok {
+		return ep.Limit
 	}
-	switch key {
-	case "getTransactions":
-		return util.DefaultTxPageLimit
-	case "getLedgers":
-		return util.DefaultLedgersPageLimit
-	case "getEvents":
-		return util.DefaultEventsPageLimit
-	default:
-		return 0 // for endpoints that don't support limits
-	}
+	return 0
 }
 
 func (c *Config) GetEndpointMaxLimit(key string) uint32 {

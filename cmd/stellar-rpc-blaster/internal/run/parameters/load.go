@@ -3,15 +3,77 @@ package parameters
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
-	"strings"
+	"slices"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/generate/seed"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
 )
 
 type Parameters struct {
-	Output       seed.SeedData
-	SampleCounts map[string]int
+	Output  seed.SeedData
+	Head    HeadInfo
+	RngSeed uint64
+}
+
+// seed fields each endpoint draws from; endpoints absent here need none.
+var endpointSeedFields = map[string][]string{
+	"getTransaction":   {"tx_hashes"},
+	"getLedgerEntries": {"ledger_keys"},
+	"getEvents":        {"contract_events", "ledger_keys"},
+}
+
+// missingSeedFields returns the seed fields the given endpoints need but the loaded
+// seed data lacks, so runs only require the data they'll actually draw from.
+func (p *Parameters) missingSeedFields(endpointKeys []string) []string {
+	counts := map[string]int{
+		"tx_hashes":       len(p.Output.TxHashes),
+		"ledger_keys":     len(p.Output.LedgerKeys),
+		"contract_events": len(p.Output.ContractEventData.ContractIds),
+	}
+	missing := map[string]bool{}
+	for _, key := range endpointKeys {
+		for _, field := range endpointSeedFields[key] {
+			if counts[field] == 0 {
+				missing[field] = true
+			}
+		}
+	}
+	return slices.Sorted(maps.Keys(missing))
+}
+
+// HeadInfo is the target RPC's live ledger window, captured during preflight;
+// recency-sensitive request builders anchor to it rather than the seeded range.
+type HeadInfo struct {
+	Oldest, Latest uint32
+}
+
+// Floor is the lowest safe startLedger: outside the left-edge margin of the
+// retention floor so in-flight requests can't age out mid-run.
+func (h HeadInfo) Floor() uint32 {
+	return min(h.Oldest+util.LeftEdgeMargin, h.Latest)
+}
+
+// Clamp bounds a start into [Floor, Latest]; small retention windows degrade
+// deep placements toward the floor rather than erroring.
+func (h HeadInfo) Clamp(start uint32) uint32 {
+	return min(max(start, h.Floor()), h.Latest)
+}
+
+// Back returns the startLedger depth ledgers behind head capped at the floor.
+func (h HeadInfo) Back(depth uint32) uint32 {
+	return h.Latest - min(depth, h.Latest-h.Floor())
+}
+
+// Warnings returns advisory conditions that degrade the configured endpoints'
+// traffic realism without blocking the run.
+func (p *Parameters) Warnings(endpointKeys []string) []string {
+	var warnings []string
+	if slices.Contains(endpointKeys, "getEvents") && len(collectWallets(p.Output.ContractEventData)) == 0 {
+		warnings = append(warnings, "seed data has no account-address event params; transfer-watcher bodies degrade to head-polls")
+	}
+	return warnings
 }
 
 func GetParameters(dataPath string) (*Parameters, error) {
@@ -19,13 +81,7 @@ func GetParameters(dataPath string) (*Parameters, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load parameters: %w", err)
 	}
-
-	params := &Parameters{
-		Output: output,
-	}
-	params.fillCounts()
-
-	return params, params.Validate()
+	return &Parameters{Output: output}, nil
 }
 
 func loadParameters(dataPath string) (seed.SeedData, error) {
@@ -40,24 +96,4 @@ func loadParameters(dataPath string) (seed.SeedData, error) {
 		return seed.SeedData{}, fmt.Errorf("failed to decode seed data: %w", err)
 	}
 	return output, nil
-}
-
-func (w *Parameters) fillCounts() {
-	w.SampleCounts = map[string]int{
-		"tx_hashes":   len(w.Output.TxHashes),
-		"ledger_keys": len(w.Output.LedgerKeys),
-	}
-}
-
-func (w *Parameters) Validate() error {
-	missingFields := []string{}
-	for key, count := range w.SampleCounts {
-		if count == 0 {
-			missingFields = append(missingFields, key)
-		}
-	}
-	if len(missingFields) > 0 {
-		return fmt.Errorf("sample counts for the following fields are zero: %s", strings.Join(missingFields, ", "))
-	}
-	return nil
 }

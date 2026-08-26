@@ -1,12 +1,11 @@
 package seed
 
 import (
+	"cmp"
 	"maps"
-	"math/rand/v2"
 	"slices"
 
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
-	"github.com/stellar/go-stellar-sdk/support/collections/set"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
 )
@@ -16,104 +15,87 @@ type SeedData struct {
 	LedgerRange       Range          `json:"ledger_range"`
 	TxHashes          []string       `json:"tx_hashes"`
 	ContractEventData ContractEvents `json:"contract_events"`
+	EmitterIds        []string       `json:"emitter_ids"` // every observed emitter, pre-trim; excluded from the events cold pool
 	LedgerKeys        []string       `json:"ledger_keys"`
 }
 
-// ContractEvents maps the contract IDs to their corresponding event data.
+// ContractEvents maps contract IDs to their observed event data.
 type ContractEvents struct {
 	ContractIds map[string]*TopicData `json:"contract_ids"`
 }
 
-// TopicData maps a topic to the parameters observed for that topic.
+// TopicData maps a topic name to the parameters observed for that topic.
 type TopicData struct {
-	Topic        map[string]ParamTopics `json:"topic"`
-	uniqueTopics set.Set[string]        // set of unique topics observed for this contract, used to determine if a topic is new or existing for this contract
+	Topic map[string]*ParamTopics `json:"topic"`
+	Count uint64                  `json:"count"` // total emissions observed for this contract
 }
 
 // Holds the parameters we observe for a given topic.
 type ParamTopics struct {
-	Params [][]string `json:"params"`
+	Params [][]string `json:"params"` // deduped observed param vectors, capped
+	Count  uint64     `json:"count"`  // emissions observed for this topic
 }
 
 func (c *ContractEvents) AddEventData(eventData protocol.EventInfo) {
-	cId := eventData.ContractID
-	td, ok := c.ContractIds[cId]
-	if !ok {
-		// new contract, add contract + topic + params
-		data := TopicData{
-			Topic:        map[string]ParamTopics{},
-			uniqueTopics: set.NewSet[string](int(util.DefaultSeedSliceSize)),
+	if len(eventData.TopicXDR) == 0 {
+		return
+	}
+	name, params := eventData.TopicXDR[0], eventData.TopicXDR[1:]
+
+	td := c.ContractIds[eventData.ContractID]
+	if td == nil {
+		td = &TopicData{Topic: map[string]*ParamTopics{}}
+		c.ContractIds[eventData.ContractID] = td
+	}
+	td.Count++
+
+	pt := td.Topic[name]
+	if pt == nil {
+		if len(td.Topic) >= util.MaxSeedTopicsPerContract {
+			return // cap reached, don't store new topics/params to avoid unbounded growth
 		}
-		c.ContractIds[cId] = &data
-		td = &data
+		pt = &ParamTopics{}
+		td.Topic[name] = pt
 	}
+	pt.Count++
 
-	topicXdr := eventData.TopicXDR
-	name := topicXdr[0]    // first topic is the event name
-	params := topicXdr[1:] // subsequent topics are the event parameters
-
-	if td.uniqueTopics.Contains(name) {
-		// contract + topic both exist
-		topicParams := td.Topic[name].Params
-		td.Topic[name] = ParamTopics{Params: append(topicParams, params)}
-	} else {
-		// contract exists, topic is new
-		td.uniqueTopics.Add(name)
-		td.Topic[name] = ParamTopics{Params: [][]string{params}}
+	// add the params if they're unique AND we're under the param cap
+	if len(pt.Params) < util.MaxSeedParamSetsPerTopic &&
+		!slices.ContainsFunc(pt.Params, func(p []string) bool { return slices.Equal(p, params) }) {
+		pt.Params = append(pt.Params, params)
 	}
 }
 
-// BuildEventsFilters builds a filter map for a getEvents request based on our contract event seed data.
-func (c *ContractEvents) BuildEventsFilters() map[string]any {
-	var cIds []string
-	filter := make(map[string]any)
-	// Choose up to 5 random contract IDs
-	nCIds := rand.IntN(6)
-	cIds = util.ChooseNAtRandom(c.getContractIds(), max(nCIds, 1))
-	if nCIds != 0 {
-		// In the 0 case, even though we picked one contract ID for filtering purposes, add none
-		filter["contractIds"] = cIds
+// trim keeps only the top-n contracts by emission count.
+func (c *ContractEvents) trim(n int) {
+	if len(c.ContractIds) <= n {
+		return
 	}
-	if len(cIds) == 0 {
-		return filter
+	ids := slices.SortedFunc(maps.Keys(c.ContractIds), func(a, b string) int {
+		// sort on emission count descending (then contract ID ascending if counts equal)
+		return cmp.Or(cmp.Compare(c.ContractIds[b].Count, c.ContractIds[a].Count), cmp.Compare(a, b))
+	})
+	for _, id := range ids[n:] {
+		delete(c.ContractIds, id)
 	}
-
-	refContractTopics := c.ContractIds[cIds[0]]
-	// Choose up to 5 random topics (weighted by their probability of occurrence) from the first contract ID's topics
-	nTopics := rand.IntN(6)
-	alltopics, weights := refContractTopics.getTopicsAndWeights()
-	topics := util.WeightedChooseN(alltopics, weights, max(nTopics, 1))
-
-	// For each topic we chose, choose up to 4 parameters to include in that topic's filter
-	topicsFilter := make([][]string, 0, len(topics))
-	for _, topic := range topics {
-		entry := []string{topic} // first entry in the topic filter is, generally, the topic name
-		// select one parameter set for topic out of the sets of parameters we observed for this topic in seed data
-		allParamsForTopic := refContractTopics.Topic[topic].Params
-		params := allParamsForTopic[rand.IntN(len(allParamsForTopic))]
-
-		// choose up to 4 of the chosen invocation's parameters to include in the filter
-		nParams := min(rand.IntN(5), len(params))
-		entry = append(entry, params[:nParams]...)
-		topicsFilter = append(topicsFilter, entry)
-	}
-
-	if nTopics != 0 {
-		filter["topics"] = topicsFilter
-	}
-	return filter
 }
 
-func (c ContractEvents) getContractIds() []string {
-	return slices.Collect(maps.Keys(c.ContractIds))
+// keysAndWeights returns the map's keys with each entry's count as its weight.
+func keysAndWeights[V any](m map[string]V, count func(V) uint64) ([]string, []float64) {
+	keys := slices.Sorted(maps.Keys(m))
+	weights := make([]float64, len(keys))
+	for i, k := range keys {
+		weights[i] = float64(count(m[k]))
+	}
+	return keys, weights
 }
 
-func (t TopicData) getTopicsAndWeights() ([]string, []int) {
-	topics := make([]string, 0, len(t.Topic))
-	weights := make([]int, 0, len(t.Topic))
-	for topic, pt := range t.Topic {
-		topics = append(topics, topic)
-		weights = append(weights, len(pt.Params))
-	}
-	return topics, weights
+// ContractsAndWeights returns emitter contract IDs with emission counts as weights.
+func (c ContractEvents) ContractsAndWeights() ([]string, []float64) {
+	return keysAndWeights(c.ContractIds, func(t *TopicData) uint64 { return t.Count })
+}
+
+// TopicsAndWeights returns the contract's topic names with emission counts as weights.
+func (t *TopicData) TopicsAndWeights() ([]string, []float64) {
+	return keysAndWeights(t.Topic, func(p *ParamTopics) uint64 { return p.Count })
 }

@@ -23,7 +23,7 @@ func TestChoosesCorrectCounts(t *testing.T) {
 	require.Len(t, result, 3)
 
 	// Weighted returns all when N greater or equal
-	weights := []int{10, 20, 30, 40}
+	weights := []float64{10, 20, 30, 40}
 	result = WeightedChooseNSeeded(items, weights, 5, newSeededRand(1))
 	require.Equal(t, items, result)
 
@@ -39,7 +39,7 @@ func TestChooseNAtRandomDeterministicWithFixedSeed(t *testing.T) {
 	require.Equal(t, first, second)
 
 	// Weighted version is also deterministic
-	weights := []int{1, 2, 3, 4, 5}
+	weights := []float64{1, 2, 3, 4, 5}
 	first = WeightedChooseNSeeded(items, weights, 3, newSeededRand(42))
 	second = WeightedChooseNSeeded(items, weights, 3, newSeededRand(42))
 	require.Equal(t, first, second)
@@ -47,11 +47,11 @@ func TestChooseNAtRandomDeterministicWithFixedSeed(t *testing.T) {
 
 func TestChooseNAtRandomStableSelectionsForFixedSeed(t *testing.T) {
 	items := []string{"a", "b", "c", "d", "e"}
-	weights := []int{1, 2, 3, 4, 5}
+	weights := []float64{1, 2, 3, 4, 5}
 
 	// Only applies for seed 42
 	ChooseNAtRandomSeededWithFixedSeed := []string{"e", "b", "c"}
-	WeightedChooseNSeededWithFixedSeed := []string{"e", "d", "a"}
+	WeightedChooseNSeededWithFixedSeed := []string{"c", "d", "b"}
 	// breaks if the algorithm behind ChooseNAtRandomSeeded or WeightedChooseNSeeded changes
 	require.Equal(t, ChooseNAtRandomSeededWithFixedSeed, ChooseNAtRandomSeeded(items, 3, newSeededRand(42)))
 	require.Equal(t, WeightedChooseNSeededWithFixedSeed, WeightedChooseNSeeded(items, weights, 3, newSeededRand(42)))
@@ -76,7 +76,7 @@ func TestDistributionCoversAllItems(t *testing.T) {
 
 func TestWeightedChooseNZeroWeightNeverChosen(t *testing.T) {
 	items := []string{"a", "b", "c"}
-	weights := []int{50, 50, 0}
+	weights := []float64{50, 50, 0}
 	rng := newSeededRand(42)
 	for range 500 {
 		result := WeightedChooseNSeeded(items, weights, 2, rng)
@@ -88,7 +88,7 @@ func TestWeightedChooseNZeroWeightNeverChosen(t *testing.T) {
 
 func TestWeightedChooseN_RespectsWeightDistribution(t *testing.T) {
 	items := []string{"heavy", "medium", "light"}
-	weights := []int{100, 10, 1}
+	weights := []float64{100, 10, 1}
 	counts := map[string]int{}
 	rng := newSeededRand(7)
 	runs := 1000
@@ -107,7 +107,7 @@ func TestWeightedChooseN_RespectsWeightDistribution(t *testing.T) {
 
 func TestWeightedChooseN_StopsEarlyWhenAllWeightsExhausted(t *testing.T) {
 	items := []string{"a", "b", "c", "d"}
-	weights := []int{1, 0, 0, 0}
+	weights := []float64{1, 0, 0, 0}
 	result := WeightedChooseNSeeded(items, weights, 3, newSeededRand(42))
 	// Only "a" has nonzero weight, so we can only pick 1 item
 	require.Len(t, result, 1)

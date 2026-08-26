@@ -14,28 +14,25 @@ import (
 
 func newTestEventDataSeeder(client *rpcclient.Client) *EventDataSeeder {
 	return &EventDataSeeder{
-		rpcClient:    client,
-		uniqueTopics: make([]string, 0, util.DefaultSeedSliceSize),
+		rpcClient: client,
 		contractEvents: ContractEvents{
 			ContractIds: make(map[string]*TopicData, util.DefaultSeedSliceSize),
 		},
 	}
 }
 
-func stubEvent(ledger int32, contractID, topic, param string) protocol.EventInfo {
+func stubEvent(ledger int32, contractID, topic string, params ...string) protocol.EventInfo {
 	return protocol.EventInfo{
 		EventType:  protocol.EventTypeContract,
 		Ledger:     ledger,
 		ContractID: contractID,
-		TopicXDR:   []string{topic, param},
+		TopicXDR:   append([]string{topic}, params...),
 	}
 }
 
 // captureEvents wraps NewMockRPCClient with the boilerplate every events test
 // needs: assert the method is getEvents, decode into a GetEventsRequest, append
-// to the captured slice, and delegate the canned response to `respond`. The
-// returned accessor returns the current slice each time it's called — read it
-// after the seeder has finished running.
+// to the captured slice, and delegate the canned response to `respond`.
 func captureEvents(t *testing.T, respond func() protocol.GetEventsResponse) (*rpcclient.Client, func() []protocol.GetEventsRequest) {
 	var calls []protocol.GetEventsRequest
 	client := util.NewMockRPCClient(t, func(method string, params json.RawMessage) any {

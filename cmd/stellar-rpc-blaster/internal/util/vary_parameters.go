@@ -2,77 +2,40 @@ package util
 
 import (
 	"math/rand/v2"
-
-	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+	"slices"
 )
 
 // VaryLimit returns a random limit between 1 and the provided max limit.
-func VaryLimit(limitMax uint) uint {
-	return uint(rand.Float64()*float64(limitMax-1) + 1)
+func VaryLimit(limitMax uint, rng *rand.Rand) uint {
+	return uint(rng.Float64()*float64(limitMax-1) + 1)
 }
 
-// VaryFormat determines whether to use "json" or "base64" format for transaction requests.
-// Used by all data-dependent endpoints.
-func VaryFormat() string {
-	if rand.Float64() < PrJson {
+// VaryFormat determines whether to use "json" or "base64" format.
+// Used by getLedgerEntries; the modeled endpoints omit the key (base64 default).
+func VaryFormat(rng *rand.Rand) string {
+	if rng.Float64() < PrJson {
 		return "json"
 	}
 	return "base64"
 }
 
-// randomly decides whether to include a pagination cursor in the request, to vary request patterns for data-dependent endpoints that paginate
-// used by getEvents, getTransactions, getLedgers
-func VaryCursorBasedPagination(limit uint, cursor string) *protocol.LedgerPaginationOptions {
-	pagination := &protocol.LedgerPaginationOptions{
-		Limit: limit,
-	}
-	if rand.Float64() < PrCursor {
-		pagination.Cursor = cursor
-	}
-	return pagination
-}
-
-// used only by getEvents, which has a different pagination struct
-func VaryCursorBasedPaginationForEvents(limit uint, cursor string) *protocol.PaginationOptions {
-	pagination := &protocol.PaginationOptions{
-		Limit: limit,
-	}
-	if rand.Float64() < PrCursor {
-		c, err := protocol.ParseCursor(cursor)
-		if err != nil {
-			// if cursor parsing fails, fall back to no cursor rather than erroring out, since this is just for request variation
-			return &protocol.PaginationOptions{Limit: limit}
-		}
-		pagination.Cursor = &c
-	}
-	return pagination
-}
-
 // Chooses key count according to the distribution defined in PrKeyCount
 // 80% of requests have 1 key, 15% have between 2 and 10, and 5% will have between 50 and LedgerKeyLimit=200 keys
 // Used by getLedgerEntries to vary the number of keys requested.
-func VaryKeyCount() uint {
-	r := rand.Float64()
+func VaryKeyCount(rng *rand.Rand) uint {
+	r := rng.Float64()
 	if r < PrKeyCount[0] {
 		return 1
 	} else if r < PrKeyCount[0]+PrKeyCount[1] {
-		return VaryLimit(10 - 1)
+		return VaryLimit(10-1, rng)
 	} else {
-		return VaryLimit(LedgerKeyLimit-50) + 50 // between 50 and LedgerKeyLimit
+		return VaryLimit(LedgerKeyLimit-50, rng) + 50 // between 50 and LedgerKeyLimit
 	}
 }
 
-// This chooses N at random from T without replacement using the Fisher-Yates shuffle algorithm.
-func ChooseNAtRandom[T any](items []T, n int) []T {
-	return chooseNAtRandom(items, n, rand.IntN)
-}
-
-// ChooseNAtRandomSeeded is like ChooseNAtRandom but uses a caller-provided rand source for deterministic testing.
+// ChooseNAtRandomSeeded chooses N from items without replacement using the Fisher-Yates
+// shuffle, drawing from a caller-provided rand source so runs stay reproducible.
 func ChooseNAtRandomSeeded[T any](items []T, n int, rng *rand.Rand) []T {
-	return chooseNAtRandom(items, n, rng.IntN)
-}
-
-func chooseNAtRandom[T any](items []T, n int, intN func(int) int) []T {
 	if n >= len(items) {
 		return items
 	}
@@ -81,7 +44,7 @@ func chooseNAtRandom[T any](items []T, n int, intN func(int) int) []T {
 		indices[i] = i
 	}
 	for i := range n {
-		j := i + intN(len(indices)-i)
+		j := i + rng.IntN(len(indices)-i)
 		indices[i], indices[j] = indices[j], indices[i]
 	}
 	result := make([]T, n)
@@ -91,46 +54,40 @@ func chooseNAtRandom[T any](items []T, n int, intN func(int) int) []T {
 	return result
 }
 
-// This chooses N items from T without replacement according to the item weights.
-// Does not replace so that filters don't have the same topic repeated.
-func WeightedChooseN[T any](items []T, weights []int, n int) []T {
-	return weightedChooseN(items, weights, n, rand.IntN)
-}
-
-// WeightedChooseNSeeded is like WeightedChooseN but uses a caller-provided rand source for deterministic testing.
-func WeightedChooseNSeeded[T any](items []T, weights []int, n int, rng *rand.Rand) []T {
-	return weightedChooseN(items, weights, n, rng.IntN)
-}
-
-func weightedChooseN[T any](items []T, weights []int, n int, intN func(int) int) []T {
+// WeightedChooseNSeeded chooses N items from T without replacement, each drawn with
+// probability weight[i]/sum(remaining weights), using the caller-provided rand source.
+func WeightedChooseNSeeded[T any](items []T, weights []float64, n int, rng *rand.Rand) []T {
 	if n >= len(items) {
 		return items
 	}
-	w := make([]int, len(weights))
-	copy(w, weights)
-
-	total := 0
+	w := slices.Clone(weights)
+	total := 0.0
 	for _, wt := range w {
 		total += wt
 	}
 
 	result := make([]T, 0, n)
 	for range n {
-		if total == 0 {
+		if total <= 0 {
 			break
 		}
-		r := intN(total)
-		cumulative := 0
+		r := rng.Float64() * total
+		chosen := -1
 		for i, wt := range w {
-			cumulative += wt
-			// If r is less than the cumulative weight, select this item
-			if r < cumulative {
-				result = append(result, items[i])
-				total -= w[i]
-				w[i] = 0
+			if wt == 0 {
+				continue
+			}
+			chosen = i // rounding can leave r a hair positive; falls back to the last weighted item
+			if r -= wt; r < 0 {
 				break
 			}
 		}
+		if chosen < 0 {
+			break
+		}
+		result = append(result, items[chosen])
+		total -= w[chosen]
+		w[chosen] = 0
 	}
 	return result
 }
