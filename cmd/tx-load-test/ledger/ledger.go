@@ -32,19 +32,7 @@ func EncodeContractID(contractID xdr.ContractId) (string, error) {
 }
 
 func ContractInstanceExists(ctx context.Context, rpc LedgerEntriesClient, contractID xdr.ContractId) (bool, error) {
-	instanceKey := xdr.LedgerKey{
-		Type: xdr.LedgerEntryTypeContractData,
-		ContractData: &xdr.LedgerKeyContractData{
-			Contract: xdr.ScAddress{
-				Type:       xdr.ScAddressTypeScAddressTypeContract,
-				ContractId: &contractID,
-			},
-			Key:        xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance},
-			Durability: xdr.ContractDataDurabilityPersistent,
-		},
-	}
-
-	keyB64, err := xdr.MarshalBase64(instanceKey)
+	keyB64, err := xdr.MarshalBase64(ContractInstanceLedgerKey(contractID))
 	if err != nil {
 		return false, fmt.Errorf("marshal contract instance key: %w", err)
 	}
@@ -156,28 +144,11 @@ func OZBalanceLedgerKey(contractID xdr.ContractId, accountAddress string) (xdr.L
 	if err != nil {
 		return xdr.LedgerKey{}, err
 	}
-
-	balanceVariant := xdr.ScSymbol("Balance")
-	balanceKeyVec := xdr.ScVec{
-		{Type: xdr.ScValTypeScvSymbol, Sym: &balanceVariant},
-		{Type: xdr.ScValTypeScvAddress, Address: &xdr.ScAddress{
-			Type:      xdr.ScAddressTypeScAddressTypeAccount,
-			AccountId: &accountID,
-		}},
+	holder := xdr.ScAddress{
+		Type:      xdr.ScAddressTypeScAddressTypeAccount,
+		AccountId: &accountID,
 	}
-	balanceKeyRef := &balanceKeyVec
-
-	return xdr.LedgerKey{
-		Type: xdr.LedgerEntryTypeContractData,
-		ContractData: &xdr.LedgerKeyContractData{
-			Contract: xdr.ScAddress{
-				Type:       xdr.ScAddressTypeScAddressTypeContract,
-				ContractId: &contractID,
-			},
-			Key:        xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &balanceKeyRef},
-			Durability: xdr.ContractDataDurabilityPersistent,
-		},
-	}, nil
+	return ContractBalanceLedgerKey(contractID, holder), nil
 }
 
 func FetchOZBalances(
