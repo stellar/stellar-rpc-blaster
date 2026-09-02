@@ -30,11 +30,11 @@ type Aggregator struct {
 	stats            map[string]*EndpointStats
 	orderedEndpoints []string
 
-	done         bool
-	start        time.Time
-	duration     time.Duration
-	errorPercent int
-	mu           sync.RWMutex
+	done, aborted bool // aborted: the error-percent kill switch ended the run
+	start         time.Time
+	duration      time.Duration
+	errorPercent  int
+	mu            sync.RWMutex
 }
 
 // EndpointStats collects stats for all vegeta workers of an endpoint
@@ -86,6 +86,7 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 			if a.checkErrorPercent() > a.errorPercent {
 				a.logger.Warnf("Error percentage exceeded threshold of %d%%. Ending test early.", a.errorPercent)
 				a.done = true
+				a.aborted = true
 				if err := WriteOutput(a); err != nil {
 					a.logger.Error(err)
 				}

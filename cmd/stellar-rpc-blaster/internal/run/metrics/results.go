@@ -19,6 +19,7 @@ type Results struct {
 	End             time.Time                  `json:"end"`
 	Seed            uint64                     `json:"seed"`
 	DurationSeconds float64                    `json:"duration_seconds"`
+	Aborted         bool                       `json:"aborted"` // the error-percent kill switch ended the run early
 	Endpoints       map[string]*EndpointResult `json:"-"`
 }
 
@@ -64,6 +65,7 @@ func (a *Aggregator) Results() *Results {
 		End:             time.Now().UTC(),
 		Seed:            a.rngSeed,
 		DurationSeconds: durationSeconds,
+		Aborted:         a.aborted,
 		Endpoints:       make(map[string]*EndpointResult, len(a.stats)),
 	}
 
