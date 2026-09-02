@@ -9,14 +9,15 @@ import (
 
 // NewJSONRPCTargeter creates a Vegeta Targeter that cycles through a set of
 // pre-encoded JSON-RPC request bodies so each hit sends different parameters.
-// Labeled bodies get their label as a URL query param — the RPC ignores it, but
-// vegeta echoes the URL on each Result, letting results be attributed per label.
+// Labeled bodies carry their label as a URL fragment: the client never sends a
+// fragment on the wire, so the RPC sees the canonical URL, while vegeta echoes the
+// target URL on each Result, letting results be attributed per label.
 func NewJSONRPCTargeter(rpcURL string, bodies [][]byte, labels []string) vegeta.Targeter {
 	urls := make([]string, len(bodies))
 	for i := range urls {
 		urls[i] = rpcURL
 		if labels != nil {
-			urls[i] += "?label=" + labels[i]
+			urls[i] += "#" + labels[i]
 		}
 	}
 	var idx atomic.Uint64 // atomically incr index to rotate through sample bodies

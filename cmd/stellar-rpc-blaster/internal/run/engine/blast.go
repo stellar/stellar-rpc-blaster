@@ -53,7 +53,7 @@ func flushBlastResults(
 		expectedRPS := pacer.Rate(elapsed)
 
 		var archetype string
-		if _, label, ok := strings.Cut(result.URL, "?label="); ok {
+		if _, label, ok := strings.Cut(result.URL, "#"); ok {
 			archetype = label // labeled bodies also report as a sub-stream of their endpoint
 		}
 
