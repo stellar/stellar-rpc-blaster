@@ -41,7 +41,7 @@ The reimplementation must preserve these behaviors.
 ### 2.1 CLI shape
 
 - Use `cobra` for the command tree.
-- Provide a root command `tx-load-test` with subcommands `setup`, `restore`, `bench`, `teardown`, and `sync`.
+- Provide a root command `tx-load-test` with subcommands `setup`, `restore`, `extend-ttl`, `bench`, `teardown`, and `sync`.
 - Root command should print usage when invoked without a subcommand.
 - Build target must remain:
 
@@ -235,7 +235,34 @@ Validation rules:
 - account pool must be large enough for both the Soroban stream and the classic companion stream for the requested duration and rate
 - `sac-transfer` requires valid SAC holder subsets and trustlines in state
 
-### 3.4 `teardown`
+### 3.4 `extend-ttl`
+
+`extend-ttl` is a periodic maintenance command that extends the TTL of every
+Soroban entry the benchmark can touch. Several footprint entries are extended
+by nothing at invocation time (the OZ token instance, the OZ Wasm code entry,
+and the SAC instances), so they archive on a fixed calendar; the rest are
+extended only ~30 days per touch, so idle gaps longer than that archive the
+hot set at once. Once anything archives, benchmarks fail at startup with a
+RestorePreamble during template simulation.
+
+Behavior:
+
+- requires `FEE_PAYER`
+- enumerates the footprint deterministically: all contract instances from the
+  state file, their Wasm code entries (discovered from fetched instances),
+  pair SAC fund balances, and the OZ `Balance` entry of every derived pool
+  account; the chain is consulted only for current TTLs
+- classifies each entry: missing (skipped; setup recreates), archived (cannot
+  be extended -- reported and the command fails; run `restore` or
+  teardown+setup first), live past the target (skipped), or needs extension
+- batches the rest into `ExtendFootprintTtl` transactions (read-only
+  footprint), simulates each batch for resources and rent fee, signs with the
+  fee payer, and submits
+- `--extend-to-days` defaults to 180 (network `maxEntryTTL`); rent is linear
+  in extension length, making this a roughly twice-a-year operation
+- `--dry-run` reports the classification without submitting
+
+### 3.5 `teardown`
 
 Behavior:
 
@@ -253,7 +280,7 @@ Teardown mechanics to preserve:
 	- remove trustlines then account-merge
 - batching is conservative to avoid signature and operation limits
 
-### 3.5 `sync`
+### 3.6 `sync`
 
 Behavior:
 
@@ -271,8 +298,8 @@ The state model should be simple and flat. Preserve these fields or their equiva
 	"rpc_url": "https://...",
 	"network_passphrase": "...",
 	"fee_payer_hash": "hex-sha256",
-	"account_indices": [1, 2, 3],
-	"sac_holder_indices": [1, 2, 3],
+	"account_ranges": ["1-4500"],
+	"sac_holder_ranges": ["1-900"],
 	"assets": ["BLTA", "BLTB", "BLTC"],
 	"sacs": ["C...", "C...", "C..."],
 	"soroswap_factory_contract": "C...",
@@ -285,8 +312,22 @@ The state model should be simple and flat. Preserve these fields or their equiva
 
 State design requirements:
 
-- `account_indices` are the canonical source for re-deriving participant accounts
-- `sac_holder_indices` track the prefix/subset that must hold trustlines and token balances for SAC-style activity
+- participant account derivation indices are the canonical identity for the
+	pool; on disk they are stored as compact ranges (`account_ranges`), where
+	each entry is a single index (`"5"`) or an inclusive contiguous run
+	(`"1-4500"`), sorted ascending and non-overlapping. Ranges are a SET
+	encoding, not a contiguity assumption: gaps from `sync` pruning or partially
+	failed teardown batches simply produce more ranges. This keeps the file a
+	few hundred bytes regardless of pool size (thousands of accounts would
+	otherwise mean thousands of array elements), which matters for embedding
+	the file in orchestration config (e.g. a Kubernetes ConfigMap).
+- `sac_holder_ranges` track the subset that must hold trustlines and token
+	balances for SAC-style activity, in the same encoding
+- readers must also accept the legacy flat forms (`account_indices`,
+	`sac_holder_indices`) and upgrade to ranges on the next save; a file
+	carrying both encodings for the same field is rejected as ambiguous
+- the range codec must guard expansion size on load (a typo'd `"1-4000000000"`
+	must error, not allocate gigabytes)
 - fee payer secret must never appear in the file
 - the recorded network passphrase is part of state identity, not just metadata
 
@@ -405,6 +446,17 @@ Responsibilities:
 - low-level ledger existence checks
 - contract ID encode/decode helpers
 - account/contract presence inspection used by setup and sync
+- shared ledger-key builders (contract instance, contract code, Balance
+  contract-data keys) consumed by setup, extend-ttl, and the ttl-probe tool
+
+### 5.8a `extendttl`
+
+Responsibilities:
+
+- deterministic enumeration of the full benchmark Soroban footprint
+- TTL classification against the latest ledger and the extend target
+- batched `ExtendFootprintTtl` submission via the state package's
+  simulate/pad/sign/poll helper
 
 ### 5.9 `syncstate`
 
