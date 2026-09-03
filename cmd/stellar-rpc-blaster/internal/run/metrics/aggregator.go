@@ -3,7 +3,8 @@ package blasterMetrics
 import (
 	"context"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/log"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/config"
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/run/parameters"
 )
 
 var capturedPercentiles = []float64{50, 95, 99, 99.9} // treat as const
@@ -28,11 +30,11 @@ type Aggregator struct {
 	stats            map[string]*EndpointStats
 	orderedEndpoints []string
 
-	done         bool
-	start        time.Time
-	duration     time.Duration
-	errorPercent int
-	mu           sync.RWMutex
+	done, aborted bool // aborted: the error-percent kill switch ended the run
+	start         time.Time
+	duration      time.Duration
+	errorPercent  int
+	mu            sync.RWMutex
 }
 
 // EndpointStats collects stats for all vegeta workers of an endpoint
@@ -44,6 +46,7 @@ type EndpointStats struct {
 	startRPS     float64
 	targetRPS    float64
 	limit        uint64        // effective per-request limit; 0 for endpoints without pagination
+	rpsShare     float64       // fraction of the endpoint's RPS this stream carries (1 except archetype sub-streams)
 	startTime    time.Time     // set on activation; zero means inactive
 	stepInterval time.Duration // window size for timeline snapshots
 	windows      []windowStats // per-step-interval accumulators
@@ -83,6 +86,7 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 			if a.checkErrorPercent() > a.errorPercent {
 				a.logger.Warnf("Error percentage exceeded threshold of %d%%. Ending test early.", a.errorPercent)
 				a.done = true
+				a.aborted = true
 				if err := WriteOutput(a); err != nil {
 					a.logger.Error(err)
 				}
@@ -118,23 +122,33 @@ func NewAggregator(logger *log.Entry, settings config.Config, cancel context.Can
 		writeOutputPath: settings.TestOutputPath,
 		rngSeed:         settings.RngSeed,
 	}
-	sort.Strings(endpoints)
-	a.orderedEndpoints = endpoints // maintain order for consistent output
-
 	stepInterval := max(5, settings.StepInterval)
 
 	for _, endpointKey := range endpoints {
-		a.stats[endpointKey] = &EndpointStats{
-			percentiles:  make(map[float64]time.Duration),
-			errorTypes:   make(map[string]ErrorResult),
-			startRPS:     float64(max(settings.GetEndpointStartRPS(endpointKey), 0)),
-			limit:        uint64(settings.GetEndpointLimit(endpointKey)),
-			stepInterval: stepInterval,
+		newStats := func(share float64) *EndpointStats {
+			s := &EndpointStats{
+				percentiles:  make(map[float64]time.Duration),
+				errorTypes:   make(map[string]ErrorResult),
+				startRPS:     float64(max(settings.GetEndpointStartRPS(endpointKey), 0)) * share,
+				limit:        uint64(settings.GetEndpointLimit(endpointKey)),
+				stepInterval: stepInterval,
+				rpsShare:     share,
+			}
+			if !settings.Serial {
+				s.startTime = time.Now()
+			}
+			return s
 		}
-		if !settings.Serial {
-			a.stats[endpointKey].startTime = time.Now()
+		a.stats[endpointKey] = newStats(1)
+		// getEvents samples are also tracked per archetype, as sub-streams
+		// carrying their share of the endpoint's RPS
+		if endpointKey == "getEvents" {
+			for name, share := range parameters.EventsArchetypeShares() {
+				a.stats[endpointKey+"/"+name] = newStats(share)
+			}
 		}
 	}
+	a.orderedEndpoints = slices.Sorted(maps.Keys(a.stats)) // maintain order for consistent output
 
 	return &a
 }
@@ -156,23 +170,35 @@ func (e *EndpointStats) refreshPercentiles() {
 	}
 }
 
+// Record books a sample into its endpoint's stream, and additionally into the
+// endpoint's archetype sub-stream when the sample carries one.
 func (a *Aggregator) Record(sample Sample) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if _, ok := a.stats[sample.Endpoint]; !ok {
-		return fmt.Errorf("unknown endpoint in sample: %s", sample.Endpoint)
+	keys := []string{sample.Endpoint}
+	if sample.Archetype != "" {
+		keys = append(keys, sample.Endpoint+"/"+sample.Archetype)
 	}
+	for _, key := range keys {
+		epStats, ok := a.stats[key]
+		if !ok {
+			return fmt.Errorf("unknown endpoint in sample: %s", key)
+		}
+		if epStats.startTime.IsZero() {
+			return nil
+		}
+		epStats.record(sample)
+	}
+	return nil
+}
 
-	epStats := a.stats[sample.Endpoint]
-	if epStats.startTime.IsZero() {
-		return nil
-	}
-	epStats.targetRPS = sample.CurrentRPS
+func (e *EndpointStats) record(sample Sample) {
+	e.targetRPS = sample.CurrentRPS * e.rpsShare
 	if sample.OK {
-		epStats.success++
+		e.success++
 	} else {
-		epStats.errors++
+		e.errors++
 		var errKey string
 		if sample.RPCErr != nil {
 			errKey = sample.RPCErr.Error()
@@ -182,39 +208,40 @@ func (a *Aggregator) Record(sample Sample) error {
 			errKey = strconv.Itoa(int(sample.Code))
 		}
 
-		if existing, ok := epStats.errorTypes[errKey]; ok {
+		if existing, ok := e.errorTypes[errKey]; ok {
 			existing.Count++
 			existing.LastSeen = time.Now()
-			epStats.errorTypes[errKey] = existing
+			e.errorTypes[errKey] = existing
 		} else {
-			epStats.errorTypes[errKey] = newErrorResult(sample)
+			e.errorTypes[errKey] = newErrorResult(sample)
 		}
 	}
 	// Bucket into per-step-interval window (windows are the source of truth for histograms)
 	latencyMicros := int64(sample.Latency / time.Microsecond)
-	elapsed := time.Since(epStats.startTime)
-	idx := int(elapsed / epStats.stepInterval)
-	for len(epStats.windows) <= idx {
-		epStats.windows = append(epStats.windows, windowStats{
+	idx := int(time.Since(e.startTime) / e.stepInterval)
+	for len(e.windows) <= idx {
+		e.windows = append(e.windows, windowStats{
 			histogram: hdrhistogram.New(1, 60000000, 3),
 		})
 	}
-	w := &epStats.windows[idx]
-	w.targetRPS = sample.CurrentRPS
+	w := &e.windows[idx]
+	w.targetRPS = sample.CurrentRPS * e.rpsShare
 	w.histogram.RecordValue(latencyMicros)
 	if sample.OK {
 		w.success++
 	} else {
 		w.errors++
 	}
-
-	return nil
 }
 
 func (a *Aggregator) ActivateEndpoint(endpointKey string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.stats[endpointKey].startTime = time.Now()
+	for key, stats := range a.stats {
+		if key == endpointKey || strings.HasPrefix(key, endpointKey+"/") {
+			stats.startTime = time.Now()
+		}
+	}
 }
 
 // checkErrorPercent returns the highest error percentage of any single endpoint's
@@ -222,9 +249,9 @@ func (a *Aggregator) ActivateEndpoint(endpointKey string) {
 // never evaluate a partially-filled window.
 func (a *Aggregator) checkErrorPercent() int {
 	var worst int
-	for _, stats := range a.stats {
-		if len(stats.windows) < 2 {
-			continue
+	for key, stats := range a.stats {
+		if strings.Contains(key, "/") || len(stats.windows) < 2 {
+			continue // archetype sub-streams are reporting-only; the endpoint stream governs the kill switch
 		}
 		w := stats.windows[len(stats.windows)-2]
 		total := w.success + w.errors
@@ -252,8 +279,8 @@ func (a *Aggregator) String() string {
 
 	for _, endpointName := range a.orderedEndpoints {
 		endpointStats := a.stats[endpointName]
-		if !endpointStats.startTime.IsZero() {
-			fmt.Fprintf(&line, "\n%-20s: %s", endpointName, endpointStats)
+		if !endpointStats.startTime.IsZero() && !strings.Contains(endpointName, "/") {
+			fmt.Fprintf(&line, "\n%-20s: %s", endpointName, endpointStats) // sub-streams report in the JSON only
 		}
 	}
 	line.WriteString("\n")

@@ -69,7 +69,7 @@ func NewBlastEngine(
 		pacer := NewSteppedPacer(endpointKey, cfg)
 
 		maxNumBodies := pacer.Hits(cfg.Duration) // upper limit of how many request bodies we could possibly need
-		paramMaps, err := parameters.BuildEndpointParams(endpointKey, int(maxNumBodies), sharedParams, cfg.GetEndpointLimit(endpointKey))
+		paramMaps, labels, err := parameters.BuildEndpointParams(endpointKey, int(maxNumBodies), sharedParams, cfg.GetEndpointLimit(endpointKey))
 		if err != nil {
 			return nil, fmt.Errorf("couldn't build params for endpoint %s: %w", endpointKey, err)
 		}
@@ -86,7 +86,7 @@ func NewBlastEngine(
 				return nil, fmt.Errorf("couldn't marshal request for endpoint %s: %w", endpointKey, err)
 			}
 		}
-		targeter := NewJSONRPCTargeter(cfg.RpcUrl, bodies)
+		targeter := NewJSONRPCTargeter(cfg.RpcUrl, bodies, labels)
 		if len(bodies) > 1 {
 			logger.Infof("Endpoint %s: rotating through %d parameterized request bodies", endpointKey, len(bodies))
 		}

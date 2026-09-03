@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/creachadair/jrpc2"
@@ -51,6 +52,11 @@ func flushBlastResults(
 		elapsed := time.Since(start)
 		expectedRPS := pacer.Rate(elapsed)
 
+		var archetype string
+		if _, label, ok := strings.Cut(result.URL, "#"); ok {
+			archetype = label // labeled bodies also report as a sub-stream of their endpoint
+		}
+
 		ok := result.Error == "" && result.Code >= 200 && result.Code < 300
 		var rpcErr *jrpc2.Error
 		if ok && len(result.Body) > 0 {
@@ -64,6 +70,7 @@ func flushBlastResults(
 		select {
 		case out <- blasterMetrics.Sample{
 			Endpoint:   endpointKey,
+			Archetype:  archetype,
 			CurrentRPS: expectedRPS,
 			Latency:    result.Latency,
 			Code:       result.Code,

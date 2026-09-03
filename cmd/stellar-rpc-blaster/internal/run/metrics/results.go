@@ -7,6 +7,7 @@ import (
 	"maps"
 	"math"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/run/parameters"
@@ -18,20 +19,22 @@ type Results struct {
 	End             time.Time                  `json:"end"`
 	Seed            uint64                     `json:"seed"`
 	DurationSeconds float64                    `json:"duration_seconds"`
+	Aborted         bool                       `json:"aborted"` // the error-percent kill switch ended the run early
 	Endpoints       map[string]*EndpointResult `json:"-"`
 }
 
 // EndpointResult holds final stats for one endpoint
 type EndpointResult struct {
-	TotalRequests uint64                 `json:"total_requests"`
-	Success       uint64                 `json:"success"`
-	Errors        uint64                 `json:"errors"`
-	TargetRPS     float64                `json:"target_rps"`
-	Limit         uint64                 `json:"limit,omitempty"`
-	Profile       int                    `json:"traffic_profile,omitempty"` // version of the hard-coded traffic model, for cross-run comparability
-	Percentiles   map[string]float64     `json:"percentiles_ms"`
-	ErrorTypes    map[string]ErrorResult `json:"error_types,omitempty"`
-	Timeline      []StepSnapshot         `json:"-"`
+	TotalRequests uint64                     `json:"total_requests"`
+	Success       uint64                     `json:"success"`
+	Errors        uint64                     `json:"errors"`
+	TargetRPS     float64                    `json:"target_rps"`
+	Limit         uint64                     `json:"limit,omitempty"`
+	Profile       int                        `json:"traffic_profile,omitempty"` // version of the hard-coded traffic model, for cross-run comparability
+	Percentiles   map[string]float64         `json:"percentiles_ms"`
+	ErrorTypes    map[string]ErrorResult     `json:"error_types,omitempty"`
+	Timeline      []StepSnapshot             `json:"-"`
+	Archetypes    map[string]*EndpointResult `json:"-"` // per-archetype sub-stream results, written after the overall entry
 }
 
 // StepSnapshot captures metrics for a single step-interval window
@@ -62,6 +65,7 @@ func (a *Aggregator) Results() *Results {
 		End:             time.Now().UTC(),
 		Seed:            a.rngSeed,
 		DurationSeconds: durationSeconds,
+		Aborted:         a.aborted,
 		Endpoints:       make(map[string]*EndpointResult, len(a.stats)),
 	}
 
@@ -92,21 +96,31 @@ func (a *Aggregator) Results() *Results {
 			})
 		}
 
-		results.Endpoints[name] = &EndpointResult{
+		endpoint, archetype, isSubStream := strings.Cut(name, "/")
+		entry := &EndpointResult{
 			TotalRequests: totalRequests,
 			Success:       stats.success,
 			Errors:        stats.errors,
 			ErrorTypes:    errorTypesCopy,
 			TargetRPS:     stats.targetRPS,
 			Limit:         stats.limit,
-			Profile:       parameters.ProfileVersion(name), // omitempty drops the 0 of unmodeled endpoints
+			Profile:       parameters.ProfileVersion(endpoint),
 			Percentiles:   make(map[string]float64),
 			Timeline:      timeline,
 		}
 		for p, d := range stats.percentiles {
-			key := fmt.Sprintf("p%.1f", p)
-			results.Endpoints[name].Percentiles[key] = float64(d.Nanoseconds()) / 1e6 // ms
+			entry.Percentiles[fmt.Sprintf("p%.1f", p)] = float64(d.Nanoseconds()) / 1e6 // ms
 		}
+		if !isSubStream {
+			results.Endpoints[name] = entry
+			continue
+		}
+		// orderedEndpoints is sorted, so an endpoint precedes its sub-streams
+		parent := results.Endpoints[endpoint]
+		if parent.Archetypes == nil {
+			parent.Archetypes = make(map[string]*EndpointResult)
+		}
+		parent.Archetypes[archetype] = entry
 	}
 
 	return results
@@ -122,7 +136,46 @@ func marshalOpen(v any, prefix, indent string) ([]byte, error) {
 	return bytes.TrimRight(data[:bytes.LastIndexByte(data, '}')], "\n "+prefix), nil
 }
 
-// MarshalJSON produces indented JSON but keeps each timeline entry on a single line.
+// writeEndpoint writes one endpoint entry as indented JSON at the given pad,
+// keeping each timeline entry on a single line.
+func writeEndpoint(buf *bytes.Buffer, pad, name string, ep *EndpointResult) error {
+	epJson, err := marshalOpen(ep, pad, "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(buf, "\n%s%q: ", pad, name)
+	buf.Write(epJson)
+
+	if len(ep.Timeline) > 0 {
+		fmt.Fprintf(buf, ",\n%s  \"timeline\": [\n", pad)
+		for _, snap := range ep.Timeline {
+			snapJson, err := json.Marshal(snap)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(buf, "%s    %s,\n", pad, snapJson)
+		}
+		buf.Truncate(buf.Len() - 2)
+		fmt.Fprintf(buf, "\n%s  ]", pad)
+	}
+	if len(ep.Archetypes) > 0 {
+		fmt.Fprintf(buf, ",\n%s  \"archetypes\": {", pad)
+		for i, name := range slices.Sorted(maps.Keys(ep.Archetypes)) {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			if err := writeEndpoint(buf, pad+"    ", name, ep.Archetypes[name]); err != nil {
+				return err
+			}
+		}
+		fmt.Fprintf(buf, "\n%s  }", pad)
+	}
+	fmt.Fprintf(buf, "\n%s}", pad)
+	return nil
+}
+
+// MarshalJSON produces indented JSON, keeping each timeline entry on a single line
+// and nesting archetype sub-stream results inside their endpoint's entry.
 func (r Results) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	type resultsAlias Results
@@ -133,33 +186,13 @@ func (r Results) MarshalJSON() ([]byte, error) {
 	buf.Write(top)
 	buf.WriteString(",\n  \"endpoints\": {")
 
-	// Write each endpoint's main stats as indented JSON
 	for i, name := range slices.Sorted(maps.Keys(r.Endpoints)) {
-		ep := r.Endpoints[name]
 		if i > 0 {
 			buf.WriteByte(',')
 		}
-		epJson, err := marshalOpen(ep, "    ", "  ")
-		if err != nil {
+		if err := writeEndpoint(&buf, "    ", name, r.Endpoints[name]); err != nil {
 			return nil, err
 		}
-		fmt.Fprintf(&buf, "\n    %q: ", name)
-		buf.Write(epJson)
-
-		// Write timeline as compact JSON array
-		if len(ep.Timeline) > 0 {
-			buf.WriteString(",\n      \"timeline\": [\n")
-			for _, snap := range ep.Timeline {
-				snapJson, err := json.Marshal(snap)
-				if err != nil {
-					return nil, err
-				}
-				fmt.Fprintf(&buf, "        %s,\n", snapJson)
-			}
-			buf.Truncate(buf.Len() - 2)
-			buf.WriteString("\n      ]")
-		}
-		buf.WriteString("\n    }")
 	}
 
 	buf.WriteString("\n  }\n}")

@@ -141,13 +141,33 @@ func newEventsSampler(params *Parameters, rng *rand.Rand) (*eventsSampler, error
 	}, nil
 }
 
-// sample draws one archetype and builds its request params map.
-func (s *eventsSampler) sample() map[string]any {
-	body := chooseOne(s.rng, eventsArchetypes, archetypeWeights).build(s)
+// sample draws one archetype and builds its request params map, returning the
+// archetype's name so results can be attributed per archetype.
+func (s *eventsSampler) sample() (string, map[string]any) {
+	a := chooseOne(s.rng, eventsArchetypes, archetypeWeights)
+	body := a.build(s)
 	if s.rng.Float64() < util.PrEventsJson {
 		body["xdrFormat"] = "json"
 	}
-	return body
+	return a.name, body
+}
+
+// EventsArchetypeNames lists the archetype labels getEvents results are keyed by.
+func EventsArchetypeNames() []string {
+	names := make([]string, len(eventsArchetypes))
+	for i, a := range eventsArchetypes {
+		names[i] = a.name
+	}
+	return names
+}
+
+// EventsArchetypeShares maps each archetype label to its share of getEvents traffic.
+func EventsArchetypeShares() map[string]float64 {
+	shares := make(map[string]float64, len(eventsArchetypes))
+	for _, a := range eventsArchetypes {
+		shares[a.name] = a.weight
+	}
+	return shares
 }
 
 // ---- archetype builders ----
