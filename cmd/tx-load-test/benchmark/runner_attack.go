@@ -34,9 +34,10 @@ type sendRespEnvelope struct {
 // counter if the transaction is never confirmed on-chain (evicted from the
 // mempool).
 type pollItem struct {
-	hash        string
-	rpcID       int64
-	submittedAt time.Time
+	hash               string
+	rpcID              int64
+	submittedAt        time.Time
+	submitLatestLedger uint32
 }
 
 type attackState struct {
@@ -47,7 +48,9 @@ type attackState struct {
 	onChainErrorCodes  *rejectionCounts
 	onChainOpResults   *rejectionCounts
 	onChainDiagnostics *rejectionCounts
+	vegetaErrors       *rejectionCounts
 	e2eStats           e2eLatencyStats
+	ledgerStats        *ledgerMetricStats
 
 	submitted     uint64
 	httpErr       uint64
@@ -69,6 +72,8 @@ func newAttackState(maxTx int) *attackState {
 		onChainErrorCodes:  newRejectionCounts(),
 		onChainOpResults:   newRejectionCounts(),
 		onChainDiagnostics: newRejectionCounts(),
+		vegetaErrors:       newRejectionCounts(),
+		ledgerStats:        newLedgerMetricStats(),
 	}
 }
 
@@ -93,7 +98,12 @@ func releaseAmbiguous(accounts accountLeaseManager, requestID int64) {
 func (s *attackState) handleSendTransactionEnvelope(envelope sendRespEnvelope, submittedAt time.Time, accounts accountLeaseManager) bool {
 	switch envelope.Result.Status {
 	case "PENDING", "DUPLICATE":
-		s.hashes <- pollItem{hash: envelope.Result.Hash, rpcID: envelope.ID, submittedAt: submittedAt}
+		s.hashes <- pollItem{
+			hash:               envelope.Result.Hash,
+			rpcID:              envelope.ID,
+			submittedAt:        submittedAt,
+			submitLatestLedger: envelope.Result.LatestLedger,
+		}
 		atomic.AddUint64(&s.queued, 1)
 		return true
 	case "TRY_AGAIN_LATER":
@@ -120,6 +130,9 @@ func (s *attackState) handleSendTransactionEnvelope(envelope sendRespEnvelope, s
 
 func processAttackResult(res *vegeta.Result, metrics *vegeta.Metrics, logger *log.Entry, state *attackState, accounts accountLeaseManager, workload string, recorder *benchmarkTraceRecorder) {
 	metrics.Add(res)
+	if res.Error != "" {
+		state.vegetaErrors.inc(res.Error)
+	}
 	atomic.AddUint64(&state.submitted, 1)
 	requestID := requestIDFromResultURL(res.URL)
 
@@ -241,6 +254,79 @@ func (s *e2eLatencyStats) snapshot() []time.Duration {
 	return out
 }
 
+type ledgerMetricStats struct {
+	mu sync.Mutex
+
+	finalityDistances []uint32
+	timeoutDistances  []uint32
+	txsPerLedger      map[uint32]uint32
+
+	finalitySkipped uint64
+	timeoutSkipped  uint64
+}
+
+type ledgerMetricSnapshot struct {
+	finalityDistances []uint32
+	timeoutDistances  []uint32
+	txsPerLedger      map[uint32]uint32
+	finalitySkipped   uint64
+	timeoutSkipped    uint64
+}
+
+func newLedgerMetricStats() *ledgerMetricStats {
+	return &ledgerMetricStats{txsPerLedger: make(map[uint32]uint32)}
+}
+
+func (s *ledgerMetricStats) observeFinality(submitLatestLedger uint32, finalityLedger uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if finalityLedger == 0 {
+		s.finalitySkipped++
+		return
+	}
+	s.txsPerLedger[finalityLedger]++
+
+	if submitLatestLedger == 0 || finalityLedger < submitLatestLedger {
+		s.finalitySkipped++
+		return
+	}
+	s.finalityDistances = append(s.finalityDistances, finalityLedger-submitLatestLedger)
+}
+
+func (s *ledgerMetricStats) observeTimeout(submitLatestLedger uint32, lastObservedLedger uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if submitLatestLedger == 0 || lastObservedLedger == 0 || lastObservedLedger < submitLatestLedger {
+		s.timeoutSkipped++
+		return
+	}
+	s.timeoutDistances = append(s.timeoutDistances, lastObservedLedger-submitLatestLedger)
+}
+
+func (s *ledgerMetricStats) snapshot() ledgerMetricSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	finalityDistances := make([]uint32, len(s.finalityDistances))
+	copy(finalityDistances, s.finalityDistances)
+	timeoutDistances := make([]uint32, len(s.timeoutDistances))
+	copy(timeoutDistances, s.timeoutDistances)
+	txsPerLedger := make(map[uint32]uint32, len(s.txsPerLedger))
+	for ledger, count := range s.txsPerLedger {
+		txsPerLedger[ledger] = count
+	}
+
+	return ledgerMetricSnapshot{
+		finalityDistances: finalityDistances,
+		timeoutDistances:  timeoutDistances,
+		txsPerLedger:      txsPerLedger,
+		finalitySkipped:   s.finalitySkipped,
+		timeoutSkipped:    s.timeoutSkipped,
+	}
+}
+
 // rejectionCounts tracks how many times each TransactionResultCode was
 // returned in an ERROR sendTransaction response.
 type rejectionCounts struct {
@@ -308,7 +394,60 @@ func logE2ELatencies(logger *log.Entry, latencies []time.Duration, timeouts uint
 		len(latencies), mean, p50, p95, p99, max, timeouts)
 }
 
-func logVegetaMetrics(logger *log.Entry, metrics vegeta.Metrics) {
+func logLedgerMetrics(logger *log.Entry, snapshot ledgerMetricSnapshot) {
+	logLedgerDistanceMetrics(logger, "ledger finality distance (submit latest -> terminal ledger)", snapshot.finalityDistances, snapshot.finalitySkipped)
+	logTxsPerLedgerMetrics(logger, snapshot.txsPerLedger)
+	if len(snapshot.timeoutDistances) > 0 || snapshot.timeoutSkipped > 0 {
+		logLedgerDistanceMetrics(logger, "ledger timeout distance (submit latest -> last observed latest)", snapshot.timeoutDistances, snapshot.timeoutSkipped)
+	}
+}
+
+func logLedgerDistanceMetrics(logger *log.Entry, label string, distances []uint32, skipped uint64) {
+	if len(distances) == 0 {
+		logger.Infof("%s  count=0 skipped=%d", label, skipped)
+		return
+	}
+
+	slices.Sort(distances)
+	var total uint64
+	for _, distance := range distances {
+		total += uint64(distance)
+	}
+	mean := float64(total) / float64(len(distances))
+	p50 := percentileUint32(distances, 0.50)
+	p95 := percentileUint32(distances, 0.95)
+	p99 := percentileUint32(distances, 0.99)
+	max := distances[len(distances)-1]
+	logger.Infof("%s  count=%d mean=%.2f p50=%d p95=%d p99=%d max=%d skipped=%d",
+		label, len(distances), mean, p50, p95, p99, max, skipped)
+}
+
+func logTxsPerLedgerMetrics(logger *log.Entry, txsPerLedger map[uint32]uint32) {
+	if len(txsPerLedger) == 0 {
+		logger.Info("transactions per finality ledger  ledgerCount=0 total=0")
+		return
+	}
+
+	ledgers := make([]uint32, 0, len(txsPerLedger))
+	counts := make([]uint32, 0, len(txsPerLedger))
+	var total uint64
+	for ledger, count := range txsPerLedger {
+		ledgers = append(ledgers, ledger)
+		counts = append(counts, count)
+		total += uint64(count)
+	}
+	slices.Sort(ledgers)
+	slices.Sort(counts)
+	mean := float64(total) / float64(len(counts))
+	p50 := percentileUint32(counts, 0.50)
+	p95 := percentileUint32(counts, 0.95)
+	p99 := percentileUint32(counts, 0.99)
+	max := counts[len(counts)-1]
+	logger.Infof("transactions per finality ledger  ledgerCount=%d firstLedger=%d lastLedger=%d total=%d mean=%.2f p50=%d p95=%d p99=%d max=%d",
+		len(counts), ledgers[0], ledgers[len(ledgers)-1], total, mean, p50, p95, p99, max)
+}
+
+func logVegetaMetrics(logger *log.Entry, metrics vegeta.Metrics, errorCounts []rejectionCountEntry) {
 	logger.Info("--- vegeta metrics ---")
 	logger.Infof("requests=%d  rate=%.2f req/s  throughput=%.2f req/s  success=%.2f%%",
 		metrics.Requests, metrics.Rate, metrics.Throughput, metrics.Success*100)
@@ -324,14 +463,32 @@ func logVegetaMetrics(logger *log.Entry, metrics vegeta.Metrics) {
 			logger.Infof("  HTTP %s: %d", code, count)
 		}
 	}
-	if len(metrics.Errors) > 0 {
-		for _, e := range metrics.Errors {
-			logger.Infof("  error: %s", e)
+	if len(errorCounts) > 0 {
+		for _, entry := range errorCounts {
+			logger.Infof("  error: %s (%d)", entry.code, entry.count)
+		}
+	} else if len(metrics.Errors) > 0 {
+		for _, errMsg := range metrics.Errors {
+			logger.Infof("  error: %s (1)", errMsg)
 		}
 	}
 }
 
 func percentileDuration(sorted []time.Duration, p float64) time.Duration {
+	if len(sorted) == 0 {
+		return 0
+	}
+	if p <= 0 {
+		return sorted[0]
+	}
+	if p >= 1 {
+		return sorted[len(sorted)-1]
+	}
+	idx := int(float64(len(sorted)-1) * p)
+	return sorted[idx]
+}
+
+func percentileUint32(sorted []uint32, p float64) uint32 {
 	if len(sorted) == 0 {
 		return 0
 	}

@@ -18,6 +18,14 @@ setup  -->  state.json  -->  bench  (repeatable)
 
 This separation means setup's expensive on-chain work is done once, benchmarks can be iterated quickly, and cleanup is explicit.
 
+## Prerequisites
+
+- Go 1.25 or newer.
+- A Stellar RPC endpoint for the target network.
+- A fee-payer seed in `FEE_PAYER` for `bench`, `teardown`, and `sync`. For `setup` on testnet/futurenet, `FEE_PAYER` may be omitted and the tool will generate/fund a temporary fee payer via friendbot.
+- For `setup` on testnet/mainnet, Soroswap factory and router contract IDs must be supplied with `--soroswap-factory` and `--soroswap-router`. On standalone/futurenet, setup can auto-deploy Soroswap contracts from the local Wasm artifacts under `contracts/`.
+- `jq` is optional, but useful for inspecting the generated NDJSON metrics and trace files.
+
 ## Quick Start
 
 ```bash
@@ -31,6 +39,7 @@ export FEE_PAYER="S..."  # optional; omit to auto-generate via friendbot
 # 2. Run a benchmark (requires the same fee-payer seed used for setup)
 export FEE_PAYER="S..."
 ./tx-load-test bench --mode sac-transfer --target-rps 300 --duration 60s
+# Writes flattened metrics to tx-load-test-metrics-<timestamp>-sac-transfer.ndjson by default.
 
 # 3. Need more accounts? Just re-run setup with a higher target.
 ./tx-load-test setup --rpc-url https://soroban-testnet.stellar.org --network testnet --accounts 5000
@@ -107,6 +116,7 @@ Before the benchmark starts, the tool queries the chosen RPC endpoint (either `-
 | `--skip-account-preflight` | `false` | Skip the sampled on-chain participant-account existence check before the benchmark starts |
 | `--account-preflight-sample` | `10` | Number of participant accounts to sample during runtime preflight |
 | `--trace-file` | *(disabled)* | Optional NDJSON file that captures every benchmark submit and poll request/response |
+| `--metrics-file` | `tx-load-test-metrics-<timestamp>-<mode>.ndjson` | Optional flattened NDJSON benchmark metrics file path |
 | `--log-level` | `info` | `debug`, `info`, `warn`, `error` |
 
 **Mode guide:**
@@ -130,7 +140,7 @@ Before the benchmark starts, the tool queries the chosen RPC endpoint (either `-
 
 When `--classic-rps > 0`, bench also runs a parallel simple-payment companion stream that submits native XLM payments with 1 payment operation per transaction. `--classic-rps` is interpreted as transactions/sec.
 
-**Benchmark output:** after the attack and poll drain, bench logs:
+**Console benchmark output:** after the attack and poll drain, bench logs:
 - Submission counters: submitted, queued, httpErr, tryAgainLater, submitErrors, ambiguous
 - Submit-time failure summaries: per-result-code breakdown, op-result breakdown, and normalized diagnostic summaries when available
 - On-chain outcomes: included, failed, pollErr
@@ -141,6 +151,33 @@ When `--classic-rps > 0`, bench also runs a parallel simple-payment companion st
 - HTTP status code distribution
 
 When `--trace-file` is enabled, bench also writes every submit and poll request/response pair to the specified NDJSON file for post-run analysis.
+
+**Metrics file output:** bench writes a flattened NDJSON metrics file. If `--metrics-file` is omitted, the default path is `tx-load-test-metrics-<timestamp>-<mode>.ndjson`.
+
+The metrics file is newline-delimited JSON. Each workload produces one `summary` record that combines run parameters, workload parameters, submission counters, on-chain counters, latency stats, ledger stats, Vegeta metrics, and HTTP status-code counts. HTTP status codes are flattened into fields on the summary record, for example `vegeta_status_code_200`, not emitted as separate records.
+
+Example summary fields:
+
+```json
+{
+  "record_type": "summary",
+  "run_mode": "sac-transfer",
+  "run_target_rps": 60,
+  "workload": "sac-transfer",
+  "workload_target_rps": 60,
+  "submission_submitted": 596,
+  "on_chain_included": 596,
+  "e2e_latency_p95_milliseconds": 8756.480462,
+  "ledger_transactions_per_finality_ledger_total": 596,
+  "vegeta_requests": 596,
+  "vegeta_success_percent": 100,
+  "vegeta_status_code_200": 596
+}
+```
+
+If Vegeta reports request errors, those remain as additional `vegeta_error` records with the same run/workload identity fields plus `code` and `count`.
+
+The metrics schema intentionally omits per-ledger count maps, progress snapshots, submit/on-chain breakdown records, and separate HTTP status-code records. Those details remain console or trace-file concerns where applicable.
 
 ### `teardown`
 

@@ -32,6 +32,10 @@ transaction, and --classic-rps is interpreted as transactions/sec.
 Use --trace-file to capture every benchmark submit and poll request/response
 as NDJSON for post-run inspection.
 
+Benchmark summary metrics are also written as flattened NDJSON. By default the
+metrics filename includes the start timestamp and selected mode; use
+--metrics-file to choose a specific path.
+
 bench reads the state file produced by setup and drives benchmark transaction
 traffic against the target network without modifying local setup metadata.
 Run bench as many times as needed.`,
@@ -49,6 +53,7 @@ Run bench as many times as needed.`,
 	cmd.Flags().Int("target-rps", 50, "Steady-state requests per second after ramp-up")
 	cmd.Flags().Int("classic-rps", config.DefaultClassicRPS, "Steady-state simple-payment transactions per second after ramp-up (1 payment op per tx)")
 	cmd.Flags().String("trace-file", "", "Optional newline-delimited JSON file that captures every benchmark submit and poll request/response")
+	cmd.Flags().String("metrics-file", "", "Optional NDJSON file for benchmark metrics (default: timestamped filename containing the selected mode)")
 	return cmd
 }
 
@@ -80,6 +85,12 @@ func runBench(cmd *cobra.Command, _ []string) error {
 	if cfg.TraceFile, err = cmd.Flags().GetString("trace-file"); err != nil {
 		return err
 	}
+	if cfg.MetricsFile, err = cmd.Flags().GetString("metrics-file"); err != nil {
+		return err
+	}
+	if cfg.MetricsFile == "" {
+		cfg.MetricsFile = benchmark.DefaultMetricsFileName(cfg.Mode, time.Now())
+	}
 	if err = benchmark.ValidateCLIConfig(cfg); err != nil {
 		return err
 	}
@@ -103,6 +114,7 @@ func runBench(cmd *cobra.Command, _ []string) error {
 	if cfg.TraceFile != "" {
 		logger.Infof("benchmark trace file enabled: %s", cfg.TraceFile)
 	}
+	logger.Infof("benchmark metrics NDJSON file: %s", cfg.MetricsFile)
 
 	httpClient := &http.Client{
 		Timeout: 30 * time.Second,

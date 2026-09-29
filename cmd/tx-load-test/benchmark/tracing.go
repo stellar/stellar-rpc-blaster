@@ -111,9 +111,10 @@ func pollTransactionWithTrace(
 	hash string,
 	workload string,
 	recorder *benchmarkTraceRecorder,
-) (protocol.GetTransactionResponse, error) {
+) (pollTransactionResult, error) {
 	interval := 500 * time.Millisecond
 	attempt := 0
+	var result pollTransactionResult
 	for {
 		attempt++
 		if recorder != nil {
@@ -142,7 +143,11 @@ func pollTransactionWithTrace(
 					Error:     err.Error(),
 				})
 			}
-			return protocol.GetTransactionResponse{}, err
+			return result, err
+		}
+		result.response = resp
+		if resp.LatestLedger > 0 {
+			result.lastObservedLatestLedger = resp.LatestLedger
 		}
 
 		resultCode := ""
@@ -171,7 +176,7 @@ func pollTransactionWithTrace(
 
 		switch resp.Status {
 		case protocol.TransactionStatusSuccess, protocol.TransactionStatusFailed:
-			return resp, nil
+			return result, nil
 		}
 
 		timer := time.NewTimer(interval)
@@ -180,7 +185,7 @@ func pollTransactionWithTrace(
 			if !timer.Stop() {
 				<-timer.C
 			}
-			return protocol.GetTransactionResponse{}, ctx.Err()
+			return result, ctx.Err()
 		case <-timer.C:
 		}
 		interval = min(interval*2, 3500*time.Millisecond)

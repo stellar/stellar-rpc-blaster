@@ -258,4 +258,3 @@ func TestVerifyReadyForModesWrapsModeFailure(t *testing.T) {
 	}, []config.BenchmarkMode{config.ModeSACTransfer})
 	require.EqualError(t, err, "mode=sac-transfer: missing trustlines")
 }
-

@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 	"golang.org/x/sync/errgroup"
@@ -155,6 +156,7 @@ func runWorkloads(ctx context.Context, logger *log.Entry, baseCfg config.Config,
 	}()
 
 	g, groupCtx := errgroup.WithContext(ctx)
+	reports := make(chan workloadMetricsReport, len(workloads))
 	for _, workload := range workloads {
 		wl := workload
 		g.Go(func() error {
@@ -162,14 +164,30 @@ func runWorkloads(ctx context.Context, logger *log.Entry, baseCfg config.Config,
 			runCfg.TargetRPS = wl.targetRPS
 			scoped := logger.WithField("phase", wl.label)
 			scoped.Infof("duration=%s ramp=%s %s", runCfg.Duration, runCfg.RampUp, wl.rateSummary)
-			if err := runVegetaAttack(groupCtx, scoped, runCfg, httpClient, st.RPCClient, wl.label, wl.newTargeter, accounts, recorder); err != nil {
+			report, err := runVegetaAttack(groupCtx, scoped, runCfg, httpClient, st.RPCClient, wl.label, wl.rateSummary, wl.newTargeter, accounts, recorder)
+			if err != nil {
 				return fmt.Errorf("%s: %w", wl.label, err)
 			}
+			reports <- report
 			return nil
 		})
 	}
 
-	return g.Wait()
+	if err := g.Wait(); err != nil {
+		return err
+	}
+	close(reports)
+	workloadReports := make([]workloadMetricsReport, 0, len(workloads))
+	for report := range reports {
+		workloadReports = append(workloadReports, report)
+	}
+	sort.Slice(workloadReports, func(i, j int) bool {
+		return workloadReports[i].Workload < workloadReports[j].Workload
+	})
+	if err := writeBenchmarkMetricsReport(baseCfg.MetricsFile, newBenchmarkMetricsReport(baseCfg, workloadReports)); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Run executes the benchmark phase using the mode chosen in cfg.
