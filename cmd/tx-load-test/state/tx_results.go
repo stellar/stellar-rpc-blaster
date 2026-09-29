@@ -26,7 +26,7 @@ func isInsufficientFee(errorResultXDR string) bool {
 func logTxFailure(logger *log.Entry, hash, resultXDR string, diagnosticEventsXDR []string) {
 	l := logger.WithField("hash", hash).WithField("resultCode", ledger.DecodeTransactionResultCode(resultXDR))
 	l.Error("transaction failed on-chain")
-	for i, s := range decodeOpResults(resultXDR) {
+	for i, s := range DecodeOperationResults(resultXDR) {
 		l.WithField("opIndex", i).Errorf("op result: %s", s)
 	}
 	for i, ev := range diagnosticEventsXDR {
@@ -34,11 +34,11 @@ func logTxFailure(logger *log.Entry, hash, resultXDR string, diagnosticEventsXDR
 	}
 }
 
-// decodeOpResults extracts per-operation result summaries from a base64
+// DecodeOperationResults extracts per-operation result summaries from a base64
 // TransactionResult XDR string, descending into fee-bump inner results when
 // the outer code is TxFeeBumpInnerFailed. Returns nil if there are no
 // operation-level results to report (e.g. pre-apply rejections).
-func decodeOpResults(resultXDR string) []string {
+func DecodeOperationResults(resultXDR string) []string {
 	if resultXDR == "" {
 		return nil
 	}
@@ -113,7 +113,7 @@ func logSendTransactionRejection(logger *log.Entry, resp protocol.SendTransactio
 		l = l.WithField("hash", resp.Hash)
 	}
 	l.Error("transaction rejected during submission")
-	for i, s := range decodeOpResults(resp.ErrorResultXDR) {
+	for i, s := range DecodeOperationResults(resp.ErrorResultXDR) {
 		l.WithField("opIndex", i).Errorf("submission op result: %s", s)
 	}
 	for i, ev := range resp.DiagnosticEventsXDR {

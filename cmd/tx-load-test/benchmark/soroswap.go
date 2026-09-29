@@ -155,6 +155,7 @@ func (soroswapMode) NewTargeter(ctx context.Context, rpcURL string, st *state.St
 		body, err := buildSorobanSendTransactionBody(sorobanSendTransactionParams{
 			RPCID:             lease.RequestID,
 			NetworkPassphrase: st.NetworkPassphrase,
+			FeePayerKP:        st.FeePayerKP,
 			TxSource:          txSourceKP,
 			Sequence:          lease.Sequence,
 			Signers:           []*keypair.Full{txSourceKP},

@@ -75,7 +75,7 @@ func TestDecodeOpResultsTxFailed(t *testing.T) {
 	resultXDR, err := xdr.MarshalBase64(xdr.TransactionResult{Result: txResultResult})
 	require.NoError(t, err)
 
-	require.Equal(t, []string{"ChangeTrust:ChangeTrustResultCodeChangeTrustLowReserve"}, decodeOpResults(resultXDR))
+	require.Equal(t, []string{"ChangeTrust:ChangeTrustResultCodeChangeTrustLowReserve"}, DecodeOperationResults(resultXDR))
 }
 
 func TestDecodeOpResultsFeeBumpInnerFailed(t *testing.T) {
@@ -94,5 +94,5 @@ func TestDecodeOpResultsFeeBumpInnerFailed(t *testing.T) {
 	resultXDR, err := xdr.MarshalBase64(xdr.TransactionResult{Result: outerResultResult})
 	require.NoError(t, err)
 
-	require.Equal(t, []string{"Payment:PaymentResultCodePaymentNoDestination"}, decodeOpResults(resultXDR))
+	require.Equal(t, []string{"Payment:PaymentResultCodePaymentNoDestination"}, DecodeOperationResults(resultXDR))
 }

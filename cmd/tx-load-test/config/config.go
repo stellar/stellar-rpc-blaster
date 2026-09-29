@@ -13,7 +13,7 @@ const (
 	ModeOZTransfer BenchmarkMode = "oz-transfer"
 	// ModeSoroswap runs swaps against benchmark Soroswap pools.
 	ModeSoroswap BenchmarkMode = "soroswap"
-	// DefaultClassicRPS is the default steady-state operation rate for the
+	// DefaultClassicRPS is the default steady-state transaction rate for the
 	// parallel simple-payment stream that accompanies the selected Soroban
 	// benchmark mode.
 	DefaultClassicRPS = 200
@@ -65,8 +65,9 @@ type Config struct {
 	// TargetRPS is the steady-state requests per second once the ramp-up is complete.
 	TargetRPS int
 
-	// ClassicRPS is the steady-state operations per second for the parallel
-	// simple-payment stream. A value of 0 disables simple payments.
+	// ClassicRPS is the steady-state transactions per second for the parallel
+	// simple-payment stream. Each transaction carries one payment op. A value of
+	// 0 disables simple payments.
 	ClassicRPS int
 
 	// TraceFile optionally captures per-request benchmark submit/poll traces as

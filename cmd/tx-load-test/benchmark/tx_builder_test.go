@@ -17,6 +17,8 @@ func TestBuildSorobanSendTransactionBodyBuildsSignedJSONRPCRequest(t *testing.T)
 	require.NoError(t, err)
 	coSigner, err := keypair.Random()
 	require.NoError(t, err)
+	feePayer, err := keypair.Random()
+	require.NoError(t, err)
 	contractID := xdr.ContractId{}
 	invokeArgs := xdr.InvokeContractArgs{
 		ContractAddress: xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &contractID},
@@ -27,6 +29,7 @@ func TestBuildSorobanSendTransactionBodyBuildsSignedJSONRPCRequest(t *testing.T)
 	body, err := buildSorobanSendTransactionBody(sorobanSendTransactionParams{
 		RPCID:             99,
 		NetworkPassphrase: "Test SDF Network ; September 2015",
+		FeePayerKP:        feePayer,
 		TxSource:          txSource,
 		Sequence:          41,
 		Signers:           []*keypair.Full{txSource, coSigner},
@@ -59,8 +62,13 @@ func TestBuildSorobanSendTransactionBodyBuildsSignedJSONRPCRequest(t *testing.T)
 
 	gtx, err := txnbuild.TransactionFromXDR(request.Params["transaction"])
 	require.NoError(t, err)
-	tx, ok := gtx.Transaction()
+	feeBump, ok := gtx.FeeBump()
 	require.True(t, ok)
+	require.Equal(t, feePayer.Address(), feeBump.FeeAccount())
+	require.Equal(t, benchmarkBaseFee*2+int64(resourceFee), feeBump.MaxFee())
+	require.Len(t, feeBump.Signatures(), 1)
+
+	tx := feeBump.InnerTransaction()
 	require.Equal(t, txSource.Address(), tx.SourceAccount().AccountID)
 	require.Equal(t, int64(41), tx.SequenceNumber())
 	require.Equal(t, benchmarkBaseFee+int64(resourceFee), tx.BaseFee())

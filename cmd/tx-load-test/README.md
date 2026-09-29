@@ -51,7 +51,7 @@ Creates all required ledger state and writes `state.json`. If a state file alrea
 | `--network` | *(required)* | Network shorthand: `testnet`, `futurenet`, `mainnet`, `standalone` |
 | `--duration` | `100s` | Planned benchmark duration used when sizing account partitions |
 | `--target-rps` | `50` | Planned Soroban steady-state requests per second used when sizing account partitions |
-| `--classic-rps` | `200` | Planned simple-payment steady-state operations per second used when sizing account partitions for the superset setup shape; `0` disables the companion stream; must be a multiple of 100 |
+| `--classic-rps` | `200` | Planned simple-payment steady-state transactions per second used when sizing account pools for the superset setup shape; `0` disables the companion stream; each transaction carries one payment op |
 | `--soroswap-factory` | *(required on `testnet`/`mainnet`)* | Soroswap factory contract ID; optional on `standalone`/`futurenet`, where setup can auto-deploy it |
 | `--soroswap-router` | *(required on `testnet`/`mainnet`)* | Soroswap router contract ID; optional on `standalone`/`futurenet`, where setup can auto-deploy it |
 | `--liquidity-per-pool` | `1000000` | Token units of each asset to seed into each Soroswap benchmark pool |
@@ -99,7 +99,7 @@ Before the benchmark starts, the tool queries the chosen RPC endpoint (either `-
 |---|---|---|
 | `--mode` | `sac-transfer` | Workload: `sac-transfer`, `oz-transfer`, or `soroswap` |
 | `--target-rps` | `50` | Steady-state requests per second |
-| `--classic-rps` | `200` | Steady-state simple-payment operations per second; `0` disables the companion stream; must be a multiple of 100 |
+| `--classic-rps` | `200` | Steady-state simple-payment transactions per second; `0` disables the companion stream; each transaction carries one payment op |
 | `--duration` | `100s` | Total benchmark duration |
 | `--ramp-up` | `20s` | Linear ramp from 1 RPS to target |
 | `--rpc-url` | *(from state file)* | Override the RPC URL stored in `state.json` |
@@ -119,8 +119,8 @@ Before the benchmark starts, the tool queries the chosen RPC endpoint (either `-
 
 **Validation:** before starting, bench checks:
 - `--mode` is supported and `--target-rps > 0`.
-- `--classic-rps >= 0`; if non-zero, it must be a multiple of 100 because simple payments are batched at 100 ops/tx.
-- The participant account pool is large enough for the derived Soroban and simple-payment source-account partitions for the requested rates and duration.
+- `--classic-rps >= 0`; when non-zero it directly sets the simple-payment tx/s rate because each transaction carries one payment op.
+- The participant account pool is large enough for the derived Soroban and simple-payment source-account requirements for the requested rates and duration.
 - For `sac-transfer`, the persisted state still contains the required SAC holder accounts and trustlines.
 
 **Available modes:**
@@ -128,12 +128,13 @@ Before the benchmark starts, the tool queries the chosen RPC endpoint (either `-
 - **`oz-transfer`** -- transfers on the upgradeable OpenZeppelin benchmark token contract.
 - **`soroswap`** -- router-based exact-input swaps across the benchmark BLTA/BLTB and BLTB/BLTC pools.
 
-When `--classic-rps > 0`, bench also runs a parallel simple-payment companion stream that submits native XLM payments batched at 100 operations per transaction. `--classic-rps` is interpreted as operations/sec, not transactions/sec.
+When `--classic-rps > 0`, bench also runs a parallel simple-payment companion stream that submits native XLM payments with 1 payment operation per transaction. `--classic-rps` is interpreted as transactions/sec.
 
 **Benchmark output:** after the attack and poll drain, bench logs:
-- Submission counters: submitted, queued, httpErr, tryAgainLater, submitErrors (with per-ResultCode breakdown)
+- Submission counters: submitted, queued, httpErr, tryAgainLater, submitErrors, ambiguous
+- Submit-time failure summaries: per-result-code breakdown, op-result breakdown, and normalized diagnostic summaries when available
 - On-chain outcomes: included, failed, pollErr
-- On-chain failure summaries: per-result-code breakdown plus normalized diagnostic summaries for repeated Soroban failures
+- On-chain failure summaries: per-result-code breakdown, op-result breakdown, and normalized diagnostic summaries for repeated failures
 - Vegeta metrics: request count, achieved rate (req/s), throughput (req/s), success ratio
 - Latency percentiles: mean, p50, p95, p99, max
 - Bytes in/out: total and mean

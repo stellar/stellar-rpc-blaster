@@ -2,14 +2,12 @@ package benchmark
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math/rand/v2"
 
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 
 	"github.com/stellar/go-stellar-sdk/keypair"
-	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
@@ -72,24 +70,9 @@ func newSimplePaymentTargeter(ctx context.Context, rpcURL string, st *state.Stat
 			return fmt.Errorf("build transaction: %w", err)
 		}
 
-		tx, err = tx.Sign(networkPassphrase, srcKP)
+		body, err := buildBenchmarkSendTransactionBody(lease.RequestID, networkPassphrase, st.FeePayerKP, tx, srcKP)
 		if err != nil {
-			return fmt.Errorf("sign transaction: %w", err)
-		}
-
-		b64, err := tx.Base64()
-		if err != nil {
-			return fmt.Errorf("marshal transaction: %w", err)
-		}
-
-		body, err := json.Marshal(rpcJSONBody{
-			JSONRPC: "2.0",
-			ID:      lease.RequestID,
-			Method:  protocol.SendTransactionMethodName,
-			Params:  map[string]string{"transaction": b64},
-		})
-		if err != nil {
-			return fmt.Errorf("marshal JSON-RPC body: %w", err)
+			return err
 		}
 
 		populateJSONRPCTarget(t, rpcURL, body, lease.RequestID)

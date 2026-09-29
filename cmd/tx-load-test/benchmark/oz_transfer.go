@@ -154,6 +154,7 @@ func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *sta
 		body, err := buildSorobanSendTransactionBody(sorobanSendTransactionParams{
 			RPCID:             lease.RequestID,
 			NetworkPassphrase: networkPassphrase,
+			FeePayerKP:        state.FeePayerKP,
 			TxSource:          srcKP,
 			Sequence:          lease.Sequence,
 			Signers:           []*keypair.Full{srcKP},
