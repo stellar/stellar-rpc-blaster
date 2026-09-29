@@ -110,7 +110,7 @@ Flags:
 - `--network` required; support `testnet`, `futurenet`, `mainnet`, `standalone`
 - `--duration` default `100s`
 - `--target-rps` default `50`
-- `--classic-rps` default `200`
+- `--classic-rps` default `100`
 - `--soroswap-factory` optional on standalone/futurenet, required on public networks
 - `--soroswap-router` optional on standalone/futurenet, required on public networks
 - `--liquidity-per-pool` default `1000000`
@@ -121,7 +121,7 @@ Flags:
 
 Fee payer behavior:
 
-- read fee payer seed from `TX_LOAD_TEST_FEE_PAYER_SEED`
+- read fee payer seed from `FEE_PAYER`
 - if absent, generate a temporary key and fund with friendbot on testnet/futurenet only
 - on re-runs against existing state, require the supplied seed and validate its hash against `fee_payer_hash`
 
@@ -153,7 +153,7 @@ Flags:
 
 - `--mode`, default `sac-transfer`
 - `--target-rps`, default `50`
-- `--classic-rps`, default `200`
+- `--classic-rps`, default `100`
 - `--duration`, default `100s`
 - `--ramp-up`, default `20s`
 - `--rpc-url`, optional override from state
@@ -198,7 +198,7 @@ Validation rules:
 
 Behavior:
 
-- requires `TX_LOAD_TEST_FEE_PAYER_SEED`
+- requires `FEE_PAYER`
 - re-derives all participant accounts from stored indices
 - merges participant accounts back into the fee payer
 - should operate in resumable batches
@@ -216,7 +216,7 @@ Teardown mechanics to preserve:
 
 Behavior:
 
-- requires `TX_LOAD_TEST_FEE_PAYER_SEED`
+- requires `FEE_PAYER`
 - re-derives participant accounts from stored indices
 - checks which on-chain accounts still exist
 - removes missing accounts from the state file

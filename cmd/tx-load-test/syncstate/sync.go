@@ -8,9 +8,12 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/support/log"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
+
+const accountCheckConcurrency = 32
 
 // SyncState checks which participant accounts still exist on-chain
 // and rewrites the state file with only those that do. This reconciles the
@@ -18,17 +21,42 @@ import (
 func SyncState(ctx context.Context, logger *log.Entry, st *state.State, stateFile, rpcURL string) error {
 	logger = logger.WithField("phase", "sync")
 
-	var surviving []*keypair.Full
-	var removed int
-	for _, kp := range st.AccountKPs {
+	if len(st.AccountKPs) == 0 {
+		logger.Info("no participant accounts in state  -- nothing to sync")
+		return nil
+	}
+
+	workerLimit := min(accountCheckConcurrency, len(st.AccountKPs))
+	logger.Infof("checking %d accounts with up to %d concurrent workers", len(st.AccountKPs), workerLimit)
+
+	existsByIndex := make([]bool, len(st.AccountKPs))
+	g, groupCtx := errgroup.WithContext(ctx)
+	g.SetLimit(workerLimit)
+	for i, kp := range st.AccountKPs {
 		if kp == nil {
 			continue
 		}
-		exists, err := state.AccountExists(ctx, st.RPCClient, kp.Address())
-		if err != nil {
-			return fmt.Errorf("check account %s: %w", kp.Address(), err)
+		i, kp := i, kp
+		g.Go(func() error {
+			exists, err := state.AccountExists(groupCtx, st.RPCClient, kp.Address())
+			if err != nil {
+				return fmt.Errorf("check account %s: %w", kp.Address(), err)
+			}
+			existsByIndex[i] = exists
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	var surviving []*keypair.Full
+	var removed int
+	for i, kp := range st.AccountKPs {
+		if kp == nil {
+			continue
 		}
-		if exists {
+		if existsByIndex[i] {
 			surviving = append(surviving, kp)
 		} else {
 			removed++
