@@ -5,3 +5,4 @@
 /tx-load-test
 *.seed
 *.json
+/ttl-probe
