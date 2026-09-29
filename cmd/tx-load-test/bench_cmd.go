@@ -1,14 +1,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	supportlog "github.com/stellar/go-stellar-sdk/support/log"
+
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/benchmark"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
+	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/gcs"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
 
@@ -54,6 +59,7 @@ Run bench as many times as needed.`,
 	cmd.Flags().Int("classic-rps", config.DefaultClassicRPS, "Steady-state simple-payment transactions per second after ramp-up (1 payment op per tx)")
 	cmd.Flags().String("trace-file", "", "Optional newline-delimited JSON file that captures every benchmark submit and poll request/response")
 	cmd.Flags().String("metrics-file", "", "Optional NDJSON file for benchmark metrics (default: metrics/ timestamped filename containing the selected mode)")
+	cmd.Flags().String("metrics-gcs-url", "", "Optional gs://bucket/prefix/ destination; the metrics file is uploaded there after the run (auth via Application Default Credentials)")
 	return cmd
 }
 
@@ -91,6 +97,10 @@ func runBench(cmd *cobra.Command, _ []string) error {
 	if cfg.MetricsFile == "" {
 		cfg.MetricsFile = benchmark.DefaultMetricsFileName(cfg.Mode, time.Now())
 	}
+	metricsGCSURL, err := cmd.Flags().GetString("metrics-gcs-url")
+	if err != nil {
+		return err
+	}
 	if err = benchmark.ValidateCLIConfig(cfg); err != nil {
 		return err
 	}
@@ -127,5 +137,32 @@ func runBench(cmd *cobra.Command, _ []string) error {
 	if err = benchmark.Run(ctx, logger, cfg, loaded.Live, httpClient); err != nil {
 		logger.WithError(err).Error("benchmark failed")
 	}
+
+	if uploadErr := uploadMetricsIfRequested(logger, metricsGCSURL, cfg.MetricsFile); uploadErr != nil && err == nil {
+		// The bench itself succeeded; surface the upload failure as the run
+		// error so automated runs (k8s Jobs) alert instead of silently losing
+		// the metrics when the pod's volume is reclaimed.
+		err = uploadErr
+	}
 	return err
+}
+
+// uploadMetricsIfRequested ships the metrics file to GCS when a destination
+// was given. It runs on a fresh context (not the possibly-cancelled run
+// context) so an interrupted bench still ships whatever was written; the
+// uploader applies its own timeout.
+func uploadMetricsIfRequested(logger *supportlog.Entry, gcsURL, metricsFile string) error {
+	if gcsURL == "" {
+		return nil
+	}
+	if _, err := os.Stat(metricsFile); err != nil {
+		return fmt.Errorf("metrics file %s not available for GCS upload: %w", metricsFile, err)
+	}
+	objectURL, err := gcs.Upload(context.Background(), gcsURL, metricsFile)
+	if err != nil {
+		logger.WithError(err).Error("metrics GCS upload failed")
+		return fmt.Errorf("upload metrics to GCS: %w", err)
+	}
+	logger.Infof("benchmark metrics uploaded to %s", objectURL)
+	return nil
 }
