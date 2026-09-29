@@ -19,7 +19,7 @@ import (
 // to confirm on-chain inclusion. It scales with the target RPS so the drain
 // phase after the attack completes in reasonable time.
 func pollWorkerCount(targetRPS int) int {
-	return max(40, min((targetRPS*4)/5, 800))
+	return max(80, min((targetRPS*8)/5, 1600))
 }
 
 // pollTimeout is the per-transaction deadline for polling getTransaction to a
@@ -27,6 +27,11 @@ func pollWorkerCount(targetRPS int) int {
 // so the poller can observe txTooLate-style terminal failures instead of
 // timing out first.
 const pollTimeout = 35 * time.Second
+
+type pollTransactionResult struct {
+	response                 protocol.GetTransactionResponse
+	lastObservedLatestLedger uint32
+}
 
 func startPollWorkersWithTrace(ctx context.Context, logger *log.Entry, cfg config.Config, rpc *rpcclient.Client, state *attackState, accounts accountLeaseManager, workload string, recorder *benchmarkTraceRecorder) (int, *sync.WaitGroup) {
 	numPollWorkers := pollWorkerCount(cfg.TargetRPS)
@@ -43,16 +48,17 @@ func startPollWorkersWithTrace(ctx context.Context, logger *log.Entry, cfg confi
 func pollTransactions(ctx context.Context, logger *log.Entry, rpc *rpcclient.Client, state *attackState, accounts accountLeaseManager, workload string, recorder *benchmarkTraceRecorder) {
 	for item := range state.hashes {
 		pollCtx, pollCancel := context.WithTimeout(ctx, pollTimeout)
-		resp, err := pollTransactionWithTrace(pollCtx, rpc, item.hash, workload, recorder)
+		result, err := pollTransactionWithTrace(pollCtx, rpc, item.hash, workload, recorder)
 		pollCancel()
 		if err != nil {
+			state.ledgerStats.observeTimeout(item.submitLatestLedger, result.lastObservedLatestLedger)
 			atomic.AddUint64(&state.pollErr, 1)
 			logger.WithError(err).Debugf("poll failed: hash=%s", item.hash)
 			atomic.AddUint64(&state.ambiguous, 1)
 			releaseAmbiguous(accounts, item.rpcID)
 			continue
 		}
-		handlePollResponse(logger, state, item, &resp, accounts)
+		handlePollResponse(logger, state, item, &result.response, accounts)
 	}
 }
 
@@ -61,10 +67,12 @@ func handlePollResponse(logger *log.Entry, state *attackState, item pollItem, re
 	case protocol.TransactionStatusSuccess:
 		atomic.AddUint64(&state.included, 1)
 		state.e2eStats.observe(time.Since(item.submittedAt))
+		state.ledgerStats.observeFinality(item.submitLatestLedger, resp.Ledger)
 		releaseConsumed(accounts, item.rpcID)
 	case protocol.TransactionStatusFailed:
 		atomic.AddUint64(&state.onChainFail, 1)
 		state.e2eStats.observe(time.Since(item.submittedAt))
+		state.ledgerStats.observeFinality(item.submitLatestLedger, resp.Ledger)
 		releaseConsumed(accounts, item.rpcID)
 		code := ledger.DecodeTransactionResultCode(resp.ResultXDR)
 		state.onChainErrorCodes.inc(code)
@@ -82,7 +90,7 @@ func handlePollResponse(logger *log.Entry, state *attackState, item pollItem, re
 	}
 }
 
-func waitForPollWorkers(logger *log.Entry, queued uint64, numPollWorkers int, pollWg *sync.WaitGroup, state *attackState) {
+func waitForPollWorkers(logger *log.Entry, queued uint64, numPollWorkers int, pollWg *sync.WaitGroup, state *attackState) time.Duration {
 	drainTimeout := estimatePollDrainTimeout(queued, numPollWorkers)
 	logger.Infof("waiting up to %s for %d poll workers to drain %d queued txs", drainTimeout, numPollWorkers, queued)
 
@@ -99,10 +107,10 @@ func waitForPollWorkers(logger *log.Entry, queued uint64, numPollWorkers int, po
 	for {
 		select {
 		case <-pollDone:
-			return
+			return drainTimeout
 		case <-drainDeadline:
 			logger.Warnf("poll workers still running after %s -- abandoning", drainTimeout)
-			return
+			return drainTimeout
 		case <-progressTicker.C:
 			included, onChainFail, pollErr := state.pollSnapshot()
 			settled := included + onChainFail + pollErr
