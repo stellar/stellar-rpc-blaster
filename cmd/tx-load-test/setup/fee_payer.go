@@ -65,7 +65,7 @@ func (feePayerStep) Run(ctx context.Context, logger *log.Entry, cfg config.Confi
 		if netInfo.FriendbotURL == "" {
 			return fmt.Errorf(
 				"fee payer: no seed provided and this network has no friendbot -- " +
-					"set --fee-payer-seed or the TX_LOAD_TEST_FEE_PAYER_SEED environment variable",
+					"set --fee-payer-seed or the FEE_PAYER environment variable",
 			)
 		}
 		kp, err = keypair.Random()
@@ -74,7 +74,7 @@ func (feePayerStep) Run(ctx context.Context, logger *log.Entry, cfg config.Confi
 		}
 		logger.Warnf("no seed provided  -- generating a temporary keypair (only suitable for development)")
 		logger.Warnf("address: %s", kp.Address())
-		logger.Warnf("seed (set TX_LOAD_TEST_FEE_PAYER_SEED to reuse across runs): %s", kp.Seed())
+		logger.Warnf("seed (set FEE_PAYER to reuse across runs): %s", kp.Seed())
 		logger.Infof("funding via friendbot at %s", netInfo.FriendbotURL)
 		if err = fundViaFriendbot(ctx, netInfo.FriendbotURL, kp.Address()); err != nil {
 			return fmt.Errorf("fee payer: friendbot: %w", err)

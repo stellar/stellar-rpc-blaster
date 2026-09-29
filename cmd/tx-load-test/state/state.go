@@ -35,7 +35,7 @@ const MaxSACHolderAccounts = 1000
 //
 // No secrets are stored on disk. The fee-payer seed is represented by its
 // SHA-256 hash so the state file can verify the correct seed is supplied at
-// runtime (via TX_LOAD_TEST_FEE_PAYER_SEED). Participant account keypairs
+// runtime (via FEE_PAYER). Participant account keypairs
 // are derived deterministically from the fee-payer seed + an integer index,
 // so only the indices are persisted.
 type PersistedState struct {
@@ -324,7 +324,7 @@ func FromPersistedState(ps *PersistedState, feePayerSeed, rpcURL string) (*State
 	if HashSeed(feePayerSeed) != ps.FeePayerHash {
 		return nil, fmt.Errorf(
 			"fee-payer seed does not match the hash stored in the state file " +
-				"(check TX_LOAD_TEST_FEE_PAYER_SEED)")
+				"(check FEE_PAYER)")
 	}
 
 	feePayerKP, err := keypair.ParseFull(feePayerSeed)

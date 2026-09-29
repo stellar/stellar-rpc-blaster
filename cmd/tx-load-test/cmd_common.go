@@ -92,7 +92,7 @@ func loadRuntimeStateFromCommand(cmd *cobra.Command, phase state.RuntimePhase) (
 	if err != nil {
 		return "", nil, err
 	}
-	loaded, err := state.LoadRuntimeStateWithOptions(cmd.Context(), phase, stateFile, os.Getenv("TX_LOAD_TEST_FEE_PAYER_SEED"), rpcURL, options)
+	loaded, err := state.LoadRuntimeStateWithOptions(cmd.Context(), phase, stateFile, os.Getenv("FEE_PAYER"), rpcURL, options)
 	if err != nil {
 		return "", nil, err
 	}
@@ -112,7 +112,7 @@ func commonConfig(cmd *cobra.Command, cfg *config.Config) error {
 	if cfg.RPCURL, err = cmd.Flags().GetString("rpc-url"); err != nil {
 		return err
 	}
-	cfg.FeePayerSeed = os.Getenv("TX_LOAD_TEST_FEE_PAYER_SEED")
+	cfg.FeePayerSeed = os.Getenv("FEE_PAYER")
 
 	networkName, err := cmd.Flags().GetString("network")
 	if err != nil {

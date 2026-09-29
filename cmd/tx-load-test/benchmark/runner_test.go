@@ -1,21 +1,74 @@
 package benchmark
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/keypair"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/xdr"
+	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
 	"github.com/stretchr/testify/require"
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 )
 
+func TestRunVegetaAttackBuildsTargeterWithAttackContext(t *testing.T) {
+	t.Parallel()
+
+	var targeterCtx context.Context
+	targeterCtxCanceled := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1,"result":{"status":"TRY_AGAIN_LATER"}}`))
+	}))
+	defer server.Close()
+
+	err := runVegetaAttack(
+		context.Background(),
+		nilLogger(),
+		config.Config{TargetRPS: 1, Duration: 20 * time.Millisecond},
+		server.Client(),
+		nil,
+		"test",
+		func(ctx context.Context) (vegeta.Targeter, error) {
+			targeterCtx = ctx
+			go func() {
+				<-ctx.Done()
+				select {
+				case targeterCtxCanceled <- struct{}{}:
+				default:
+				}
+			}()
+			return func(target *vegeta.Target) error {
+				target.Method = http.MethodPost
+				target.URL = server.URL
+				target.Body = []byte(`{"jsonrpc":"2.0","id":1,"method":"sendTransaction"}`)
+				target.Header = http.Header{"Content-Type": []string{"application/json"}}
+				return nil
+			}, nil
+		},
+		&fakeLeaseManager{},
+		nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, targeterCtx)
+	require.ErrorIs(t, targeterCtx.Err(), context.DeadlineExceeded)
+
+	select {
+	case <-targeterCtxCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("targeter builder did not observe attack context cancellation")
+	}
+}
+
 func TestPollWorkerCountBounds(t *testing.T) {
-	require.Equal(t, 20, pollWorkerCount(1))
-	require.Equal(t, 20, pollWorkerCount(100))
-	require.Equal(t, 40, pollWorkerCount(200))
-	require.Equal(t, 200, pollWorkerCount(2_000))
+	require.Equal(t, 40, pollWorkerCount(1))
+	require.Equal(t, 80, pollWorkerCount(100))
+	require.Equal(t, 160, pollWorkerCount(200))
+	require.Equal(t, 800, pollWorkerCount(2_000))
 }
 
 func TestPercentileDurationEdges(t *testing.T) {

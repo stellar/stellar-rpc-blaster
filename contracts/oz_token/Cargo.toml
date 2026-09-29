@@ -11,17 +11,14 @@ crate-type = ["cdylib"]
 doctest = false
 
 [dependencies]
-# OpenZeppelin Stellar crates 0.6.0 currently resolve against soroban-sdk 23.x.
-# Bumping this directly to the latest crates.io soroban-sdk (currently 25.3.0)
-# causes macro/API incompatibilities until the OZ crates are upgraded too.
-soroban-sdk = "23.5.3"
-stellar-access = "=0.6.0"
-stellar-contract-utils = "=0.6.0"
-stellar-macros = "=0.6.0"
-stellar-tokens = "=0.6.0"
+soroban-sdk = "25.3.1"
+stellar-access = "=0.7.1"
+stellar-contract-utils = "=0.7.1"
+stellar-macros = "=0.7.1"
+stellar-tokens = "=0.7.1"
 
 [dev-dependencies]
-soroban-sdk = { version = "23.5.3", features = ["testutils"] }
+soroban-sdk = { version = "25.3.1", features = ["testutils"] }
 
 [profile.release]
 opt-level = "z"
