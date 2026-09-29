@@ -59,10 +59,26 @@ func SimplePaymentSourceAccountCount(cfg config.Config) int {
 // HolderAccountCount returns the number of trustlined / asset-funded accounts
 // required by the configured benchmark shape.
 func HolderAccountCount(cfg config.Config) int {
-	if cfg.Mode == config.ModeSACTransfer {
+	switch cfg.Mode {
+	case config.ModeSACTransfer:
 		return 2
+	case config.ModeSoroswap:
+		return SorobanSourceAccountCount(cfg)
 	}
 	return 0
+}
+
+// BenchmarkSupersetHolderAccountCount returns the number of trustlined /
+// asset-funded accounts setup must provision so the same state can support
+// every benchmark mode for the requested benchmark shape.
+func BenchmarkSupersetHolderAccountCount(cfg config.Config) int {
+	maxHolders := 0
+	for _, mode := range []config.BenchmarkMode{config.ModeSACTransfer, config.ModeOZTransfer, config.ModeSoroswap} {
+		modeCfg := cfg
+		modeCfg.Mode = mode
+		maxHolders = max(maxHolders, HolderAccountCount(modeCfg))
+	}
+	return maxHolders
 }
 
 // RecommendedHolderAccountCount returns the formula-derived target holder count
@@ -72,4 +88,14 @@ func RecommendedHolderAccountCount(cfg config.Config, totalAccounts int) int {
 		return 0
 	}
 	return min(totalAccounts, HolderAccountCount(cfg))
+}
+
+// RecommendedBenchmarkSupersetHolderAccountCount returns the holder-account
+// target setup should provision so the resulting ledger state can run any
+// supported benchmark mode without re-running setup.
+func RecommendedBenchmarkSupersetHolderAccountCount(cfg config.Config, totalAccounts int) int {
+	if totalAccounts <= 0 {
+		return 0
+	}
+	return min(totalAccounts, BenchmarkSupersetHolderAccountCount(cfg))
 }

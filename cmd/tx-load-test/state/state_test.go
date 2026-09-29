@@ -135,10 +135,13 @@ func TestToPersistedStatePreservesSparseIndicesAndMetadata(t *testing.T) {
 			{Code: "BLTB", Issuer: base.Address()},
 			{Code: "BLTC", Issuer: base.Address()},
 		},
-		AccountKPs:      accountKPs,
-		SACHolderKPs:    accountKPs[:3],
-		SACs:            [3]string{"C1", "C2", "C3"},
-		OZTokenContract: "COZTOKEN",
+		AccountKPs:              accountKPs,
+		SACHolderKPs:            accountKPs[:3],
+		SACs:                    [3]string{"C1", "C2", "C3"},
+		OZTokenContract:         "COZTOKEN",
+		SoroswapFactoryContract: "CFACTORY",
+		SoroswapRouterContract:  "CROUTER",
+		SoroswapPairContracts:   []string{"CPAIR1", "CPAIR2"},
 	}
 
 	ps, err := st.ToPersistedState("https://rpc.example")
@@ -151,6 +154,9 @@ func TestToPersistedStatePreservesSparseIndicesAndMetadata(t *testing.T) {
 	require.Equal(t, [3]string{"BLTA", "BLTB", "BLTC"}, ps.Assets)
 	require.Equal(t, st.SACs, ps.SACs)
 	require.Equal(t, st.OZTokenContract, ps.OZTokenContract)
+	require.Equal(t, st.SoroswapFactoryContract, ps.SoroswapFactoryContract)
+	require.Equal(t, st.SoroswapRouterContract, ps.SoroswapRouterContract)
+	require.Equal(t, st.SoroswapPairContracts, ps.SoroswapPairContracts)
 }
 
 func TestFromPersistedStateRejectsWrongSeed(t *testing.T) {
@@ -174,18 +180,24 @@ func TestFromPersistedStateUsesOverrideRPCURL(t *testing.T) {
 	defer srv.Close()
 
 	ps := &PersistedState{
-		RPCURL:            "https://stored.example",
-		NetworkPassphrase: network.TestNetworkPassphrase,
-		FeePayerHash:      HashSeed(base.Seed()),
-		AccountIndices:    []int{1, 2},
-		SACHolderIndices:  []int{1, 2},
-		Assets:            [3]string{"BLTA", "BLTB", "BLTC"},
-		OZTokenContract:   "COZTOKEN",
+		RPCURL:                  "https://stored.example",
+		NetworkPassphrase:       network.TestNetworkPassphrase,
+		FeePayerHash:            HashSeed(base.Seed()),
+		AccountIndices:          []int{1, 2},
+		SACHolderIndices:        []int{1, 2},
+		Assets:                  [3]string{"BLTA", "BLTB", "BLTC"},
+		OZTokenContract:         "COZTOKEN",
+		SoroswapFactoryContract: "CFACTORY",
+		SoroswapRouterContract:  "CROUTER",
+		SoroswapPairContracts:   []string{"CPAIR1", "CPAIR2"},
 	}
 
 	st, err := FromPersistedState(ps, base.Seed(), srv.URL)
 	require.NoError(t, err)
 	require.Equal(t, ps.OZTokenContract, st.OZTokenContract)
+	require.Equal(t, ps.SoroswapFactoryContract, st.SoroswapFactoryContract)
+	require.Equal(t, ps.SoroswapRouterContract, st.SoroswapRouterContract)
+	require.Equal(t, ps.SoroswapPairContracts, st.SoroswapPairContracts)
 	require.Len(t, st.SACHolderKPs, 2)
 	netInfo, err := st.RPCClient.GetNetwork(context.Background())
 	require.NoError(t, err)
