@@ -40,8 +40,9 @@ type accountsStep struct{}
 
 func (accountsStep) Name() string { return "create participant accounts" }
 
-// Run creates cfg.NumberOfAccounts participant accounts. The first
-// min(accounts, 1000) accounts form the SAC-active subset and are:
+// Run creates cfg.NumberOfAccounts participant accounts. A formula-derived
+// prefix of the participant set forms the trustlined / asset-funded holder
+// subset and is:
 //   - Funded with cfg.BaseReserveXLM (covers 2 base reserves + 3 trustlines).
 //   - Given a trustline for each of the 3 benchmark assets.
 //   - Minted an initial balance of each asset from the fee-payer/issuer.
@@ -55,10 +56,16 @@ func (accountsStep) Name() string { return "create participant accounts" }
 func (accountsStep) Run(ctx context.Context, logger *log.Entry, cfg config.Config, st *state.State) error {
 	existingCount := len(st.AccountKPs)
 	targetCount := cfg.NumberOfAccounts
-
-	if existingCount >= targetCount {
-		logger.Infof("already have %d accounts (target %d)  -- nothing to do", existingCount, targetCount)
+	existingHolders := len(st.SACHolderKPs)
+	if existingHolders == 0 && existingCount > 0 {
 		st.SACHolderKPs = state.DefaultSACHolderKPs(st.AccountKPs)
+		existingHolders = len(st.SACHolderKPs)
+	}
+	computedTargetHolders := state.RecommendedHolderAccountCount(cfg, targetCount)
+	targetHolders := max(existingHolders, computedTargetHolders)
+
+	if existingCount >= targetCount && existingHolders >= targetHolders {
+		logger.Infof("already have %d accounts (target %d) and %d holder accounts (target %d)  -- nothing to do", existingCount, targetCount, existingHolders, targetHolders)
 		st.PendingOZMintKPs = nil
 		return nil
 	}
@@ -90,19 +97,32 @@ func (accountsStep) Run(ctx context.Context, logger *log.Entry, cfg config.Confi
 		logger.Infof("derived %d keypairs", targetCount)
 	}
 
-	existingSACHolders := state.SACHolderCount(existingCount)
-	targetSACHolders := state.SACHolderCount(targetCount)
-	newSACHolders := max(0, targetSACHolders-existingSACHolders)
-	newSACHolders = min(newSACHolders, len(newKPs))
-	holderNewKPs := newKPs[:newSACHolders]
-	passiveNewKPs := newKPs[newSACHolders:]
+	promoteExisting := max(0, min(existingCount, targetHolders)-existingHolders)
+	var promotedExistingKPs []*keypair.Full
+	if promoteExisting > 0 {
+		promotedExistingKPs = st.AccountKPs[existingHolders : existingHolders+promoteExisting]
+	}
+	remainingHolderSlots := max(0, targetHolders-existingHolders-promoteExisting)
+	remainingHolderSlots = min(remainingHolderSlots, len(newKPs))
+	holderNewKPs := newKPs[:remainingHolderSlots]
+	passiveNewKPs := newKPs[remainingHolderSlots:]
 
 	logger.Infof(
-		"SAC-active subset: %d existing -> %d target; new holders=%d passive=%d",
-		existingSACHolders, targetSACHolders, len(holderNewKPs), len(passiveNewKPs),
+		"holder subset: %d existing -> %d target; promote=%d new holders=%d passive=%d",
+		existingHolders, targetHolders, len(promotedExistingKPs), len(holderNewKPs), len(passiveNewKPs),
 	)
 
 	fundingAmount := fmt.Sprintf("%.7f", cfg.BaseReserveXLM)
+
+	// --- Promote existing passive accounts into holder accounts ---------
+	if len(promotedExistingKPs) > 0 {
+		if err := createSACHolderAccounts(ctx, logger, cfg, st, promotedExistingKPs, fundingAmount); err != nil {
+			return err
+		}
+		if err := mintSACBalances(ctx, logger, cfg, st, promotedExistingKPs); err != nil {
+			return err
+		}
+	}
 
 	// --- CreateAccount + ChangeTrust for new SAC-active accounts ---------
 	if len(holderNewKPs) > 0 {
@@ -126,7 +146,12 @@ func (accountsStep) Run(ctx context.Context, logger *log.Entry, cfg config.Confi
 	}
 
 	st.AccountKPs = append(st.AccountKPs, newKPs...)
-	st.SACHolderKPs = state.DefaultSACHolderKPs(st.AccountKPs)
+	if targetHolders > 0 {
+		st.SACHolderKPs = make([]*keypair.Full, targetHolders)
+		copy(st.SACHolderKPs, st.AccountKPs[:targetHolders])
+	} else {
+		st.SACHolderKPs = nil
+	}
 	st.PendingOZMintKPs = newKPs
 	return nil
 }

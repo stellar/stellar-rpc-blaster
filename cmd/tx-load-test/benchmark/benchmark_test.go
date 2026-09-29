@@ -2,6 +2,7 @@ package benchmark
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
 	"github.com/stretchr/testify/require"
@@ -18,6 +19,7 @@ func TestValidateConfig(t *testing.T) {
 			cfg: config.Config{
 				Mode:             config.ModeSACTransfer,
 				TargetRPS:        50,
+				ClassicRPS:       0,
 				NumberOfAccounts: 500,
 			},
 			wantErr: false,
@@ -27,6 +29,7 @@ func TestValidateConfig(t *testing.T) {
 			cfg: config.Config{
 				Mode:             config.ModeOZTransfer,
 				TargetRPS:        50,
+				ClassicRPS:       0,
 				NumberOfAccounts: 500,
 			},
 			wantErr: false,
@@ -36,6 +39,7 @@ func TestValidateConfig(t *testing.T) {
 			cfg: config.Config{
 				Mode:             config.BenchmarkMode("unknown-mode"),
 				TargetRPS:        50,
+				ClassicRPS:       0,
 				NumberOfAccounts: 500,
 			},
 			wantErr: true,
@@ -45,25 +49,28 @@ func TestValidateConfig(t *testing.T) {
 			cfg: config.Config{
 				Mode:             config.ModeSACTransfer,
 				TargetRPS:        50,
-				NumberOfAccounts: 249,
+				ClassicRPS:       0,
+				NumberOfAccounts: 499,
 			},
 			wantErr: true,
 		},
 		{
-			name: "accepts exactly hard minimum",
+			name: "rejects below recommended size",
 			cfg: config.Config{
 				Mode:             config.ModeSACTransfer,
 				TargetRPS:        50,
-				NumberOfAccounts: 250,
+				ClassicRPS:       0,
+				NumberOfAccounts: 499,
 			},
-			wantErr: false,
+			wantErr: true,
 		},
 		{
-			name: "accepts below recommended but above hard minimum",
+			name: "accepts exactly recommended minimum",
 			cfg: config.Config{
 				Mode:             config.ModeSACTransfer,
 				TargetRPS:        50,
-				NumberOfAccounts: 300,
+				ClassicRPS:       0,
+				NumberOfAccounts: 500,
 			},
 			wantErr: false,
 		},
@@ -72,6 +79,7 @@ func TestValidateConfig(t *testing.T) {
 			cfg: config.Config{
 				Mode:             config.ModeSACTransfer,
 				TargetRPS:        250,
+				ClassicRPS:       0,
 				NumberOfAccounts: 5_000,
 			},
 			wantErr: false,
@@ -81,9 +89,43 @@ func TestValidateConfig(t *testing.T) {
 			cfg: config.Config{
 				Mode:             config.ModeOZTransfer,
 				TargetRPS:        250,
+				ClassicRPS:       0,
 				NumberOfAccounts: 5_000,
 			},
 			wantErr: false,
+		},
+		{
+			name: "rejects dual stream when total account pool too small",
+			cfg: config.Config{
+				Mode:             config.ModeSACTransfer,
+				TargetRPS:        200,
+				ClassicRPS:       200,
+				Duration:         2 * time.Minute,
+				NumberOfAccounts: 2_019,
+			},
+			wantErr: true,
+		},
+		{
+			name: "accepts dual stream at derived minimum",
+			cfg: config.Config{
+				Mode:             config.ModeSACTransfer,
+				TargetRPS:        200,
+				ClassicRPS:       200,
+				Duration:         2 * time.Minute,
+				NumberOfAccounts: 2_020,
+			},
+			wantErr: false,
+		},
+		{
+			name: "rejects classic rate that cannot map to fixed-size batches",
+			cfg: config.Config{
+				Mode:             config.ModeSACTransfer,
+				TargetRPS:        50,
+				ClassicRPS:       150,
+				Duration:         2 * time.Minute,
+				NumberOfAccounts: 600,
+			},
+			wantErr: true,
 		},
 	}
 

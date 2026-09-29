@@ -75,41 +75,10 @@ func (sacTransferMode) VerifyReady(ctx context.Context, st *state.State) error {
 		}
 	}
 
-	balances, err := fetchTrustlineBalances(ctx, st, holderAccounts)
-	if err != nil {
-		return fmt.Errorf("fetch SAC holder trustlines: %w", err)
-	}
-
-	missingCount := 0
-	examples := make([]string, 0, 5)
-	for _, kp := range holderAccounts {
-		accountBalances := balances[kp.Address()]
-		for _, asset := range st.Assets {
-			balance, ok := accountBalances[asset.GetCode()]
-			if ok && balance > 0 {
-				continue
-			}
-			missingCount++
-			if len(examples) < cap(examples) {
-				reason := "missing trustline"
-				if ok && balance == 0 {
-					reason = "zero balance"
-				}
-				examples = append(examples, fmt.Sprintf("%s %s (%s)", kp.Address(), asset.GetCode(), reason))
-			}
-		}
-	}
-	if missingCount > 0 {
-		return fmt.Errorf(
-			"SAC benchmark state incomplete: %d holder trustlines/balances missing or zero; examples: %s -- rerun setup",
-			missingCount, formatExamples(examples),
-		)
-	}
-
-	return nil
+	return verifyHolderTrustlinesReady(ctx, st, holderAccounts, "SAC")
 }
 
-func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state.State) (vegeta.Targeter, SequenceResetFunc, error) {
+func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state.State, txSourceAccounts []*keypair.Full) (vegeta.Targeter, SequenceResetFunc, error) {
 	holderAccounts := st.SACHolderKPs
 	if len(holderAccounts) == 0 {
 		holderAccounts = state.DefaultSACHolderKPs(st.AccountKPs)
@@ -117,7 +86,7 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 	if len(holderAccounts) < 2 {
 		return nil, nil, fmt.Errorf("need at least 2 SAC holder accounts for benchmark, got %d", len(holderAccounts))
 	}
-	if len(st.AccountKPs) == 0 {
+	if len(txSourceAccounts) == 0 {
 		return nil, nil, fmt.Errorf("need at least 1 participant account for SAC tx sources")
 	}
 	for i, sac := range st.SACs {
@@ -126,7 +95,7 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 		}
 	}
 
-	txSourceCount := len(st.AccountKPs)
+	txSourceCount := len(txSourceAccounts)
 	holderCount := len(holderAccounts)
 
 	// Decode SAC contract IDs from strkey C... to raw 32-byte arrays.
@@ -163,9 +132,9 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 		simFootprintTemplates [3]xdr.LedgerFootprint
 	)
 	for i := range sacIDs {
-		simTxSource := st.AccountKPs[0]
-		if simTxSource.Address() == holderAccounts[0].Address() && len(st.AccountKPs) > 2 {
-			for _, candidate := range st.AccountKPs[1:] {
+		simTxSource := txSourceAccounts[0]
+		if simTxSource.Address() == holderAccounts[0].Address() && len(txSourceAccounts) > 2 {
+			for _, candidate := range txSourceAccounts[1:] {
 				if candidate.Address() != holderAccounts[0].Address() && candidate.Address() != holderAccounts[1].Address() {
 					simTxSource = candidate
 					break
@@ -194,7 +163,7 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 	// Pre-load the on-ledger sequence numbers for every participant account.
 	// These serve as the base for per-account atomic counters that track
 	// sequence progress independently.
-	seqBase, err := loadSeqNums(ctx, st, st.AccountKPs)
+	seqBase, err := loadSeqNums(ctx, st, txSourceAccounts)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load SAC tx-source sequence numbers: %w", err)
 	}
@@ -241,7 +210,7 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 		if dstIdx >= holderSrcIdx {
 			dstIdx++
 		}
-		txSourceKP := st.AccountKPs[txSrcIdx]
+		txSourceKP := txSourceAccounts[txSrcIdx]
 		holderSrcKP := holderAccounts[holderSrcIdx]
 		dstKP := holderAccounts[dstIdx]
 
@@ -312,8 +281,6 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 			},
 		}
 
-		// The tx Fee field must cover inclusion fee + Soroban resource fee.
-		totalFee := benchmarkBaseFee + int64(simResourceFee)
 		tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
 			SourceAccount: &txnbuild.SimpleAccount{
 				AccountID: txSourceKP.Address(),
@@ -321,7 +288,7 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 			},
 			IncrementSequenceNum: false,
 			Operations:           []txnbuild.Operation{&op},
-			BaseFee:              totalFee,
+			BaseFee:              benchmarkBaseFee,
 			Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(60)},
 		})
 		if err != nil {
@@ -361,19 +328,14 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 	}, resetSeq, nil
 }
 
-// presimulate calls SimulateTransaction with the given src/dst keypair
-// and returns the resource budget plus the complete footprint as computed by
-// the simulator.  The footprint is the authoritative set of ledger entries the
-// host reads and writes, including any additional entries the simulator deems
-// necessary beyond the trustlines explicitly substituted later.
+// presimulate calls SimulateTransaction with the given src/dst keypair and
+// returns the resource budget plus the complete footprint as computed by the
+// simulator.
 func presimulate(
 	state *state.State,
 	sacID xdr.ContractId,
 	txSourceKP, srcKP, dstKP *keypair.Full,
 ) (xdr.SorobanResources, xdr.Int64, xdr.LedgerFootprint, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
 	srcAccID, err := xdr.AddressToAccountId(srcKP.Address())
 	if err != nil {
 		return xdr.SorobanResources{}, 0, xdr.LedgerFootprint{}, err
@@ -403,61 +365,7 @@ func presimulate(
 		Args:         args,
 	}
 
-	op := txnbuild.InvokeHostFunction{
-		HostFunction: xdr.HostFunction{
-			Type:           xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
-			InvokeContract: &invokeArgs,
-		},
-		Auth: []xdr.SorobanAuthorizationEntry{{
-			Credentials: xdr.SorobanCredentials{
-				Type: xdr.SorobanCredentialsTypeSorobanCredentialsSourceAccount,
-			},
-			RootInvocation: xdr.SorobanAuthorizedInvocation{
-				Function: xdr.SorobanAuthorizedFunction{
-					Type:       xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn,
-					ContractFn: &invokeArgs,
-				},
-			},
-		}},
-		SourceAccount: srcKP.Address(),
-		// Empty SorobanTransactionData lets the simulator compute the footprint.
-		Ext: xdr.TransactionExt{V: 1, SorobanData: &xdr.SorobanTransactionData{}},
-	}
-
-	tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
-		SourceAccount:        &txnbuild.SimpleAccount{AccountID: txSourceKP.Address(), Sequence: 1},
-		IncrementSequenceNum: false,
-		Operations:           []txnbuild.Operation{&op},
-		BaseFee:              benchmarkBaseFee,
-		// This tx is only used for simulateTransaction, never submitted; a
-		// short window is fine and avoids leaving infinite-ttl envelopes around.
-		Preconditions: txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(60)},
-	})
-	if err != nil {
-		return xdr.SorobanResources{}, 0, xdr.LedgerFootprint{}, fmt.Errorf("build simulation transaction: %w", err)
-	}
-
-	b64, err := tx.Base64()
-	if err != nil {
-		return xdr.SorobanResources{}, 0, xdr.LedgerFootprint{}, fmt.Errorf("marshal simulation transaction: %w", err)
-	}
-
-	simResp, err := state.RPCClient.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{
-		Transaction: b64,
-	})
-	if err != nil {
-		return xdr.SorobanResources{}, 0, xdr.LedgerFootprint{}, fmt.Errorf("simulate: %w", err)
-	}
-	if simResp.Error != "" {
-		return xdr.SorobanResources{}, 0, xdr.LedgerFootprint{}, fmt.Errorf("simulate: %s", simResp.Error)
-	}
-
-	var sorobanData xdr.SorobanTransactionData
-	if err = xdr.SafeUnmarshalBase64(simResp.TransactionDataXDR, &sorobanData); err != nil {
-		return xdr.SorobanResources{}, 0, xdr.LedgerFootprint{}, fmt.Errorf("parse simulation result: %w", err)
-	}
-
-	return sorobanData.Resources, sorobanData.ResourceFee, sorobanData.Resources.Footprint, nil
+	return simulateInvokeContract(state, txSourceKP, srcKP.Address(), invokeArgs)
 }
 
 // loadSeqNums fetches the current on-ledger sequence number for every account
@@ -477,9 +385,8 @@ func loadSeqNums(ctx context.Context, state *state.State, accountKPs []*keypair.
 	var wg sync.WaitGroup
 
 	for i := range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		i := i
+		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
@@ -494,7 +401,7 @@ func loadSeqNums(ctx context.Context, state *state.State, accountKPs []*keypair.
 				return
 			}
 			seqNums[i] = seq
-		}()
+		})
 	}
 	wg.Wait()
 

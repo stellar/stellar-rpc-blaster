@@ -7,7 +7,6 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"sync/atomic"
-	"time"
 
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 
@@ -75,9 +74,9 @@ func (ozTransferMode) VerifyReady(ctx context.Context, st *state.State) error {
 	return nil
 }
 
-func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *state.State) (vegeta.Targeter, SequenceResetFunc, error) {
-	if len(state.AccountKPs) < 2 {
-		return nil, nil, fmt.Errorf("need at least 2 accounts for OZ transfer benchmark, got %d", len(state.AccountKPs))
+func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *state.State, txSourceAccounts []*keypair.Full) (vegeta.Targeter, SequenceResetFunc, error) {
+	if len(txSourceAccounts) < 2 {
+		return nil, nil, fmt.Errorf("need at least 2 accounts for OZ transfer benchmark, got %d", len(txSourceAccounts))
 	}
 	if state.OZTokenContract == "" {
 		return nil, nil, fmt.Errorf("OZ token contract ID is empty -- run setup first")
@@ -90,7 +89,7 @@ func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *sta
 	var contractID xdr.ContractId
 	copy(contractID[:], raw)
 
-	simResources, simResourceFee, simFootprintTemplate, err := presimulateOZTransfer(state, contractID, state.AccountKPs[0], state.AccountKPs[1])
+	simResources, simResourceFee, simFootprintTemplate, err := presimulateOZTransfer(state, contractID, txSourceAccounts[0], txSourceAccounts[1])
 	if err != nil {
 		return nil, nil, fmt.Errorf("pre-simulate OZ transfer: %w", err)
 	}
@@ -99,8 +98,8 @@ func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *sta
 	simResources.WriteBytes = xdr.Uint32(float64(simResources.WriteBytes) * resourcePadFactor)
 	simResourceFee = xdr.Int64(float64(simResourceFee) * resourcePadFactor)
 
-	n := len(state.AccountKPs)
-	seqBase, err := loadSeqNums(ctx, state, state.AccountKPs)
+	n := len(txSourceAccounts)
+	seqBase, err := loadSeqNums(ctx, state, txSourceAccounts)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load participant sequence numbers: %w", err)
 	}
@@ -128,8 +127,8 @@ func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *sta
 			dstIdx++
 		}
 
-		srcKP := state.AccountKPs[srcIdx]
-		dstKP := state.AccountKPs[dstIdx]
+		srcKP := txSourceAccounts[srcIdx]
+		dstKP := txSourceAccounts[dstIdx]
 
 		srcAccID, err := xdr.AddressToAccountId(srcKP.Address())
 		if err != nil {
@@ -204,7 +203,6 @@ func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *sta
 			},
 		}
 
-		totalFee := benchmarkBaseFee + int64(simResourceFee)
 		tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
 			SourceAccount: &txnbuild.SimpleAccount{
 				AccountID: srcKP.Address(),
@@ -212,7 +210,7 @@ func (ozTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *sta
 			},
 			IncrementSequenceNum: false,
 			Operations:           []txnbuild.Operation{&op},
-			BaseFee:              totalFee,
+			BaseFee:              benchmarkBaseFee,
 			Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(60)},
 		})
 		if err != nil {
@@ -253,9 +251,6 @@ func presimulateOZTransfer(
 	contractID xdr.ContractId,
 	srcKP, dstKP *keypair.Full,
 ) (xdr.SorobanResources, xdr.Int64, xdr.LedgerFootprint, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
 	srcAccID, err := xdr.AddressToAccountId(srcKP.Address())
 	if err != nil {
 		return xdr.SorobanResources{}, 0, xdr.LedgerFootprint{}, err
@@ -293,56 +288,7 @@ func presimulateOZTransfer(
 		},
 	}
 
-	op := txnbuild.InvokeHostFunction{
-		HostFunction: xdr.HostFunction{
-			Type:           xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
-			InvokeContract: &invokeArgs,
-		},
-		Auth: []xdr.SorobanAuthorizationEntry{{
-			Credentials: xdr.SorobanCredentials{
-				Type: xdr.SorobanCredentialsTypeSorobanCredentialsSourceAccount,
-			},
-			RootInvocation: xdr.SorobanAuthorizedInvocation{
-				Function: xdr.SorobanAuthorizedFunction{
-					Type:       xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn,
-					ContractFn: &invokeArgs,
-				},
-			},
-		}},
-		SourceAccount: srcKP.Address(),
-		Ext:           xdr.TransactionExt{V: 1, SorobanData: &xdr.SorobanTransactionData{}},
-	}
-
-	tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
-		SourceAccount:        &txnbuild.SimpleAccount{AccountID: srcKP.Address(), Sequence: 1},
-		IncrementSequenceNum: false,
-		Operations:           []txnbuild.Operation{&op},
-		BaseFee:              benchmarkBaseFee,
-		Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(60)},
-	})
-	if err != nil {
-		return xdr.SorobanResources{}, 0, xdr.LedgerFootprint{}, fmt.Errorf("build simulation transaction: %w", err)
-	}
-
-	b64, err := tx.Base64()
-	if err != nil {
-		return xdr.SorobanResources{}, 0, xdr.LedgerFootprint{}, fmt.Errorf("marshal simulation transaction: %w", err)
-	}
-
-	simResp, err := state.RPCClient.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: b64})
-	if err != nil {
-		return xdr.SorobanResources{}, 0, xdr.LedgerFootprint{}, fmt.Errorf("simulate: %w", err)
-	}
-	if simResp.Error != "" {
-		return xdr.SorobanResources{}, 0, xdr.LedgerFootprint{}, fmt.Errorf("simulate: %s", simResp.Error)
-	}
-
-	var sorobanData xdr.SorobanTransactionData
-	if err = xdr.SafeUnmarshalBase64(simResp.TransactionDataXDR, &sorobanData); err != nil {
-		return xdr.SorobanResources{}, 0, xdr.LedgerFootprint{}, fmt.Errorf("parse simulation result: %w", err)
-	}
-
-	return sorobanData.Resources, sorobanData.ResourceFee, sorobanData.Resources.Footprint, nil
+	return simulateInvokeContract(state, srcKP, srcKP.Address(), invokeArgs)
 }
 
 func buildOZFootprintFromTemplate(

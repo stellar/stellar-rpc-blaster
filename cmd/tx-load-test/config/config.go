@@ -11,6 +11,10 @@ const (
 	ModeSACTransfer BenchmarkMode = "sac-transfer"
 	// ModeOZTransfer runs random OpenZeppelin token transfers between accounts.
 	ModeOZTransfer BenchmarkMode = "oz-transfer"
+	// DefaultClassicRPS is the default steady-state operation rate for the
+	// parallel simple-payment stream that accompanies the selected Soroban
+	// benchmark mode.
+	DefaultClassicRPS = 200
 )
 
 // Config holds all parameters for setting up and running the tx-load-test.
@@ -50,6 +54,10 @@ type Config struct {
 
 	// TargetRPS is the steady-state requests per second once the ramp-up is complete.
 	TargetRPS int
+
+	// ClassicRPS is the steady-state operations per second for the parallel
+	// simple-payment stream. A value of 0 disables simple payments.
+	ClassicRPS int
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -61,5 +69,6 @@ func DefaultConfig() Config {
 		Duration:         100 * time.Second,
 		RampUp:           20 * time.Second,
 		TargetRPS:        50,
+		ClassicRPS:       DefaultClassicRPS,
 	}
 }
