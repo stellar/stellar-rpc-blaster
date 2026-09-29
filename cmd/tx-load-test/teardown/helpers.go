@@ -14,8 +14,15 @@ import (
 )
 
 func existingCleanupAccounts(ctx context.Context, logger *log.Entry, st *state.State, warnOnLookupError bool) []*keypair.Full {
+	return filterExistingAccounts(ctx, logger, st, st.AccountKPs, warnOnLookupError)
+}
+
+// filterExistingAccounts returns the subset of kps that currently exist
+// on-chain. It is used both for the full pool and for a tail slice in a
+// partial teardown.
+func filterExistingAccounts(ctx context.Context, logger *log.Entry, st *state.State, kps []*keypair.Full, warnOnLookupError bool) []*keypair.Full {
 	var toMerge []*keypair.Full
-	for _, kp := range st.AccountKPs {
+	for _, kp := range kps {
 		if kp == nil {
 			continue
 		}
@@ -31,6 +38,33 @@ func existingCleanupAccounts(ctx context.Context, logger *log.Entry, st *state.S
 		}
 	}
 	return toMerge
+}
+
+// minSafeKeep returns the smallest --keep value that does not merge any
+// benchmark holder account. Holders are the trustlined/token-funded subset
+// (in practice a prefix of the pool); a keep below this would shrink the
+// holder set and break benchmark modes. Membership-based so it is correct
+// regardless of ordering.
+func minSafeKeep(st *state.State) int {
+	if len(st.SACHolderKPs) == 0 {
+		return 0
+	}
+	holders := make(map[string]struct{}, len(st.SACHolderKPs))
+	for _, kp := range st.SACHolderKPs {
+		if kp != nil {
+			holders[kp.Address()] = struct{}{}
+		}
+	}
+	safe := 0
+	for i, kp := range st.AccountKPs {
+		if kp == nil {
+			continue
+		}
+		if _, ok := holders[kp.Address()]; ok {
+			safe = i + 1 // must retain through this holder's position
+		}
+	}
+	return safe
 }
 
 func cleanupBatches(accountKPs []*keypair.Full, batchSize int) [][]*keypair.Full {

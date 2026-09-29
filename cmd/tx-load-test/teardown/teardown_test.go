@@ -18,6 +18,42 @@ func TestCleanupBatchesSplitsInput(t *testing.T) {
 	require.Len(t, batches[2], 1)
 }
 
+func TestMinSafeKeepIsPositionPastLastHolder(t *testing.T) {
+	kps := make([]*keypair.Full, 6)
+	for i := range kps {
+		kp, err := keypair.Random()
+		require.NoError(t, err)
+		kps[i] = kp
+	}
+
+	// Holders are the first 3 (the usual prefix) -> safe keep is 3.
+	st := &state.State{AccountKPs: kps, SACHolderKPs: kps[:3]}
+	require.Equal(t, 3, minSafeKeep(st))
+
+	// No holders -> any keep is safe.
+	require.Equal(t, 0, minSafeKeep(&state.State{AccountKPs: kps}))
+
+	// A holder sitting at position 4 (non-prefix) forces safe keep to 5,
+	// proving the check is membership/position based, not a count.
+	st2 := &state.State{AccountKPs: kps, SACHolderKPs: []*keypair.Full{kps[0], kps[4]}}
+	require.Equal(t, 5, minSafeKeep(st2))
+}
+
+func TestAccountsNotInReturnsComplementByAddress(t *testing.T) {
+	kps := make([]*keypair.Full, 4)
+	for i := range kps {
+		kp, err := keypair.Random()
+		require.NoError(t, err)
+		kps[i] = kp
+	}
+	missing := accountsNotIn(kps, []*keypair.Full{kps[1], kps[3]})
+	require.Equal(t, []string{kps[0].Address(), kps[2].Address()},
+		[]string{missing[0].Address(), missing[1].Address()})
+
+	require.Empty(t, accountsNotIn(kps, kps))
+	require.Len(t, accountsNotIn(kps, nil), 4)
+}
+
 func TestRemoveMergedAccountsPrunesParticipantsAndHolders(t *testing.T) {
 	kp1, err := keypair.Random()
 	require.NoError(t, err)

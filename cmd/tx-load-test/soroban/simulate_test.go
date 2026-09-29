@@ -80,6 +80,58 @@ func TestPadSimulatedInvocation(t *testing.T) {
 	require.Equal(t, xdr.Uint32(110), sim.Resources.Instructions)
 }
 
+func TestParseSimulatedInvocationCarriesAutorestoreExt(t *testing.T) {
+	// Protocol-23+ autorestore: simulator returns SorobanTransactionData with
+	// ext.v1.archivedSorobanEntries listing read-write footprint indices
+	// that core must auto-restore inline at apply. The parser must capture
+	// the extension verbatim so the targeter can re-attach it to the
+	// submitted tx; dropping it forces apply to fail with
+	// invokeHostFunctionEntryArchived.
+	data := xdr.SorobanTransactionData{
+		Resources: xdr.SorobanResources{
+			Instructions:  10,
+			DiskReadBytes: 20,
+			WriteBytes:    30,
+		},
+		ResourceFee: 110_000_000, // realistic autorestore-inflated fee
+		Ext: xdr.SorobanTransactionDataExt{
+			V: 1,
+			ResourceExt: &xdr.SorobanResourcesExtV0{
+				ArchivedSorobanEntries: []xdr.Uint32{0, 2},
+			},
+		},
+	}
+	encoded, err := xdr.MarshalBase64(data)
+	require.NoError(t, err)
+
+	sim, err := parseSimulatedInvocation(protocol.SimulateTransactionResponse{
+		TransactionDataXDR: encoded,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int32(1), int32(sim.Ext.V))
+	require.NotNil(t, sim.Ext.ResourceExt)
+	require.Equal(t,
+		[]xdr.Uint32{0, 2},
+		sim.Ext.ResourceExt.ArchivedSorobanEntries,
+	)
+	require.Equal(t, []xdr.Uint32{0, 2}, sim.ArchivedSorobanEntries())
+}
+
+func TestParseSimulatedInvocationDefaultsToV0WhenNoAutorestore(t *testing.T) {
+	data := xdr.SorobanTransactionData{
+		Resources:   xdr.SorobanResources{Instructions: 1},
+		ResourceFee: 100,
+	}
+	encoded, err := xdr.MarshalBase64(data)
+	require.NoError(t, err)
+	sim, err := parseSimulatedInvocation(protocol.SimulateTransactionResponse{
+		TransactionDataXDR: encoded,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int32(0), int32(sim.Ext.V))
+	require.Nil(t, sim.ArchivedSorobanEntries())
+}
+
 func TestRestoreSorobanTransactionDataAppliesMinResourceFee(t *testing.T) {
 	data := xdr.SorobanTransactionData{
 		Resources:   xdr.SorobanResources{Instructions: 10},

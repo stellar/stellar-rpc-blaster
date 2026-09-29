@@ -1,7 +1,6 @@
 package benchmark
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,7 +10,6 @@ import (
 
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 
-	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
 )
@@ -105,89 +103,51 @@ func traceTargeter(workload string, base vegeta.Targeter, recorder *benchmarkTra
 	}
 }
 
-func pollTransactionWithTrace(
-	ctx context.Context,
-	rpc *rpcclient.Client,
-	hash string,
-	workload string,
-	recorder *benchmarkTraceRecorder,
-) (pollTransactionResult, error) {
-	interval := 500 * time.Millisecond
-	attempt := 0
-	var result pollTransactionResult
-	for {
-		attempt++
-		if recorder != nil {
-			recorder.record(benchmarkTraceRecord{
-				Timestamp: time.Now(),
-				Workload:  workload,
-				Event:     "poll_request",
-				Method:    protocol.GetTransactionMethodName,
-				Hash:      hash,
-				Attempt:   attempt,
-				RequestBody: fmt.Sprintf(`{"hash":%q}`,
-					hash),
-			})
-		}
-
-		resp, err := rpc.GetTransaction(ctx, protocol.GetTransactionRequest{Hash: hash})
-		if err != nil {
-			if recorder != nil {
-				recorder.record(benchmarkTraceRecord{
-					Timestamp: time.Now(),
-					Workload:  workload,
-					Event:     "poll_response",
-					Method:    protocol.GetTransactionMethodName,
-					Hash:      hash,
-					Attempt:   attempt,
-					Error:     err.Error(),
-				})
-			}
-			return result, err
-		}
-		result.response = resp
-		if resp.LatestLedger > 0 {
-			result.lastObservedLatestLedger = resp.LatestLedger
-		}
-
-		resultCode := ""
-		if resp.Status == protocol.TransactionStatusFailed {
-			resultCode = ledger.DecodeTransactionResultCode(resp.ResultXDR)
-		}
-		if recorder != nil {
-			responseBody, marshalErr := json.Marshal(resp)
-			record := benchmarkTraceRecord{
-				Timestamp:         time.Now(),
-				Workload:          workload,
-				Event:             "poll_response",
-				Method:            protocol.GetTransactionMethodName,
-				Hash:              hash,
-				Attempt:           attempt,
-				TransactionStatus: resp.Status,
-				ResultCode:        resultCode,
-			}
-			if marshalErr != nil {
-				record.Error = fmt.Sprintf("marshal poll response: %v", marshalErr)
-			} else {
-				record.ResponseBody = string(responseBody)
-			}
-			recorder.record(record)
-		}
-
-		switch resp.Status {
-		case protocol.TransactionStatusSuccess, protocol.TransactionStatusFailed:
-			return result, nil
-		}
-
-		timer := time.NewTimer(interval)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
-			return result, ctx.Err()
-		case <-timer.C:
-		}
-		interval = min(interval*2, 3500*time.Millisecond)
+func recordPollRequestTrace(workload string, hash string, rpcID int64, attempt int, recorder *benchmarkTraceRecorder) {
+	if recorder == nil {
+		return
 	}
+	recorder.record(benchmarkTraceRecord{
+		Timestamp:   time.Now(),
+		Workload:    workload,
+		Event:       "poll_request",
+		RPCID:       rpcID,
+		Method:      protocol.GetTransactionMethodName,
+		Hash:        hash,
+		Attempt:     attempt,
+		RequestBody: fmt.Sprintf(`{"hash":%q}`, hash),
+	})
+}
+
+func recordPollResponseTrace(workload string, hash string, rpcID int64, attempt int, resp *protocol.GetTransactionResponse, err error, recorder *benchmarkTraceRecorder) {
+	if recorder == nil {
+		return
+	}
+	record := benchmarkTraceRecord{
+		Timestamp: time.Now(),
+		Workload:  workload,
+		Event:     "poll_response",
+		RPCID:     rpcID,
+		Method:    protocol.GetTransactionMethodName,
+		Hash:      hash,
+		Attempt:   attempt,
+	}
+	if err != nil {
+		record.Error = err.Error()
+		recorder.record(record)
+		return
+	}
+	if resp != nil {
+		record.TransactionStatus = resp.Status
+		if resp.Status == protocol.TransactionStatusFailed {
+			record.ResultCode = ledger.DecodeTransactionResultCode(resp.ResultXDR)
+		}
+		responseBody, marshalErr := json.Marshal(resp)
+		if marshalErr != nil {
+			record.Error = fmt.Sprintf("marshal poll response: %v", marshalErr)
+		} else {
+			record.ResponseBody = string(responseBody)
+		}
+	}
+	recorder.record(record)
 }

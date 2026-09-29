@@ -13,6 +13,14 @@ import (
 
 const accountRecoveryRetryDelay = 2 * time.Second
 
+// accountRecoveryWorkers bounds how many poisoned accounts can be reloading
+// chain truth (LoadAccount) concurrently. A poll timeout poisons an account and
+// queues it for recovery; with a single worker, one slow 30s LoadAccount stalls
+// the whole queue and the available pool collapses (the failure mode that drove
+// the lease-starvation spiral). A modest pool drains recovery in parallel while
+// staying small enough not to pile onto an already-loaded RPC.
+const accountRecoveryWorkers = 32
+
 type accountRequirement uint8
 
 const (
@@ -107,7 +115,13 @@ func newAccountManager(ctx context.Context, st *state.State) (*accountManager, e
 	}
 	manager.generalPreferred = append(manager.generalPreferred, manager.trustlinedEligible...)
 
-	go manager.runRecoveryLoop()
+	recoveryWorkers := min(accountRecoveryWorkers, len(manager.accounts))
+	if recoveryWorkers < 1 {
+		recoveryWorkers = 1
+	}
+	for range recoveryWorkers {
+		go manager.runRecoveryLoop()
+	}
 
 	return manager, nil
 }

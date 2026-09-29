@@ -38,6 +38,12 @@ type pollItem struct {
 	rpcID              int64
 	submittedAt        time.Time
 	submitLatestLedger uint32
+	// submitLatestLedgerCloseTime is the unix-seconds close time of the
+	// latest ledger known to the RPC at the moment sendTransaction returned
+	// PENDING. The poll scheduler uses this to predict the next viable poll
+	// moment (close + indexing window) so the first attempt isn't wasted on
+	// the inter-close interval.
+	submitLatestLedgerCloseTime int64
 }
 
 type attackState struct {
@@ -99,10 +105,11 @@ func (s *attackState) handleSendTransactionEnvelope(envelope sendRespEnvelope, s
 	switch envelope.Result.Status {
 	case "PENDING", "DUPLICATE":
 		s.hashes <- pollItem{
-			hash:               envelope.Result.Hash,
-			rpcID:              envelope.ID,
-			submittedAt:        submittedAt,
-			submitLatestLedger: envelope.Result.LatestLedger,
+			hash:                        envelope.Result.Hash,
+			rpcID:                       envelope.ID,
+			submittedAt:                 submittedAt,
+			submitLatestLedger:          envelope.Result.LatestLedger,
+			submitLatestLedgerCloseTime: envelope.Result.LatestLedgerCloseTime,
 		}
 		atomic.AddUint64(&s.queued, 1)
 		return true
@@ -210,7 +217,15 @@ func processAttackResult(res *vegeta.Result, metrics *vegeta.Metrics, logger *lo
 			ResponseBody:      string(res.Body),
 		})
 	}
-	if !state.handleSendTransactionEnvelope(envelope, res.Timestamp, accounts) {
+	// Use the time the PENDING response was received (hit start + request
+	// latency), NOT res.Timestamp (the vegeta hit start). When the account
+	// pool is contended the targeter blocks in Acquire before the tx is ever
+	// sent, so res.Timestamp can predate the actual submit by tens of seconds.
+	// Anchoring the poll deadline (and e2e latency) to res.Timestamp would
+	// charge that Acquire wait against the poll budget, pre-expiring the
+	// deadline so the tx is abandoned after a single NOT_FOUND poll.
+	respReceivedAt := res.Timestamp.Add(res.Latency)
+	if !state.handleSendTransactionEnvelope(envelope, respReceivedAt, accounts) {
 		atomic.AddUint64(&state.httpErr, 1)
 		logger.Debugf("sendTransaction: unknown status %q", envelope.Result.Status)
 	}

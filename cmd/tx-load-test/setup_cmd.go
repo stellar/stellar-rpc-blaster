@@ -53,7 +53,7 @@ minted before the command exits.`,
 	cmd.Flags().String("soroswap-factory", "", "Soroswap factory contract ID (required on testnet/mainnet; optional on standalone/futurenet, where setup can auto-deploy it)")
 	cmd.Flags().String("soroswap-router", "", "Soroswap router contract ID (required on testnet/mainnet; optional on standalone/futurenet, where setup can auto-deploy it)")
 	cmd.Flags().Int("accounts", 5_000, "Number of participant accounts to create")
-	cmd.Flags().Float64("base-reserve-xlm", 3.0, "XLM to fund each account (covers reserves, holder trustlines, and fee headroom)")
+	cmd.Flags().Float64("base-reserve-xlm", 3.0, "XLM to fund each account (3.0 covers a 2.5 XLM three-trustline minimum plus 0.5 XLM headroom)")
 	cmd.Flags().Int64("liquidity-per-pool", 1_000_000, "Token units to deposit into each Soroswap pool")
 	return cmd
 }

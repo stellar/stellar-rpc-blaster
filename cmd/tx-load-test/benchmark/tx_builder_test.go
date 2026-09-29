@@ -92,6 +92,83 @@ func TestBuildSorobanSendTransactionBodyBuildsSignedJSONRPCRequest(t *testing.T)
 	require.Equal(t, xdr.ScSymbol("transfer"), op.HostFunction.InvokeContract.FunctionName)
 }
 
+func TestBuildSorobanSendTransactionBodyCarriesAutorestoreExt(t *testing.T) {
+	// Protocol-23+ autorestore signal: simulator returns
+	// SorobanTransactionDataExt.V1 with the indices of footprint.readWrite
+	// entries that core must auto-restore inline. Without this on the
+	// submitted tx apply fails with invokeHostFunctionEntryArchived even
+	// though the inflated resource fee already prices restoration.
+	txSource, err := keypair.Random()
+	require.NoError(t, err)
+	feePayer, err := keypair.Random()
+	require.NoError(t, err)
+	contractID := xdr.ContractId{}
+	invokeArgs := xdr.InvokeContractArgs{
+		ContractAddress: xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &contractID},
+		FunctionName:    "transfer",
+	}
+	resourceFee := xdr.Int64(110_000_000)
+	dataExt := xdr.SorobanTransactionDataExt{
+		V: 1,
+		ResourceExt: &xdr.SorobanResourcesExtV0{
+			ArchivedSorobanEntries: []xdr.Uint32{0, 3},
+		},
+	}
+
+	body, err := buildSorobanSendTransactionBody(sorobanSendTransactionParams{
+		RPCID:             7,
+		NetworkPassphrase: "Test SDF Network ; September 2015",
+		FeePayerKP:        feePayer,
+		TxSource:          txSource,
+		Sequence:          1,
+		Signers:           []*keypair.Full{txSource},
+		OpSourceAccount:   txSource.Address(),
+		InvokeArgs:        invokeArgs,
+		Resources:         xdr.SorobanResources{Instructions: 1},
+		ResourceFee:       resourceFee,
+		SorobanDataExt:    dataExt,
+	})
+	require.NoError(t, err)
+
+	var request rpcJSONBody
+	require.NoError(t, json.Unmarshal(body, &request))
+	gtx, err := txnbuild.TransactionFromXDR(request.Params["transaction"])
+	require.NoError(t, err)
+	feeBump, ok := gtx.FeeBump()
+	require.True(t, ok)
+
+	op, ok := feeBump.InnerTransaction().Operations()[0].(*txnbuild.InvokeHostFunction)
+	require.True(t, ok)
+	require.NotNil(t, op.Ext.SorobanData)
+	require.Equal(t, int32(1), int32(op.Ext.SorobanData.Ext.V))
+	require.NotNil(t, op.Ext.SorobanData.Ext.ResourceExt)
+	require.Equal(t,
+		[]xdr.Uint32{0, 3},
+		op.Ext.SorobanData.Ext.ResourceExt.ArchivedSorobanEntries,
+	)
+
+	// When the simulator's resource fee crosses heavyResourceFeeThreshold,
+	// benchmarkInnerBaseFee must lift the per-op inclusion fee floor so that
+	// the fee-bump's totalFee covers the inflated inner total. With a
+	// resource fee of 1.1e8 stroops a 10k-100k inclusion sample would leave
+	// the bump 8-10x short of clearing core's surge floor.
+	require.GreaterOrEqual(t, feeBump.InnerTransaction().BaseFee(), int64(1_000_000)+int64(resourceFee))
+}
+
+func TestBenchmarkInnerBaseFeeBoostsFloorForHeavyResourceFee(t *testing.T) {
+	for i := 0; i < 64; i++ {
+		got := benchmarkInnerBaseFee(20_000_000)
+		require.GreaterOrEqual(t, got, int64(1_000_000),
+			"heavy-resource sample %d=%d should not undercut the 1M floor", i, got)
+	}
+	for i := 0; i < 64; i++ {
+		got := benchmarkInnerBaseFee(1_000)
+		require.GreaterOrEqual(t, got, benchmarkBaseFeeMin)
+		require.LessOrEqual(t, got, benchmarkBaseFeeMax,
+			"light-resource sample %d=%d should stay within the normal sample range", i, got)
+	}
+}
+
 func TestPopulateJSONRPCTargetSetsRequestFields(t *testing.T) {
 	target := &vegeta.Target{}
 	body := []byte(`{"ok":true}`)

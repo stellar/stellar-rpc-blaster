@@ -6,31 +6,65 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
+const (
+	maxDiagnosticEventSummaries = 4
+	maxDiagnosticTokensPerEvent = 6
+)
+
+const (
+	diagnosticPriorityError = iota
+	diagnosticPriorityOther
+	diagnosticPriorityCall
+)
+
 func summarizeDiagnosticEvents(events []string) string {
+	var grouped [3][]string
+	seen := make(map[string]struct{}, len(events))
 	for _, encoded := range events {
-		if summary := summarizeDiagnosticEvent(encoded); summary != "" {
-			return summary
+		summary, priority := summarizeDiagnosticEventWithPriority(encoded)
+		if summary == "" {
+			continue
+		}
+		if _, ok := seen[summary]; ok {
+			continue
+		}
+		seen[summary] = struct{}{}
+		grouped[priority] = append(grouped[priority], summary)
+	}
+
+	parts := make([]string, 0, maxDiagnosticEventSummaries)
+	for _, summaries := range grouped {
+		for _, summary := range summaries {
+			parts = append(parts, summary)
+			if len(parts) == maxDiagnosticEventSummaries {
+				return strings.Join(parts, " ; ")
+			}
 		}
 	}
-	return ""
+	return strings.Join(parts, " ; ")
 }
 
 func summarizeDiagnosticEvent(encoded string) string {
+	summary, _ := summarizeDiagnosticEventWithPriority(encoded)
+	return summary
+}
+
+func summarizeDiagnosticEventWithPriority(encoded string) (string, int) {
 	var event xdr.DiagnosticEvent
 	if err := xdr.SafeUnmarshalBase64(encoded, &event); err != nil {
-		return ""
+		return "", diagnosticPriorityOther
 	}
 
 	body, ok := event.Event.Body.GetV0()
 	if !ok {
-		return ""
+		return "", diagnosticPriorityOther
 	}
 	tokens := append(normalizeDiagnosticScVals(body.Topics), normalizeDiagnosticScVal(body.Data)...)
 	if len(tokens) == 0 || isCoreMetricsDiagnostic(tokens) {
-		return ""
+		return "", diagnosticPriorityOther
 	}
 
-	parts := make([]string, 0, 2)
+	parts := make([]string, 0, maxDiagnosticTokensPerEvent)
 	seen := make(map[string]struct{}, len(tokens))
 	for _, token := range tokens {
 		switch token {
@@ -42,14 +76,28 @@ func summarizeDiagnosticEvent(encoded string) string {
 		}
 		seen[token] = struct{}{}
 		parts = append(parts, token)
-		if len(parts) == 2 {
+		if len(parts) == maxDiagnosticTokensPerEvent {
 			break
 		}
 	}
 	if len(parts) == 0 {
-		return ""
+		return "", diagnosticPriorityOther
 	}
-	return strings.Join(parts, " | ")
+	return strings.Join(parts, " | "), diagnosticPriority(tokens)
+}
+
+func diagnosticPriority(tokens []string) int {
+	priority := diagnosticPriorityOther
+	for _, token := range tokens {
+		if token == "fn_call" {
+			priority = diagnosticPriorityCall
+		}
+		lower := strings.ToLower(token)
+		if token == "error" || strings.Contains(lower, "error") || strings.Contains(lower, "failed") {
+			return diagnosticPriorityError
+		}
+	}
+	return priority
 }
 
 func normalizeDiagnosticScVals(values []xdr.ScVal) []string {
