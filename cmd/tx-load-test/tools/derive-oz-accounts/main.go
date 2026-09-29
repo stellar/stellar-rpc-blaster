@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -12,13 +11,6 @@ import (
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
-
-type persistedState struct {
-	FeePayerHash    string   `json:"fee_payer_hash"`
-	AccountIndices  []uint32 `json:"account_indices"`
-	OZTokenContract string   `json:"oz_token_contract"`
-	CleanedUp       bool     `json:"cleaned_up"`
-}
 
 func main() {
 	flag.Usage = func() {
@@ -49,14 +41,11 @@ func run(seed string, publicKeysCSV string, stateFile string) error {
 		return err
 	}
 
-	data, err := os.ReadFile(stateFile)
+	// Load through the state package so both index encodings (compact
+	// account_ranges and legacy account_indices) are understood.
+	st, err := state.NewPersistedState(stateFile)
 	if err != nil {
-		return fmt.Errorf("read state file %q: %w", stateFile, err)
-	}
-
-	var st persistedState
-	if err := json.Unmarshal(data, &st); err != nil {
-		return fmt.Errorf("parse state file %q: %w", stateFile, err)
+		return fmt.Errorf("load state file %q: %w", stateFile, err)
 	}
 	if st.CleanedUp {
 		return fmt.Errorf("state file is marked cleaned_up=true")
@@ -78,7 +67,7 @@ func run(seed string, publicKeysCSV string, stateFile string) error {
 
 	seedsByPublicKey := make(map[string]string, len(st.AccountIndices))
 	for _, index := range st.AccountIndices {
-		kp, err := state.DeriveKeypair(feePayer, int(index))
+		kp, err := state.DeriveKeypair(feePayer, index)
 		if err != nil {
 			return fmt.Errorf("derive account index %d: %w", index, err)
 		}
