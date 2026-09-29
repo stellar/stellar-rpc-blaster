@@ -2,3 +2,6 @@
 /output/*
 !/output/.gitkeep
 /stellar-rpc-blaster
+/tx-load-test
+*.seed
+*.json

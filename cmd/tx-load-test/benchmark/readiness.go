@@ -14,6 +14,25 @@ import (
 
 const readinessBatchSize = 100
 
+func benchmarkStateCountError(label string, need, have int, subject string) error {
+	return fmt.Errorf("%s benchmark state incomplete: need at least %d %s, got %d -- rerun setup", label, need, pluralizeCountSubject(need, subject), have)
+}
+
+func benchmarkTargeterCountError(label string, need, have int, subject string) error {
+	return fmt.Errorf("%s benchmark requires at least %d %s, got %d", label, need, pluralizeCountSubject(need, subject), have)
+}
+
+func benchmarkMissingContractIDError(label, contract string) error {
+	return fmt.Errorf("%s benchmark state incomplete: %s contract ID is empty -- run setup first", label, contract)
+}
+
+func pluralizeCountSubject(count int, subject string) string {
+	if count == 1 {
+		return subject
+	}
+	return subject + "s"
+}
+
 func verifyTrustlineBalancesReady(ctx context.Context, st *state.State, accounts []*keypair.Full, label string) error {
 	balances, err := ledger.FetchTrustlineBalances(ctx, st.RPCClient, st.Assets[:], accounts, readinessBatchSize)
 	if err != nil {

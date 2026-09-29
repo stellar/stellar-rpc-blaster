@@ -15,6 +15,8 @@ import (
 
 type soroswapSwapTemplate struct {
 	traderAddress string
+	inputAsset    xdr.Asset
+	outputAsset   xdr.Asset
 	simulatedInvocationTemplate
 }
 
@@ -31,6 +33,14 @@ func buildSoroswapSwapTemplates(ctx context.Context, st *state.State, txSourceAc
 		pairContract := st.SoroswapPairContracts[i]
 		tokenA := st.SACs[pair[0]]
 		tokenB := st.SACs[pair[1]]
+		assetA, err := st.Assets[pair[0]].ToXDR()
+		if err != nil {
+			return nil, fmt.Errorf("pool %d asset A to XDR: %w", i, err)
+		}
+		assetB, err := st.Assets[pair[1]].ToXDR()
+		if err != nil {
+			return nil, fmt.Errorf("pool %d asset B to XDR: %w", i, err)
+		}
 		if tokenA == "" || tokenB == "" || pairContract == "" {
 			return nil, fmt.Errorf("soroswap pool %d is missing token or pair contract state", i)
 		}
@@ -47,12 +57,16 @@ func buildSoroswapSwapTemplates(ctx context.Context, st *state.State, txSourceAc
 		if err != nil {
 			return nil, fmt.Errorf("pre-simulate soroswap pool %d %s->%s: %w", i, tokenA, tokenB, err)
 		}
+		tmplAB.inputAsset = assetA
+		tmplAB.outputAsset = assetB
 		templates = append(templates, tmplAB)
 
 		tmplBA, err := presimulateSoroswapSwap(st, routerID, representativeTrader, tokenB, tokenA, sharedsoroswap.SwapAmount(reserveB), deadline)
 		if err != nil {
 			return nil, fmt.Errorf("pre-simulate soroswap pool %d %s->%s: %w", i, tokenB, tokenA, err)
 		}
+		tmplBA.inputAsset = assetB
+		tmplBA.outputAsset = assetA
 		templates = append(templates, tmplBA)
 	}
 
