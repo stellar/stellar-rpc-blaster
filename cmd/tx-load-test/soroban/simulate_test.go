@@ -72,8 +72,8 @@ func TestPadSimulatedInvocation(t *testing.T) {
 	PadSimulatedInvocation(&sim, 1.10)
 
 	require.Equal(t, xdr.Uint32(110), sim.Resources.Instructions)
-	require.Equal(t, xdr.Uint32(220), sim.Resources.DiskReadBytes)
-	require.Equal(t, xdr.Uint32(330), sim.Resources.WriteBytes)
+	require.Equal(t, xdr.Uint32(200), sim.Resources.DiskReadBytes)
+	require.Equal(t, xdr.Uint32(300), sim.Resources.WriteBytes)
 	require.Equal(t, xdr.Int64(440), sim.ResourceFee)
 
 	PadSimulatedInvocation(&sim, 1)
