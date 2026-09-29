@@ -12,11 +12,11 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// setupResourcePadFactor adds a small safety margin to simulation-derived
+// SetupResourcePadFactor adds a small safety margin to simulation-derived
 // Soroban resources for one-off setup transactions. Standalone deployments can
 // be slightly under-estimated for create-contract flows, and setup is not
 // latency-sensitive enough for exact-minimum provisioning to matter.
-const setupResourcePadFactor = 1.50
+const SetupResourcePadFactor = 1.50
 
 const maxSorobanRestoreAttempts = 2
 
@@ -87,7 +87,7 @@ func SubmitSorobanAndWait(
 		if err := applySimulatedAuthEntries(op, simResp); err != nil {
 			return fmt.Errorf("parse simulation auth entries: %w", err)
 		}
-		padSorobanResources(&sorobanData, setupResourcePadFactor)
+		padSorobanResources(&sorobanData, SetupResourcePadFactor)
 		op.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
 		logSorobanSimulation(logger, op, simResp, sorobanData)
 
@@ -118,6 +118,239 @@ func SubmitSorobanAndWait(
 	}
 
 	return fmt.Errorf("soroban transaction restoration attempts exhausted")
+}
+
+// SubmitExtendFootprintTTLAndWait extends the TTL of the given ledger keys to
+// extendTo ledgers from now via a single ExtendFootprintTtl transaction. The
+// keys become the transaction's read-only footprint (ExtendFootprintTtl takes
+// no read-write keys); unlike invokes, the simulator does not derive footprints
+// for TTL ops, so the footprint is constructed here and the simulation supplies
+// the resources and the rent-bearing resource fee. Entries in the footprint
+// that are already live past extendTo are skipped by core at apply time.
+func SubmitExtendFootprintTTLAndWait(
+	ctx context.Context,
+	logger *log.Entry,
+	rpc *rpcclient.Client,
+	networkPassphrase string,
+	signer *keypair.Full,
+	keys []xdr.LedgerKey,
+	extendTo uint32,
+) error {
+	if len(keys) == 0 {
+		return nil
+	}
+
+	src, err := rpc.LoadAccount(ctx, signer.Address())
+	if err != nil {
+		return fmt.Errorf("load source account: %w", err)
+	}
+	seq, err := src.GetSequenceNumber()
+	if err != nil {
+		return fmt.Errorf("get source account sequence: %w", err)
+	}
+
+	op := buildExtendFootprintTTLOp(signer.Address(), keys, extendTo)
+	sorobanData, err := simulateSorobanOp(ctx, rpc, signer.Address(), seq, op, "extend-ttl")
+	if err != nil {
+		return err
+	}
+	padSorobanResources(&sorobanData, SetupResourcePadFactor)
+	op.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+	logger.WithFields(log.F{
+		"extendTo":      extendTo,
+		"readOnlyKeys":  len(sorobanData.Resources.Footprint.ReadOnly),
+		"resourceFee":   sorobanData.ResourceFee,
+		"diskReadBytes": sorobanData.Resources.DiskReadBytes,
+	}).Info("extend-ttl simulation summary")
+	return signAndSubmitSorobanOp(ctx, logger, rpc, networkPassphrase, signer, seq, op, int64(sorobanData.ResourceFee), "extend-ttl")
+}
+
+// SubmitRestoreFootprintAndWait restores the given archived ledger keys via a
+// single RestoreFootprint transaction (the keys become the read-write
+// footprint). Restored entries come back with the network minimum persistent
+// TTL (~120 days on mainnet). Unlike the restore subcommand's probe flow --
+// which on protocol 23 sees every archived entry as autorestore-class and
+// submits nothing -- this restores any archived persistent entry directly,
+// without depending on simulation preambles.
+func SubmitRestoreFootprintAndWait(
+	ctx context.Context,
+	logger *log.Entry,
+	rpc *rpcclient.Client,
+	networkPassphrase string,
+	signer *keypair.Full,
+	keys []xdr.LedgerKey,
+) error {
+	if len(keys) == 0 {
+		return nil
+	}
+
+	src, err := rpc.LoadAccount(ctx, signer.Address())
+	if err != nil {
+		return fmt.Errorf("load source account: %w", err)
+	}
+	seq, err := src.GetSequenceNumber()
+	if err != nil {
+		return fmt.Errorf("get source account sequence: %w", err)
+	}
+
+	op := buildRestoreFootprintOp(signer.Address(), keys)
+	sorobanData, err := simulateSorobanOp(ctx, rpc, signer.Address(), seq, op, "restore-footprint")
+	if err != nil {
+		return err
+	}
+	padSorobanResources(&sorobanData, SetupResourcePadFactor)
+	op.Ext = xdr.TransactionExt{V: 1, SorobanData: &sorobanData}
+	logger.WithFields(log.F{
+		"readWriteKeys": len(sorobanData.Resources.Footprint.ReadWrite),
+		"resourceFee":   sorobanData.ResourceFee,
+		"writeBytes":    sorobanData.Resources.WriteBytes,
+	}).Info("restore-footprint simulation summary")
+	return signAndSubmitSorobanOp(ctx, logger, rpc, networkPassphrase, signer, seq, op, int64(sorobanData.ResourceFee), "restore-footprint")
+}
+
+// SimulateRestoreFootprintFee simulates (without submitting) a
+// RestoreFootprint transaction over keys and returns the simulator's resource
+// fee in stroops. Used by dry runs to approximate restore cost.
+func SimulateRestoreFootprintFee(
+	ctx context.Context,
+	rpc *rpcclient.Client,
+	sourceAddress string,
+	sequence int64,
+	keys []xdr.LedgerKey,
+) (int64, error) {
+	if len(keys) == 0 {
+		return 0, nil
+	}
+	sorobanData, err := simulateSorobanOp(ctx, rpc, sourceAddress, sequence, buildRestoreFootprintOp(sourceAddress, keys), "restore-footprint")
+	if err != nil {
+		return 0, err
+	}
+	return int64(sorobanData.ResourceFee), nil
+}
+
+func buildExtendFootprintTTLOp(sourceAddress string, keys []xdr.LedgerKey, extendTo uint32) *txnbuild.ExtendFootprintTtl {
+	return &txnbuild.ExtendFootprintTtl{
+		ExtendTo:      extendTo,
+		SourceAccount: sourceAddress,
+		Ext: xdr.TransactionExt{V: 1, SorobanData: &xdr.SorobanTransactionData{
+			Resources: xdr.SorobanResources{
+				Footprint: xdr.LedgerFootprint{ReadOnly: keys},
+			},
+		}},
+	}
+}
+
+func buildRestoreFootprintOp(sourceAddress string, keys []xdr.LedgerKey) *txnbuild.RestoreFootprint {
+	return &txnbuild.RestoreFootprint{
+		SourceAccount: sourceAddress,
+		Ext: xdr.TransactionExt{V: 1, SorobanData: &xdr.SorobanTransactionData{
+			Resources: xdr.SorobanResources{
+				Footprint: xdr.LedgerFootprint{ReadWrite: keys},
+			},
+		}},
+	}
+}
+
+// signAndSubmitSorobanOp builds, signs, and submits the final transaction for
+// an already-simulated Soroban op whose Ext carries the padded resources.
+func signAndSubmitSorobanOp(
+	ctx context.Context,
+	logger *log.Entry,
+	rpc *rpcclient.Client,
+	networkPassphrase string,
+	signer *keypair.Full,
+	sequence int64,
+	op txnbuild.Operation,
+	resourceFee int64,
+	opName string,
+) error {
+	finalTx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+		SourceAccount:        &txnbuild.SimpleAccount{AccountID: signer.Address(), Sequence: sequence + 1},
+		IncrementSequenceNum: false,
+		Operations:           []txnbuild.Operation{op},
+		BaseFee:              InclusionFee + resourceFee,
+		Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(TxTimeBoundSecs)},
+	})
+	if err != nil {
+		return fmt.Errorf("build final %s transaction: %w", opName, err)
+	}
+	finalTx, err = finalTx.Sign(networkPassphrase, signer)
+	if err != nil {
+		return fmt.Errorf("sign %s transaction: %w", opName, err)
+	}
+	b64Final, err := finalTx.Base64()
+	if err != nil {
+		return fmt.Errorf("marshal %s transaction: %w", opName, err)
+	}
+	if SubmitAllAndPoll(ctx, logger, rpc, []string{b64Final}) > 0 {
+		return fmt.Errorf("%s transaction failed", opName)
+	}
+	return nil
+}
+
+// SimulateExtendFootprintTTLFee simulates (without submitting) an
+// ExtendFootprintTtl transaction over keys and returns the simulator's
+// resource fee in stroops -- the rent-dominated cost the transaction would
+// actually pay. Used by dry runs to approximate cost; no signature is needed
+// because simulation ignores them.
+func SimulateExtendFootprintTTLFee(
+	ctx context.Context,
+	rpc *rpcclient.Client,
+	sourceAddress string,
+	sequence int64,
+	keys []xdr.LedgerKey,
+	extendTo uint32,
+) (int64, error) {
+	if len(keys) == 0 {
+		return 0, nil
+	}
+	sorobanData, err := simulateSorobanOp(ctx, rpc, sourceAddress, sequence, buildExtendFootprintTTLOp(sourceAddress, keys, extendTo), "extend-ttl")
+	if err != nil {
+		return 0, err
+	}
+	return int64(sorobanData.ResourceFee), nil
+}
+
+// simulateSorobanOp simulates a single already-footprinted Soroban op (the
+// op's Ext must carry the footprint -- unlike invokes, the simulator does not
+// derive footprints for TTL/restore ops) and returns the simulator's
+// SorobanTransactionData (resources + rent-bearing resource fee).
+func simulateSorobanOp(
+	ctx context.Context,
+	rpc *rpcclient.Client,
+	sourceAddress string,
+	sequence int64,
+	op txnbuild.Operation,
+	opName string,
+) (xdr.SorobanTransactionData, error) {
+	simTx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+		SourceAccount:        &txnbuild.SimpleAccount{AccountID: sourceAddress, Sequence: sequence + 1},
+		IncrementSequenceNum: false,
+		Operations:           []txnbuild.Operation{op},
+		BaseFee:              InclusionFee,
+		Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(TxTimeBoundSecs)},
+	})
+	if err != nil {
+		return xdr.SorobanTransactionData{}, fmt.Errorf("build %s simulation transaction: %w", opName, err)
+	}
+	b64, err := simTx.Base64()
+	if err != nil {
+		return xdr.SorobanTransactionData{}, fmt.Errorf("encode %s simulation transaction: %w", opName, err)
+	}
+
+	simResp, err := rpc.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: b64})
+	if err != nil {
+		return xdr.SorobanTransactionData{}, fmt.Errorf("simulate %s transaction: %w", opName, err)
+	}
+	if simResp.Error != "" {
+		return xdr.SorobanTransactionData{}, fmt.Errorf("simulate %s transaction: %s", opName, simResp.Error)
+	}
+
+	var sorobanData xdr.SorobanTransactionData
+	if err = xdr.SafeUnmarshalBase64(simResp.TransactionDataXDR, &sorobanData); err != nil {
+		return xdr.SorobanTransactionData{}, fmt.Errorf("parse %s simulation transaction data: %w", opName, err)
+	}
+	return sorobanData, nil
 }
 
 func submitRestorePreamble(

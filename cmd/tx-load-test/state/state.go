@@ -53,12 +53,28 @@ type PersistedState struct {
 	// AccountIndices are the DeriveKeypair indices of all participant
 	// accounts. Typically contiguous (1..N), but may have gaps after sync
 	// or partial teardown.
-	AccountIndices []int `json:"account_indices"`
+	//
+	// On disk this is stored compactly as AccountRanges; this field remains
+	// the in-memory canonical form (populated by NewPersistedState from either
+	// representation) and is accepted on read for legacy state files.
+	AccountIndices []int `json:"account_indices,omitempty"`
+
+	// AccountRanges is the compact on-disk encoding of AccountIndices: each
+	// entry is a single index ("5") or an inclusive contiguous run ("1-4500"),
+	// ascending and non-overlapping. Save always writes this form; a 4,500
+	// account pool serializes as one short string instead of 4,500 array
+	// elements. Ordering is canonicalized (sorted ascending, deduplicated).
+	AccountRanges []string `json:"account_ranges,omitempty"`
 
 	// SACHolderIndices are the derivation indices of the participant accounts
 	// that hold classic trustlines and participate in SAC transfer benchmarks.
 	// This is typically the first formula-derived holder-count accounts.
+	// Stored on disk as SACHolderRanges; see AccountIndices.
 	SACHolderIndices []int `json:"sac_holder_indices,omitempty"`
+
+	// SACHolderRanges is the compact on-disk encoding of SACHolderIndices;
+	// see AccountRanges.
+	SACHolderRanges []string `json:"sac_holder_ranges,omitempty"`
 
 	// Assets holds the 3 benchmark asset codes (issuer = fee payer).
 	Assets [3]string `json:"assets"`
@@ -88,7 +104,11 @@ type PersistedState struct {
 	CleanedUp bool `json:"cleaned_up"`
 }
 
-// NewPersistedState reads a PersistedState from path.
+// NewPersistedState reads a PersistedState from path. Both index encodings
+// are accepted on read -- the compact range form written by current versions
+// and the flat index arrays written by older ones -- and normalized so that
+// AccountIndices / SACHolderIndices are always the populated, canonical
+// in-memory representation.
 func NewPersistedState(path string) (*PersistedState, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -98,10 +118,43 @@ func NewPersistedState(path string) (*PersistedState, error) {
 	if err := json.Unmarshal(data, &ps); err != nil {
 		return nil, fmt.Errorf("parse state file: %w", err)
 	}
+	if err := ps.normalizeIndexEncoding(); err != nil {
+		return nil, fmt.Errorf("parse state file: %w", err)
+	}
 	if err := ps.Validate(); err != nil {
 		return nil, fmt.Errorf("validate state file: %w", err)
 	}
 	return &ps, nil
+}
+
+// normalizeIndexEncoding expands the on-disk range encoding into the in-memory
+// flat index lists. A file carrying BOTH encodings for the same field is
+// rejected rather than silently preferring one -- that only happens via hand
+// editing, and guessing wrong would target the wrong accounts.
+func (ps *PersistedState) normalizeIndexEncoding() error {
+	if len(ps.AccountRanges) > 0 {
+		if len(ps.AccountIndices) > 0 {
+			return fmt.Errorf("state file has both account_ranges and account_indices; remove one")
+		}
+		indices, err := decodeIndexRanges(ps.AccountRanges)
+		if err != nil {
+			return fmt.Errorf("account_ranges: %w", err)
+		}
+		ps.AccountIndices = indices
+		ps.AccountRanges = nil
+	}
+	if len(ps.SACHolderRanges) > 0 {
+		if len(ps.SACHolderIndices) > 0 {
+			return fmt.Errorf("state file has both sac_holder_ranges and sac_holder_indices; remove one")
+		}
+		indices, err := decodeIndexRanges(ps.SACHolderRanges)
+		if err != nil {
+			return fmt.Errorf("sac_holder_ranges: %w", err)
+		}
+		ps.SACHolderIndices = indices
+		ps.SACHolderRanges = nil
+	}
+	return nil
 }
 
 // Validate checks that the persisted state contains the minimum required
@@ -162,9 +215,16 @@ func (ps *PersistedState) ValidateRPCNetwork(ctx context.Context, rpcURL string)
 }
 
 // Save writes ps to path as indented JSON, creating or overwriting the
-// file atomically (write to .tmp then rename).
+// file atomically (write to .tmp then rename). Index lists are always
+// serialized in the compact range form (account_ranges / sac_holder_ranges);
+// the receiver itself is not mutated.
 func (ps *PersistedState) Save(path string) error {
-	data, err := json.MarshalIndent(ps, "", "  ")
+	out := *ps
+	out.AccountRanges = encodeIndexRanges(ps.AccountIndices)
+	out.AccountIndices = nil
+	out.SACHolderRanges = encodeIndexRanges(ps.SACHolderIndices)
+	out.SACHolderIndices = nil
+	data, err := json.MarshalIndent(&out, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal state: %w", err)
 	}

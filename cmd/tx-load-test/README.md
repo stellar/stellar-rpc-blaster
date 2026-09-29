@@ -151,6 +151,43 @@ Mode-specific scope:
 - **`oz-transfer`** probes selected participant accounts so each selected account's OZ `Balance` contract data is touched at least once.
 - **`soroswap`** probes selected holder accounts across the benchmark pools and both swap directions, covering shared router/pair/pool state and account-specific trader contract data.
 
+### `extend-ttl`
+
+Extends the TTL of every Soroban ledger entry a benchmark run can touch, so state never crosses the archival boundary between runs. This exists because several footprint entries are extended by *nothing* at invocation time — the OZ token instance (the OpenZeppelin library defines instance-TTL constants but never calls extend), the OZ Wasm code entry (code entries cannot be self-extended by contract code), and the SAC instances (the host's SAC implementation only extends balance/allowance entries) — so they archive on a fixed calendar regardless of run cadence. The remaining entries (OZ balances, pair instances, pair SAC fund balances) are extended on touch, but only by ~30 days, so an idle gap longer than that archives the whole hot set at once.
+
+The entry set is enumerated deterministically from the state file plus the `FEE_PAYER`-derived account pool: all contract instances (OZ token, SACs, soroswap router/factory/pairs), their Wasm code entries (discovered from the fetched instances), the pairs' SAC fund balances, and the OZ `Balance` entry of every pool account. The chain is consulted only for current TTLs. Entries already live past the target are skipped; already-archived entries cannot be extended — the command reports them and fails unless `--restore-archived` is set, in which case it first submits `RestoreFootprint` transactions bringing them back at the ~120-day network minimum TTL, then extends everything to the target. On protocol 23 this is the reliable way to heal archived state: the `restore` subcommand's simulation probes classify every archived entry as autorestore-class and submit nothing, leaving inline restoration (and its rent) to the next bench's transactions.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--extend-to-days` | `180` | Target TTL in days from now, clamped to the network `maxEntryTTL` (~180 days on mainnet); entries already live past this are skipped |
+| `--batch-size` | `25` | Read-only footprint keys per `ExtendFootprintTtl` transaction |
+| `--dry-run` | `false` | Classify and report entry TTLs, and simulate every would-be batch to report a total cost estimate; submit nothing |
+| `--restore-archived` | `false` | Restore already-archived entries (`RestoreFootprint`, back to the ~120-day minimum TTL) before extending, instead of failing on them |
+| `--skip-balances` | `false` | Extend only the infra set (instances, wasm, pair funds); see cost note below |
+| `--rpc-url` | *(from state file)* | Override the RPC URL stored in `state.json` |
+| `--state-file` | `state.json` | Input state file path |
+| `--skip-account-preflight` | `false` | Skip the sampled on-chain participant-account existence check |
+| `--account-preflight-sample` | `10` | Number of participant accounts to sample during runtime preflight |
+| `--log-level` | `info` | `debug`, `info`, `warn`, `error` |
+
+Example workflow:
+
+```bash
+export FEE_PAYER="S..."
+
+# Inspect current TTLs, see what would be extended, and get a cost estimate
+# (the dry run simulates every batch, so the estimate is the RPC's own rent
+# math -- expect it to take about as long as the real pass's simulations).
+./tx-load-test extend-ttl --dry-run
+
+# Extend everything below the target to ~180 days.
+./tx-load-test extend-ttl
+```
+
+Rent scales linearly with extension length, so extending to 180 days costs the same per covered ledger as repeated shorter extends — at the default this is a roughly twice-a-year maintenance operation.
+
+**Cost note:** the per-account OZ balance entries dominate the bill (hundreds of XLM for a ~4.5k-account pool at 180 days) but are the one category that maintains itself — every bench transfer extends the balances it touches by ~30 days, with that rent paid inside the bench transactions. With at-least-monthly runs, `--skip-balances` is the right routine mode: it extends only the never-self-extending infra set (single-digit XLM). Include balances only ahead of a planned idle gap longer than ~30 days; if they do archive, restore re-ups them to the 120-day minimum at a comparable price, so prepaying is insurance against downtime, not a cost saving. Infra entries (instances, wasm, pair funds) are reported individually; the per-account OZ balance entries are reported as an aggregate with min/max remaining TTL. The read-only `tools/ttl-probe` utility prints the same infra-entry TTL table without requiring `FEE_PAYER`.
+
 ### `bench`
 
 Runs a load-test workload against an already-initialized ledger.
@@ -171,6 +208,7 @@ Before the benchmark starts, the tool queries the chosen RPC endpoint (either `-
 | `--account-preflight-sample` | `10` | Number of participant accounts to sample during runtime preflight |
 | `--trace-file` | *(disabled)* | Optional NDJSON file that captures every benchmark submit and poll request/response |
 | `--metrics-file` | `metrics/tx-load-test-metrics-<timestamp>-<mode>.ndjson` | Optional flattened benchmark metrics file path |
+| `--metrics-gcs-url` | *(disabled)* | Optional `gs://bucket/prefix/` destination; the metrics file is uploaded there after the run. A trailing slash appends the local filename (unique per run); auth uses Application Default Credentials |
 | `--log-level` | `info` | `debug`, `info`, `warn`, `error` |
 
 **Mode guide:**
@@ -274,8 +312,8 @@ Removes entries for accounts that no longer exist on-chain, useful after a netwo
   "rpc_url": "https://soroban-testnet.stellar.org",
   "network_passphrase": "Test SDF Network ; September 2015",
   "fee_payer_hash": "5d7a...hex-sha256...",
-  "account_indices": [1, 2, 3],
-  "sac_holder_indices": [1, 2, 3],
+  "account_ranges": ["1-4500"],
+  "sac_holder_ranges": ["1-900"],
   "assets": ["BLTA", "BLTB", "BLTC"],
   "sacs": ["C...", "C...", "C..."],
   "soroswap_factory_contract": "C...",
@@ -285,5 +323,7 @@ Removes entries for accounts that no longer exist on-chain, useful after a netwo
   "cleaned_up": false
 }
 ```
+
+Participant accounts are recorded as derivation-index **ranges**: each entry is a single index (`"5"`) or an inclusive contiguous run (`"1-4500"`), sorted ascending and non-overlapping. A freshly set-up pool is a single range; `sync` pruning or a partially failed teardown batch simply produce more ranges (`["1-3999", "4100-4500"]`). This keeps the file a few hundred bytes regardless of pool size — small enough to inline in a Kubernetes ConfigMap. Legacy files using flat `account_indices` / `sac_holder_indices` arrays are still read transparently and are upgraded to the range form on the next save.
 
 The file is written atomically (write to `.tmp`, then rename) to avoid corruption from interrupted writes. No raw seeds are stored on disk. The recorded `rpc_url` and `network_passphrase` are treated as part of the state identity and are validated before the state is reused.

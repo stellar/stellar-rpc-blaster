@@ -1,0 +1,92 @@
+# Builds the tx-load-test container image and pushes it to the internal ECR
+# registry via stellar/actions/sdf-ecr-login (OIDC -- no long-lived AWS
+# secrets; the action's IAM policy only allows pushes from this repository's
+# workflows).
+#
+# Tags pushed:
+#   <registry>/dev/tx-load-test:latest        -- tracks the default branch
+#   <registry>/dev/tx-load-test:sha-<short>   -- immutable, for pinning in k8s
+#
+# The weekly CronJob should pin the sha- tag, not :latest, so a run is never
+# silently retargeted by a new push.
+name: Build & push TPS tool image
+
+on:
+  pull_request: 
+    branches: [load-tester]
+  push:
+    branches: [main, load-tester]
+    # Only rebuild when something that reaches the image changes. The binary
+    # pulls from cmd/tx-load-test/** and internal/** (run engine); the image
+    # also carries the flat contract Wasm artifacts.
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - go.mod
+      - go.sum
+      - cmd/tx-load-test/**
+      - internal/**
+      - contracts/*.wasm
+      - .github/workflows/push-image.yml
+  workflow_dispatch: {}
+
+# One image push at a time; a superseded build of the same ref is cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  id-token: write # OIDC token for sdf-ecr-login
+  contents: read
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to ECR
+        id: ecr
+        uses: stellar/actions/sdf-ecr-login@main
+
+      - name: Compute image tags
+        id: meta
+        run: |
+          registry='${{ steps.ecr.outputs.ecr-registry }}'
+          short_sha="$(git rev-parse --short=12 HEAD)"
+          # The dev/ namespace is required: ecr-push only auto-creates (and
+          # the push role only allows) repositories under dev/, stg/, prd/.
+          echo "image=${registry}/dev/tx-load-test" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=sha-${short_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        run: |
+          docker build \
+            --tag '${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}' \
+            --tag '${{ steps.meta.outputs.image }}:latest' \
+            .
+
+      # Smoke-test the scratch image actually executes before publishing it.
+      - name: Smoke test
+        run: |
+          docker run --rm '${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}' --help
+          docker run --rm '${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}' bench --help > /dev/null
+
+      # ecr-push (installed by sdf-ecr-login) replaces docker push: it creates
+      # the repository on first use (tagged with this GitHub repo for the IAM
+      # push policy) and then pushes.
+      - name: Push image
+        run: |
+          ecr-push '${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}'
+          ecr-push '${{ steps.meta.outputs.image }}:latest'
+
+      - name: Summary
+        run: |
+          {
+            echo "### tx-load-test image pushed"
+            echo '```'
+            echo '${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}'
+            echo '${{ steps.meta.outputs.image }}:latest'
+            echo '```'
+            echo "Pin the sha tag in the k8s CronJob."
+          } >> "$GITHUB_STEP_SUMMARY"

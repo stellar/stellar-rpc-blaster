@@ -19,32 +19,37 @@ import (
 // benchmarkBaseFeeMin and benchmarkBaseFeeMax bound the per-op inclusion fee
 // (in stroops) randomly chosen for each submitted benchmark transaction.
 //
-// Two reasons we sample per-tx instead of using a single fixed value:
+// The [200, 500] range is deliberately LOW -- just above the 100-stroop
+// network minimum. The bench's goal is to fill the *remaining* space in each
+// ledger, not to crowd out real users: when organic traffic bids more than a
+// few hundred stroops/op during genuine congestion, our transactions are
+// outbid and excluded, which is the intended behavior. We are not trying to
+// win the auction, only to occupy whatever capacity organic demand leaves
+// behind. (A previous [10_000, 100_000] range aimed to clear self-induced
+// surge floors and stay above external p95s; that over-bids for a
+// fill-the-gap workload and inflates cost on pubnet.)
 //
-//  1. Stellar core's SurgePricingUtils::computeBetterFee requires a STRICTLY
-//     greater per-op fee for a new tx to evict (or beat in per-ledger
-//     inclusion ranking) one already in the queue. With identical bids,
-//     every tx after the first ties and is rejected with txINSUFFICIENT_FEE
-//     — observed at 17,666 of 18,000 OZ-transfer submits in a 5-min bench.
-//     Per-tx random sampling makes ties statistically vanishing (collision
-//     rate ~= queue_depth^2 / (2*range_size); 90,001 distinct buckets here).
-//     This is the same primitive stellar-core's own LoadGenerator
-//     (TxGenerator::generateFee) uses.
+// We still sample per-tx rather than using a single fixed value, because
+// Stellar core's SurgePricingUtils::computeBetterFee requires a STRICTLY
+// greater per-op fee for a new tx to evict (or beat in per-ledger inclusion
+// ranking) one already in the queue. With identical bids, every tx after the
+// first ties and is rejected with txINSUFFICIENT_FEE -- observed at 17,666 of
+// 18,000 OZ-transfer submits in a 5-min bench. Per-tx random sampling breaks
+// those ties (collision rate ~= queue_depth^2 / (2*range_size)). This is the
+// same primitive stellar-core's own LoadGenerator (TxGenerator::generateFee)
+// uses.
 //
-//  2. To stay above network surge floors. The [10_000, 100_000] range is
-//     a heuristic starting point: well above the 100-stroop network
-//     minimum and historical futurenet external-surge p95s in the
-//     low-thousands. It is NOT guaranteed to clear self-induced surge on
-//     resource-heavy workloads — at high RPS for OZ/soroswap the bench
-//     can saturate ledger Soroban capacity, the surge floor rises tx-by-
-//     tx, and the upper bound here can be exceeded. Cost on test networks
-//     is negligible: a 100k-stroop inclusion bid is ~0.01 XLM per tx,
-//     and the fee_payer holds free XLM. For pubnet, or for sustained
-//     high-RPS Soroban-heavy benches, the operator should re-tune these
-//     constants based on observed getFeeStats.SorobanInclusionFee.
+// Trade-off of the narrower range: only 301 distinct buckets (vs 90,001
+// before), so at ~800 tx/ledger our own submissions collide far more often.
+// That matters only when the ledger is FULL and eviction requires a strictly
+// greater bid -- i.e. exactly when we intend to yield to organic traffic
+// anyway. Below saturation there is free space, txns are admitted directly,
+// and ties are harmless. If a target network needs a different band (e.g. to
+// sit just under a specific organic surge floor), re-tune based on observed
+// getFeeStats inclusion fees.
 const (
-	benchmarkBaseFeeMin int64 = 10_000
-	benchmarkBaseFeeMax int64 = 100_000
+	benchmarkBaseFeeMin int64 = 200
+	benchmarkBaseFeeMax int64 = 500
 )
 
 // sampleBenchmarkBaseFee returns a per-op inclusion fee uniformly sampled from
