@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -249,4 +250,71 @@ func TestValidateRPCNetwork(t *testing.T) {
 		err := ps.ValidateRPCNetwork(context.Background(), "")
 		require.Error(t, err)
 	})
+}
+
+func TestLoadExistingSetupStateMissingFileReturnsNil(t *testing.T) {
+	dir := t.TempDir()
+	st, err := LoadExistingSetupState(context.Background(), dir+"/missing.json", "", "", network.TestNetworkPassphrase)
+	require.NoError(t, err)
+	require.Nil(t, st)
+}
+
+func TestLoadRuntimeStateUsesPersistedRPCURLWhenOverrideEmpty(t *testing.T) {
+	base := mustRandomKeypair(t)
+	srv := newGetNetworkServer(t, network.TestNetworkPassphrase)
+	defer srv.Close()
+
+	ps := &PersistedState{
+		RPCURL:            srv.URL,
+		NetworkPassphrase: network.TestNetworkPassphrase,
+		FeePayerHash:      HashSeed(base.Seed()),
+		AccountIndices:    []int{1},
+		Assets:            [3]string{"BLTA", "BLTB", "BLTC"},
+	}
+	stateFile := t.TempDir() + "/state.json"
+	require.NoError(t, ps.Save(stateFile))
+
+	loaded, err := LoadRuntimeState(context.Background(), RuntimePhaseBench, stateFile, base.Seed(), "")
+	require.NoError(t, err)
+	require.Equal(t, srv.URL, loaded.RPCURL)
+	require.NotNil(t, loaded.Live)
+}
+
+func TestValidateRuntimeAccountsExistAcceptsExistingSample(t *testing.T) {
+	base := mustRandomKeypair(t)
+	kp1, err := DeriveKeypair(base, 1)
+	require.NoError(t, err)
+	kp2, err := DeriveKeypair(base, 2)
+	require.NoError(t, err)
+
+	err = validateRuntimeAccountsExist(context.Background(), &State{AccountKPs: []*keypair.Full{kp1, kp2}}, 2, func(_ context.Context, address string) (bool, error) {
+		return address == kp1.Address() || address == kp2.Address(), nil
+	})
+	require.NoError(t, err)
+}
+
+func TestValidateRuntimeAccountsExistReportsMissingAccounts(t *testing.T) {
+	base := mustRandomKeypair(t)
+	kp1, err := DeriveKeypair(base, 1)
+	require.NoError(t, err)
+	kp2, err := DeriveKeypair(base, 2)
+	require.NoError(t, err)
+	kp3, err := DeriveKeypair(base, 3)
+	require.NoError(t, err)
+
+	err = validateRuntimeAccountsExist(context.Background(), &State{AccountKPs: []*keypair.Full{kp1, kp2, kp3}}, 2, func(_ context.Context, address string) (bool, error) {
+		return address == kp1.Address(), nil
+	})
+	require.EqualError(t, err, "1 of the first 2 participant accounts are missing on-chain; examples: "+kp2.Address()+" -- run 'sync', disable this preflight with --skip-account-preflight, or rerun setup")
+}
+
+func TestValidateRuntimeAccountsExistPropagatesLookupErrors(t *testing.T) {
+	base := mustRandomKeypair(t)
+	kp1, err := DeriveKeypair(base, 1)
+	require.NoError(t, err)
+
+	err = validateRuntimeAccountsExist(context.Background(), &State{AccountKPs: []*keypair.Full{kp1}}, 1, func(_ context.Context, address string) (bool, error) {
+		return false, fmt.Errorf("rpc down for %s", address)
+	})
+	require.EqualError(t, err, "check account "+kp1.Address()+": rpc down for "+kp1.Address())
 }

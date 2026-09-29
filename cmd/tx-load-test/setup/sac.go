@@ -4,13 +4,12 @@ import (
 	"context"
 	"fmt"
 
-	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
-	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
+	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
 
@@ -40,7 +39,7 @@ func (sacStep) Run(ctx context.Context, logger *log.Entry, cfg config.Config, st
 		}
 		contractID := xdr.ContractId(contractIDBytes)
 
-		exists, err := contractInstanceExists(ctx, st.RPCClient, contractID)
+		exists, err := ledger.ContractInstanceExists(ctx, st.RPCClient, contractID)
 		if err != nil {
 			return fmt.Errorf("asset[%d] check SAC existence: %w", i, err)
 		}
@@ -54,7 +53,7 @@ func (sacStep) Run(ctx context.Context, logger *log.Entry, cfg config.Config, st
 			}
 		}
 
-		contractIDStr, err := strkey.Encode(strkey.VersionByteContract, contractID[:])
+		contractIDStr, err := ledger.EncodeContractID(contractID)
 		if err != nil {
 			return fmt.Errorf("asset[%d] encode SAC contract ID: %w", i, err)
 		}
@@ -112,35 +111,4 @@ func deploySAC(
 	}
 
 	return state.SubmitSorobanAndWait(ctx, logger, st.RPCClient, networkPassphrase, st.FeePayerKP, op)
-}
-
-// contractInstanceExists returns true when the contract instance ledger entry
-// is already present on the network (i.e. the contract has been deployed
-// before).
-func contractInstanceExists(ctx context.Context, rpc interface {
-	GetLedgerEntries(context.Context, protocol.GetLedgerEntriesRequest) (protocol.GetLedgerEntriesResponse, error)
-}, contractID xdr.ContractId) (bool, error) {
-	instanceKey := xdr.LedgerKey{
-		Type: xdr.LedgerEntryTypeContractData,
-		ContractData: &xdr.LedgerKeyContractData{
-			Contract: xdr.ScAddress{
-				Type:       xdr.ScAddressTypeScAddressTypeContract,
-				ContractId: &contractID,
-			},
-			Key:        xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance},
-			Durability: xdr.ContractDataDurabilityPersistent,
-		},
-	}
-
-	keyB64, err := xdr.MarshalBase64(instanceKey)
-	if err != nil {
-		return false, fmt.Errorf("marshal ledger key: %w", err)
-	}
-
-	resp, err := rpc.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{Keys: []string{keyB64}})
-	if err != nil {
-		return false, fmt.Errorf("get ledger entries: %w", err)
-	}
-
-	return len(resp.Entries) > 0, nil
 }

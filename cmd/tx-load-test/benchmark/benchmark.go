@@ -57,6 +57,19 @@ var supportedModes = []config.BenchmarkMode{
 	config.ModeSoroswap,
 }
 
+func verifyReadyForModes(ctx context.Context, st *state.State, modeSet map[config.BenchmarkMode]Mode, modeOrder []config.BenchmarkMode) error {
+	for _, modeName := range modeOrder {
+		mode, ok := modeSet[modeName]
+		if !ok {
+			return fmt.Errorf("missing benchmark mode implementation for %q", modeName)
+		}
+		if err := mode.VerifyReady(ctx, st); err != nil {
+			return fmt.Errorf("mode=%s: %w", mode.Label(), err)
+		}
+	}
+	return nil
+}
+
 type workload struct {
 	label       string
 	targetRPS   int
@@ -110,6 +123,13 @@ func ValidateSetupConfig(cfg config.Config) error {
 		}
 	}
 	return nil
+}
+
+// VerifySetupReadyForAllModes performs runtime ledger/state checks for every
+// supported benchmark mode after setup completes. This catches readiness
+// issues during setup instead of failing later at bench startup.
+func VerifySetupReadyForAllModes(ctx context.Context, st *state.State) error {
+	return verifyReadyForModes(ctx, st, modes, supportedModes)
 }
 
 func holderAccountsForBenchmark(cfg config.Config, st *state.State) ([]*keypair.Full, error) {
