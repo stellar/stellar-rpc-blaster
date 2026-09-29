@@ -1,0 +1,29 @@
+# Keep the build context small, fast, and free of secrets/outputs.
+
+.git
+.gitignore
+.github
+*.md
+Dockerfile
+.dockerignore
+
+# Never bake state files (they carry the fee-payer hash + topology), seeds, or
+# run outputs into the image.
+state*.json
+*.ndjson
+debug*.ndjson
+traces/
+metrics/
+results-*/
+*.log
+*.png
+
+# Prebuilt binaries that may be lying around the repo root.
+tx-load-test
+pool-xlm
+parser
+
+# Heavy contract source/build trees. Keep only the flat runtime Wasm artifacts
+# the image actually copies.
+contracts/*
+!contracts/*.wasm
