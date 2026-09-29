@@ -23,13 +23,10 @@ func pollWorkerCount(targetRPS int) int {
 }
 
 // pollTimeout is the per-transaction deadline for polling getTransaction to a
-// terminal state. Five ledgers at ~5 s each gives plenty of margin.
-const pollTimeout = 30 * time.Second
-
-func startPollWorkers(ctx context.Context, logger *log.Entry, cfg config.Config, rpc *rpcclient.Client, state *attackState, accounts accountLeaseManager) (int, *sync.WaitGroup) {
-
-	return startPollWorkersWithTrace(ctx, logger, cfg, rpc, state, accounts, "", nil)
-}
+// terminal state. It intentionally outlives the benchmark transaction expiry
+// so the poller can observe txTooLate-style terminal failures instead of
+// timing out first.
+const pollTimeout = 35 * time.Second
 
 func startPollWorkersWithTrace(ctx context.Context, logger *log.Entry, cfg config.Config, rpc *rpcclient.Client, state *attackState, accounts accountLeaseManager, workload string, recorder *benchmarkTraceRecorder) (int, *sync.WaitGroup) {
 	numPollWorkers := pollWorkerCount(cfg.TargetRPS)

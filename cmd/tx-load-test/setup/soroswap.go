@@ -155,16 +155,6 @@ func createSoroswapPair(
 	return state.SubmitSorobanAndWait(ctx, logger, st.RPCClient, networkPassphrase, st.FeePayerKP, op)
 }
 
-func simulateReadonlyContractCall(
-	ctx context.Context,
-	st *state.State,
-	contractIDStr string,
-	functionName string,
-	args xdr.ScVec,
-) (xdr.ScVal, error) {
-	return soroswap.SimulateReadonlyContractCall(ctx, st, contractIDStr, functionName, args)
-}
-
 func resolvedSoroswapContracts(cfg config.Config, st *state.State) (string, string) {
 	factoryContract := cfg.SoroswapFactoryContract
 	if factoryContract == "" {

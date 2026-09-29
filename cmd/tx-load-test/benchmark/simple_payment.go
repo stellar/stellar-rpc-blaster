@@ -64,7 +64,7 @@ func newSimplePaymentTargeter(ctx context.Context, rpcURL string, st *state.Stat
 			IncrementSequenceNum: false,
 			Operations:           ops,
 			BaseFee:              benchmarkBaseFee,
-			Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(60)},
+			Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(benchmarkTransactionTimeoutSecs)},
 		})
 		if err != nil {
 			return fmt.Errorf("build transaction: %w", err)
