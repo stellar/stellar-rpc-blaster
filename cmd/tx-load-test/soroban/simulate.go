@@ -7,6 +7,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/keypair"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
+	"github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
@@ -14,6 +15,7 @@ import (
 )
 
 const simulateInvokeTimeout = 30 * time.Second
+const maxSimulationRestoreAttempts = 2
 
 type SimulatedInvocation struct {
 	Resources   xdr.SorobanResources
@@ -29,6 +31,25 @@ func SimulateInvokeContract(
 	invokeArgs xdr.InvokeContractArgs,
 	baseFee int64,
 ) (SimulatedInvocation, error) {
+	simResp, err := simulateInvokeContractResponse(st, txSourceKP, opSourceAddress, invokeArgs, baseFee)
+	if err != nil {
+		return SimulatedInvocation{}, err
+	}
+
+	sim, err := parseSimulatedInvocation(simResp)
+	if err != nil {
+		return SimulatedInvocation{}, err
+	}
+	return sim, nil
+}
+
+func simulateInvokeContractResponse(
+	st *state.State,
+	txSourceKP *keypair.Full,
+	opSourceAddress string,
+	invokeArgs xdr.InvokeContractArgs,
+	baseFee int64,
+) (protocol.SimulateTransactionResponse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), simulateInvokeTimeout)
 	defer cancel()
 
@@ -49,27 +70,22 @@ func SimulateInvokeContract(
 		Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(60)},
 	})
 	if err != nil {
-		return SimulatedInvocation{}, fmt.Errorf("build simulation transaction: %w", err)
+		return protocol.SimulateTransactionResponse{}, fmt.Errorf("build simulation transaction: %w", err)
 	}
 
 	b64, err := tx.Base64()
 	if err != nil {
-		return SimulatedInvocation{}, fmt.Errorf("marshal simulation transaction: %w", err)
+		return protocol.SimulateTransactionResponse{}, fmt.Errorf("marshal simulation transaction: %w", err)
 	}
 
 	simResp, err := st.RPCClient.SimulateTransaction(ctx, protocol.SimulateTransactionRequest{Transaction: b64})
 	if err != nil {
-		return SimulatedInvocation{}, fmt.Errorf("simulate: %w", err)
+		return protocol.SimulateTransactionResponse{}, fmt.Errorf("simulate: %w", err)
 	}
 	if simResp.Error != "" {
-		return SimulatedInvocation{}, fmt.Errorf("simulate: %s", simResp.Error)
+		return protocol.SimulateTransactionResponse{}, fmt.Errorf("simulate: %s", simResp.Error)
 	}
-
-	sim, err := parseSimulatedInvocation(simResp)
-	if err != nil {
-		return SimulatedInvocation{}, err
-	}
-	return sim, nil
+	return simResp, nil
 }
 
 func SimulatePaddedInvokeContract(
@@ -80,12 +96,76 @@ func SimulatePaddedInvokeContract(
 	baseFee int64,
 	padFactor float64,
 ) (SimulatedInvocation, error) {
-	sim, err := SimulateInvokeContract(st, txSourceKP, opSourceAddress, invokeArgs, baseFee)
-	if err != nil {
-		return SimulatedInvocation{}, err
+	for restoreAttempt := 0; restoreAttempt <= maxSimulationRestoreAttempts; restoreAttempt++ {
+		simResp, err := simulateInvokeContractResponse(st, txSourceKP, opSourceAddress, invokeArgs, baseFee)
+		if err != nil {
+			return SimulatedInvocation{}, err
+		}
+		if simResp.RestorePreamble != nil {
+			if restoreAttempt == maxSimulationRestoreAttempts {
+				return SimulatedInvocation{}, fmt.Errorf("simulate: restore still required after %d attempts", restoreAttempt+1)
+			}
+			if err := submitSimulationRestore(st, txSourceKP, simResp.RestorePreamble); err != nil {
+				return SimulatedInvocation{}, fmt.Errorf("restore footprint: %w", err)
+			}
+			continue
+		}
+
+		sim, err := parseSimulatedInvocation(simResp)
+		if err != nil {
+			return SimulatedInvocation{}, err
+		}
+		PadSimulatedInvocation(&sim, padFactor)
+		return sim, nil
 	}
-	PadSimulatedInvocation(&sim, padFactor)
-	return sim, nil
+
+	return SimulatedInvocation{}, fmt.Errorf("simulate: restoration attempts exhausted")
+}
+
+func submitSimulationRestore(st *state.State, fallbackSigner *keypair.Full, preamble *protocol.RestorePreamble) error {
+	sorobanData, err := restoreSorobanTransactionData(preamble)
+	if err != nil {
+		return err
+	}
+	signer := st.FeePayerKP
+	if signer == nil {
+		signer = fallbackSigner
+	}
+	if signer == nil {
+		return fmt.Errorf("missing signer for restore transaction")
+	}
+	if st.NetworkPassphrase == "" {
+		return fmt.Errorf("missing network passphrase for restore transaction")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), simulateInvokeTimeout)
+	defer cancel()
+	logger := log.New().WithField("phase", "benchmark restore")
+	return state.SubmitAndWait(
+		ctx,
+		logger,
+		st.RPCClient,
+		st.NetworkPassphrase,
+		signer,
+		state.InclusionFee+int64(sorobanData.ResourceFee),
+		[]txnbuild.Operation{&txnbuild.RestoreFootprint{
+			SourceAccount: signer.Address(),
+			Ext:           xdr.TransactionExt{V: 1, SorobanData: &sorobanData},
+		}},
+	)
+}
+
+func restoreSorobanTransactionData(preamble *protocol.RestorePreamble) (xdr.SorobanTransactionData, error) {
+	if preamble == nil {
+		return xdr.SorobanTransactionData{}, fmt.Errorf("missing restore preamble")
+	}
+	var sorobanData xdr.SorobanTransactionData
+	if err := xdr.SafeUnmarshalBase64(preamble.TransactionDataXDR, &sorobanData); err != nil {
+		return xdr.SorobanTransactionData{}, fmt.Errorf("parse restore transaction data: %w", err)
+	}
+	if preamble.MinResourceFee > 0 && sorobanData.ResourceFee < xdr.Int64(preamble.MinResourceFee) {
+		sorobanData.ResourceFee = xdr.Int64(preamble.MinResourceFee)
+	}
+	return sorobanData, nil
 }
 
 func parseSimulatedInvocation(simResp protocol.SimulateTransactionResponse) (SimulatedInvocation, error) {

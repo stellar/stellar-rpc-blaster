@@ -1,10 +1,6 @@
 package main
 
 import (
-	"os"
-	"os/signal"
-	"syscall"
-
 	"github.com/spf13/cobra"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
@@ -34,32 +30,12 @@ func runSync(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	stateFile, err := cmd.Flags().GetString("state-file")
-	if err != nil {
-		return err
-	}
-	rpcURL, err := cmd.Flags().GetString("rpc-url")
-	if err != nil {
-		return err
-	}
-	skipAccountPreflight, err := cmd.Flags().GetBool("skip-account-preflight")
-	if err != nil {
-		return err
-	}
-	accountPreflightSample, err := cmd.Flags().GetInt("account-preflight-sample")
+	stateFile, loaded, err := loadRuntimeStateFromCommand(cmd, state.RuntimePhaseSync)
 	if err != nil {
 		return err
 	}
 
-	loaded, err := state.LoadRuntimeStateWithOptions(cmd.Context(), state.RuntimePhaseSync, stateFile, os.Getenv("TX_LOAD_TEST_FEE_PAYER_SEED"), rpcURL, state.RuntimeLoadOptions{
-		VerifyAccountsExist: !skipAccountPreflight,
-		AccountCheckSample:  accountPreflightSample,
-	})
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := signalCommandContext(cmd, logger, false)
 	defer cancel()
 
 	logger.Infof("loaded state from %s (%d accounts)", stateFile, len(loaded.Persisted.AccountIndices))

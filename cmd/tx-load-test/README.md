@@ -104,7 +104,18 @@ Before the benchmark starts, the tool queries the chosen RPC endpoint (either `-
 | `--ramp-up` | `20s` | Linear ramp from 1 RPS to target |
 | `--rpc-url` | *(from state file)* | Override the RPC URL stored in `state.json` |
 | `--state-file` | `state.json` | Input state file path |
+| `--skip-account-preflight` | `false` | Skip the sampled on-chain participant-account existence check before the benchmark starts |
+| `--account-preflight-sample` | `10` | Number of participant accounts to sample during runtime preflight |
+| `--trace-file` | *(disabled)* | Optional NDJSON file that captures every benchmark submit and poll request/response |
 | `--log-level` | `info` | `debug`, `info`, `warn`, `error` |
+
+**Mode guide:**
+
+| Mode | What it exercises | Ledger prerequisites | When to use it |
+|---|---|---|---|
+| `sac-transfer` | SAC token transfers using trustlined holder accounts | Benchmark assets, SAC contracts, trustlines, seeded holder balances | Lowest-friction Soroban token-transfer baseline |
+| `oz-transfer` | Upgradeable OpenZeppelin token `transfer` calls | OZ token contract plus participant token balances | Soroban token path with contract-managed balance storage |
+| `soroswap` | Router-based exact-input swaps across benchmark pools | Soroswap factory/router, pair contracts, seeded liquidity, trustlined participants | Highest-complexity DeFi-style traffic with pool state mutation |
 
 **Validation:** before starting, bench checks:
 - `--mode` is supported and `--target-rps > 0`.
@@ -122,10 +133,13 @@ When `--classic-rps > 0`, bench also runs a parallel simple-payment companion st
 **Benchmark output:** after the attack and poll drain, bench logs:
 - Submission counters: submitted, queued, httpErr, tryAgainLater, submitErrors (with per-ResultCode breakdown)
 - On-chain outcomes: included, failed, pollErr
+- On-chain failure summaries: per-result-code breakdown plus normalized diagnostic summaries for repeated Soroban failures
 - Vegeta metrics: request count, achieved rate (req/s), throughput (req/s), success ratio
 - Latency percentiles: mean, p50, p95, p99, max
 - Bytes in/out: total and mean
 - HTTP status code distribution
+
+When `--trace-file` is enabled, bench also writes every submit and poll request/response pair to the specified NDJSON file for post-run analysis.
 
 ### `teardown`
 

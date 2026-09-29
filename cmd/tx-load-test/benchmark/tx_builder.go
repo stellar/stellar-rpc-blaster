@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 
@@ -12,6 +14,8 @@ import (
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
+
+const requestIDURLFragmentPrefix = "blaster-rpc-id="
 
 type sorobanSendTransactionParams struct {
 	RPCID             int64
@@ -74,9 +78,17 @@ func buildSorobanSendTransactionBody(params sorobanSendTransactionParams) ([]byt
 	return body, nil
 }
 
-func populateJSONRPCTarget(t *vegeta.Target, rpcURL string, body []byte) {
+func populateJSONRPCTarget(t *vegeta.Target, rpcURL string, body []byte, requestID int64) {
+	targetURL := rpcURL
+	if requestID > 0 {
+		parsedURL, err := url.Parse(rpcURL)
+		if err == nil {
+			parsedURL.Fragment = requestIDURLFragmentPrefix + strconv.FormatInt(requestID, 10)
+			targetURL = parsedURL.String()
+		}
+	}
 	t.Method = http.MethodPost
-	t.URL = rpcURL
+	t.URL = targetURL
 	t.Body = body
 	t.Header = http.Header{"Content-Type": {"application/json"}}
 }

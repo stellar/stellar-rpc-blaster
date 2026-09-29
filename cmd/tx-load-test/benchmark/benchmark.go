@@ -20,14 +20,6 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
 
-// SequenceResetFunc is called when a submitted transaction was rejected
-// without consuming its on-ledger sequence number (e.g. TRY_AGAIN_LATER or
-// ERROR).  The argument is the JSON-RPC ID echoed in the response, which the
-// implementation uses to identify the source account and revert its sequence
-// counter so the next transaction for that account retries with the correct
-// sequence.
-type SequenceResetFunc func(jsonRPCId int64)
-
 // Mode is a single benchmark workload. Each implementation knows how to
 // build a Vegeta Targeter and provides a short label used in logging and
 // as the Vegeta attack name.
@@ -38,10 +30,10 @@ type Mode interface {
 	// returns an actionable error if the persisted state is not benchmark-ready.
 	VerifyReady(ctx context.Context, state *state.State) error
 	// NewTargeter validates the required state and returns a Vegeta Targeter
-	// that emits one signed RPC request per call, plus an optional
-	// SequenceResetFunc for reverting sequence numbers on non-consuming
-	// failures.  Modes that do not manage sequences may return nil.
-	NewTargeter(ctx context.Context, rpcURL string, state *state.State, txSourceAccounts []*keypair.Full) (vegeta.Targeter, SequenceResetFunc, error)
+	// that emits one signed RPC request per call. Transaction source accounts,
+	// globally unique request IDs, and sequence assignment are coordinated by the
+	// shared account manager.
+	NewTargeter(ctx context.Context, rpcURL string, state *state.State, accounts accountLeaseManager) (vegeta.Targeter, error)
 }
 
 // modes maps each config.BenchmarkMode string to its Mode implementation.
@@ -75,13 +67,33 @@ type workload struct {
 	targetRPS   int
 	rateSummary string
 	targeter    vegeta.Targeter
-	resetSeq    SequenceResetFunc
 }
 
 // ValidateConfig checks that the benchmark configuration is internally
 // consistent.  Call this before the expensive setup phase so that obvious
 // misconfigurations are caught immediately.
 func ValidateConfig(cfg config.Config) error {
+	if err := ValidateCLIConfig(cfg); err != nil {
+		return err
+	}
+
+	simpleRequired := state.SimplePaymentSourceAccountCount(cfg)
+	sorobanRequired := state.SorobanSourceAccountCount(cfg)
+	totalRequired := simpleRequired + sorobanRequired
+
+	if cfg.NumberOfAccounts < totalRequired {
+		return fmt.Errorf(
+			"account pool too small for configured benchmark: have %d accounts but need at least %d "+
+				"(%d Soroban tx sources + %d simple-payment tx sources)  -- increase --accounts, reduce --target-rps, reduce --classic-rps, or shorten --duration",
+			cfg.NumberOfAccounts, totalRequired, sorobanRequired, simpleRequired,
+		)
+	}
+	return nil
+}
+
+// ValidateCLIConfig checks benchmark settings that can be validated before any
+// state-file load or RPC interaction.
+func ValidateCLIConfig(cfg config.Config) error {
 	if _, ok := modes[cfg.Mode]; !ok {
 		return fmt.Errorf("unknown benchmark mode: %q", cfg.Mode)
 	}
@@ -95,18 +107,6 @@ func ValidateConfig(cfg config.Config) error {
 		return fmt.Errorf(
 			"classic-rps must be a multiple of %d when simple payments use fixed-size batches",
 			state.SimplePaymentOpsPerTransaction,
-		)
-	}
-
-	simpleRequired := state.SimplePaymentSourceAccountCount(cfg)
-	sorobanRequired := state.SorobanSourceAccountCount(cfg)
-	totalRequired := simpleRequired + sorobanRequired
-
-	if cfg.NumberOfAccounts < totalRequired {
-		return fmt.Errorf(
-			"account pool too small for configured benchmark: have %d accounts but need at least %d "+
-				"(%d Soroban tx sources + %d simple-payment tx sources)  -- increase --accounts, reduce --target-rps, reduce --classic-rps, or shorten --duration",
-			cfg.NumberOfAccounts, totalRequired, sorobanRequired, simpleRequired,
 		)
 	}
 	return nil
@@ -168,7 +168,17 @@ func partitionSourceAccounts(cfg config.Config, st *state.State) ([]*keypair.Ful
 	return simpleSources, sorobanSources, nil
 }
 
-func runWorkloads(ctx context.Context, logger *log.Entry, baseCfg config.Config, st *state.State, httpClient *http.Client, workloads []workload) error {
+func runWorkloads(ctx context.Context, logger *log.Entry, baseCfg config.Config, st *state.State, httpClient *http.Client, accounts accountLeaseManager, workloads []workload) error {
+	recorder, err := openBenchmarkTraceRecorder(baseCfg.TraceFile)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if recorder != nil {
+			_ = recorder.Close()
+		}
+	}()
+
 	g, groupCtx := errgroup.WithContext(ctx)
 	for _, workload := range workloads {
 		wl := workload
@@ -177,7 +187,7 @@ func runWorkloads(ctx context.Context, logger *log.Entry, baseCfg config.Config,
 			runCfg.TargetRPS = wl.targetRPS
 			scoped := logger.WithField("phase", wl.label)
 			scoped.Infof("duration=%s ramp=%s %s", runCfg.Duration, runCfg.RampUp, wl.rateSummary)
-			if err := runVegetaAttack(groupCtx, scoped, runCfg, httpClient, st.RPCClient, wl.label, wl.targeter, wl.resetSeq); err != nil {
+			if err := runVegetaAttack(groupCtx, scoped, runCfg, httpClient, st.RPCClient, wl.label, wl.targeter, accounts, recorder); err != nil {
 				return fmt.Errorf("%s: %w", wl.label, err)
 			}
 			return nil
@@ -196,7 +206,7 @@ func Run(ctx context.Context, logger *log.Entry, cfg config.Config, st *state.St
 	if _, err := holderAccountsForBenchmark(cfg, st); err != nil {
 		return err
 	}
-	simpleSources, sorobanSources, err := partitionSourceAccounts(cfg, st)
+	accounts, err := newAccountManager(ctx, st)
 	if err != nil {
 		return err
 	}
@@ -205,7 +215,7 @@ func Run(ctx context.Context, logger *log.Entry, cfg config.Config, st *state.St
 	if err := m.VerifyReady(ctx, st); err != nil {
 		return fmt.Errorf("%s: verify ready: %w", m.Label(), err)
 	}
-	targeter, resetSeq, err := m.NewTargeter(ctx, cfg.RPCURL, st, sorobanSources)
+	targeter, err := m.NewTargeter(ctx, cfg.RPCURL, st, accounts)
 	if err != nil {
 		return fmt.Errorf("%s: build targeter: %w", m.Label(), err)
 	}
@@ -215,10 +225,9 @@ func Run(ctx context.Context, logger *log.Entry, cfg config.Config, st *state.St
 		targetRPS:   cfg.TargetRPS,
 		rateSummary: fmt.Sprintf("targetRPS=%d tx/s", cfg.TargetRPS),
 		targeter:    targeter,
-		resetSeq:    resetSeq,
 	}}
 	if cfg.ClassicRPS > 0 {
-		simpleTargeter, simpleResetSeq, err := newSimplePaymentTargeter(ctx, cfg.RPCURL, st, simpleSources, st.AccountKPs)
+		simpleTargeter, err := newSimplePaymentTargeter(ctx, cfg.RPCURL, st, accounts, st.AccountKPs)
 		if err != nil {
 			return fmt.Errorf("simple-payment: build targeter: %w", err)
 		}
@@ -227,8 +236,7 @@ func Run(ctx context.Context, logger *log.Entry, cfg config.Config, st *state.St
 			targetRPS:   state.SimplePaymentTransactionRate(cfg),
 			rateSummary: fmt.Sprintf("targetOps=%d ops/s targetRPS=%d tx/s opsPerTx=%d", cfg.ClassicRPS, state.SimplePaymentTransactionRate(cfg), state.SimplePaymentOpsPerTransaction),
 			targeter:    simpleTargeter,
-			resetSeq:    simpleResetSeq,
 		})
 	}
-	return runWorkloads(ctx, logger, cfg, st, httpClient, workloads)
+	return runWorkloads(ctx, logger, cfg, st, httpClient, accounts, workloads)
 }
