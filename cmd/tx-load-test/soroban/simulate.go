@@ -305,7 +305,5 @@ func PadSimulatedInvocation(sim *SimulatedInvocation, factor float64) {
 		return
 	}
 	sim.Resources.Instructions = xdr.Uint32(float64(sim.Resources.Instructions) * factor)
-	sim.Resources.DiskReadBytes = xdr.Uint32(float64(sim.Resources.DiskReadBytes) * factor)
-	sim.Resources.WriteBytes = xdr.Uint32(float64(sim.Resources.WriteBytes) * factor)
 	sim.ResourceFee = xdr.Int64(float64(sim.ResourceFee) * factor)
 }

@@ -142,7 +142,7 @@ func rewriteLedgerKeyAccount(key xdr.LedgerKey, oldAddress, newAddress string) (
 			if err != nil {
 				return xdr.LedgerKey{}, err
 			}
-			key.Account.AccountId = accountID
+			key.Account = &xdr.LedgerKeyAccount{AccountId: accountID}
 		}
 	case xdr.LedgerEntryTypeTrustline:
 		if key.TrustLine != nil && key.TrustLine.AccountId.Address() == oldAddress {
@@ -150,7 +150,9 @@ func rewriteLedgerKeyAccount(key xdr.LedgerKey, oldAddress, newAddress string) (
 			if err != nil {
 				return xdr.LedgerKey{}, err
 			}
-			key.TrustLine.AccountId = accountID
+			trustLine := *key.TrustLine
+			trustLine.AccountId = accountID
+			key.TrustLine = &trustLine
 		}
 	case xdr.LedgerEntryTypeContractData:
 		if key.ContractData != nil {
@@ -158,7 +160,9 @@ func rewriteLedgerKeyAccount(key xdr.LedgerKey, oldAddress, newAddress string) (
 			if err != nil {
 				return xdr.LedgerKey{}, err
 			}
-			key.ContractData.Key = rewritten
+			contractData := *key.ContractData
+			contractData.Key = rewritten
+			key.ContractData = &contractData
 		}
 	}
 	return key, nil
