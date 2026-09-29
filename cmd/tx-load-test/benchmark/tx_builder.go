@@ -54,7 +54,7 @@ func buildSorobanSendTransactionBody(params sorobanSendTransactionParams) ([]byt
 		SourceAccount:        &txnbuild.SimpleAccount{AccountID: params.TxSource.Address(), Sequence: params.Sequence},
 		IncrementSequenceNum: false,
 		Operations:           []txnbuild.Operation{&op},
-		BaseFee:              benchmarkBaseFee,
+		BaseFee:              sampleBenchmarkBaseFee(),
 		Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(benchmarkTransactionTimeoutSecs)},
 	})
 	if err != nil {

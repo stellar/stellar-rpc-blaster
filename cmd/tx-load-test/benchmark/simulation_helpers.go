@@ -26,7 +26,7 @@ func presimulateBenchmarkInvocation(
 		txSourceKP,
 		opSourceAddress,
 		invokeArgs,
-		benchmarkBaseFee,
+		benchmarkBaseFeeMin,
 		resourcePadFactor,
 	)
 	if err != nil {

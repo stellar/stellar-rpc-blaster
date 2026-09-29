@@ -14,9 +14,47 @@ import (
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
 
-// benchmarkBaseFee is the inclusion fee per operation (in stroops) applied to
-// every benchmark transaction, on top of the Soroban resource fee.
-const benchmarkBaseFee int64 = 200
+// benchmarkBaseFeeMin and benchmarkBaseFeeMax bound the per-op inclusion fee
+// (in stroops) randomly chosen for each submitted benchmark transaction.
+//
+// Two reasons we sample per-tx instead of using a single fixed value:
+//
+//  1. Stellar core's SurgePricingUtils::computeBetterFee requires a STRICTLY
+//     greater per-op fee for a new tx to evict (or beat in per-ledger
+//     inclusion ranking) one already in the queue. With identical bids,
+//     every tx after the first ties and is rejected with txINSUFFICIENT_FEE
+//     — observed at 17,666 of 18,000 OZ-transfer submits in a 5-min bench.
+//     Per-tx random sampling makes ties statistically vanishing (collision
+//     rate ~= queue_depth^2 / (2*range_size); 90,001 distinct buckets here).
+//     This is the same primitive stellar-core's own LoadGenerator
+//     (TxGenerator::generateFee) uses.
+//
+//  2. To stay above network surge floors. The [10_000, 100_000] range is
+//     a heuristic starting point: well above the 100-stroop network
+//     minimum and historical futurenet external-surge p95s in the
+//     low-thousands. It is NOT guaranteed to clear self-induced surge on
+//     resource-heavy workloads — at high RPS for OZ/soroswap the bench
+//     can saturate ledger Soroban capacity, the surge floor rises tx-by-
+//     tx, and the upper bound here can be exceeded. Cost on test networks
+//     is negligible: a 100k-stroop inclusion bid is ~0.01 XLM per tx,
+//     and the fee_payer holds free XLM. For pubnet, or for sustained
+//     high-RPS Soroban-heavy benches, the operator should re-tune these
+//     constants based on observed getFeeStats.SorobanInclusionFee.
+const (
+	benchmarkBaseFeeMin int64 = 10_000
+	benchmarkBaseFeeMax int64 = 100_000
+)
+
+// sampleBenchmarkBaseFee returns a per-op inclusion fee uniformly sampled from
+// [benchmarkBaseFeeMin, benchmarkBaseFeeMax]. Call once per submitted tx so
+// each carries a distinct per-op bid; this is what allows successive
+// submissions to avoid the SurgePricingUtils::computeBetterFee tie rule and
+// either be admitted directly (queue not full) or evict a strictly cheaper
+// occupant.
+func sampleBenchmarkBaseFee() int64 {
+	span := benchmarkBaseFeeMax - benchmarkBaseFeeMin + 1
+	return benchmarkBaseFeeMin + rand.Int64N(span)
+}
 
 // sacTransferAmount is 1.0 units of the asset in its 7-decimal raw form.
 const sacTransferAmount = int64(10_000_000)
