@@ -23,6 +23,15 @@ func TestValidateConfig(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "valid oz transfer config",
+			cfg: config.Config{
+				Mode:             config.ModeOZTransfer,
+				TargetRPS:        50,
+				NumberOfAccounts: 500,
+			},
+			wantErr: false,
+		},
+		{
 			name: "rejects unsupported mode",
 			cfg: config.Config{
 				Mode:             config.BenchmarkMode("unknown-mode"),
@@ -55,6 +64,24 @@ func TestValidateConfig(t *testing.T) {
 				Mode:             config.ModeSACTransfer,
 				TargetRPS:        50,
 				NumberOfAccounts: 300,
+			},
+			wantErr: false,
+		},
+		{
+			name: "accepts sac transfer when total tx-source pool is large enough",
+			cfg: config.Config{
+				Mode:             config.ModeSACTransfer,
+				TargetRPS:        250,
+				NumberOfAccounts: 5_000,
+			},
+			wantErr: false,
+		},
+		{
+			name: "accepts oz transfer with same total account pool",
+			cfg: config.Config{
+				Mode:             config.ModeOZTransfer,
+				TargetRPS:        250,
+				NumberOfAccounts: 5_000,
 			},
 			wantErr: false,
 		},

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -44,8 +45,28 @@ type sendRespEnvelope struct {
 // counter if the transaction is never confirmed on-chain (evicted from the
 // mempool).
 type pollItem struct {
-	hash  string
-	rpcID int64
+	hash        string
+	rpcID       int64
+	submittedAt time.Time
+}
+
+type e2eLatencyStats struct {
+	mu        sync.Mutex
+	latencies []time.Duration
+}
+
+func (s *e2eLatencyStats) observe(d time.Duration) {
+	s.mu.Lock()
+	s.latencies = append(s.latencies, d)
+	s.mu.Unlock()
+}
+
+func (s *e2eLatencyStats) snapshot() []time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]time.Duration, len(s.latencies))
+	copy(out, s.latencies)
+	return out
 }
 
 // rejectionCounts tracks how many times each TransactionResultCode was
@@ -151,6 +172,7 @@ func runVegetaAttack(
 		onChainFail uint64 // on-chain FAILED
 		pollErr     uint64 // error returned by PollTransaction
 	)
+	var e2eStats e2eLatencyStats
 
 	// Start pool of poll workers.  They read items until the channel is
 	// closed after the attack, then exit.  When a poll times out (the tx was
@@ -183,8 +205,10 @@ func runVegetaAttack(
 				switch resp.Status {
 				case protocol.TransactionStatusSuccess:
 					atomic.AddUint64(&included, 1)
+					e2eStats.observe(time.Since(item.submittedAt))
 				case protocol.TransactionStatusFailed:
 					atomic.AddUint64(&onChainFail, 1)
+					e2eStats.observe(time.Since(item.submittedAt))
 					code := decodeResultCode(resp.ResultXDR)
 					entry := logger.WithField("hash", item.hash).WithField("resultCode", code)
 					entry.Debug("on-chain failure")
@@ -233,7 +257,7 @@ loop:
 			switch envelope.Result.Status {
 			case "PENDING", "DUPLICATE":
 				// Accepted  -- queue for on-chain confirmation.
-				hashes <- pollItem{hash: envelope.Result.Hash, rpcID: envelope.ID}
+				hashes <- pollItem{hash: envelope.Result.Hash, rpcID: envelope.ID, submittedAt: res.Timestamp}
 				atomic.AddUint64(&queued, 1)
 			case "TRY_AGAIN_LATER":
 				// Core queue is full; the transaction never entered the
@@ -276,7 +300,7 @@ loop:
 		}
 		switch envelope.Result.Status {
 		case "PENDING", "DUPLICATE":
-			hashes <- pollItem{hash: envelope.Result.Hash, rpcID: envelope.ID}
+			hashes <- pollItem{hash: envelope.Result.Hash, rpcID: envelope.ID, submittedAt: res.Timestamp}
 			atomic.AddUint64(&queued, 1)
 		case "TRY_AGAIN_LATER":
 			atomic.AddUint64(&tryAgainLater, 1)
@@ -337,7 +361,7 @@ drainLoop:
 		case <-pollDone:
 			break drainLoop
 		case <-drainDeadline:
-			logger.Warnf("poll workers still running after %s  -- abandoning", drainTimeout)
+			logger.Warnf("poll workers still running after %s -- abandoning", drainTimeout)
 			break drainLoop
 		case <-progressTicker.C:
 			inc := atomic.LoadUint64(&included)
@@ -348,13 +372,31 @@ drainLoop:
 			if remaining > pendingPolls {
 				remaining = 0 // underflow guard
 			}
-			logger.Infof("poll progress  -- settled=%d (included=%d failed=%d pollErr=%d) remaining=%d",
+			logger.Infof("poll progress -- settled=%d (included=%d failed=%d pollErr=%d) remaining=%d",
 				settled, inc, fail, pe, remaining)
 		}
 	}
 
 	logger.Infof("on-chain results  -- included=%d failed=%d pollErr=%d",
 		included, onChainFail, pollErr)
+
+	e2eLatencies := e2eStats.snapshot()
+	if len(e2eLatencies) > 0 {
+		sort.Slice(e2eLatencies, func(i, j int) bool { return e2eLatencies[i] < e2eLatencies[j] })
+		var total time.Duration
+		for _, d := range e2eLatencies {
+			total += d
+		}
+		mean := total / time.Duration(len(e2eLatencies))
+		p50 := percentileDuration(e2eLatencies, 0.50)
+		p95 := percentileDuration(e2eLatencies, 0.95)
+		p99 := percentileDuration(e2eLatencies, 0.99)
+		max := e2eLatencies[len(e2eLatencies)-1]
+		logger.Infof("e2e latency (submit start -> terminal poll)  count=%d mean=%s p50=%s p95=%s p99=%s max=%s timeouts=%d",
+			len(e2eLatencies), mean, p50, p95, p99, max, pollErr)
+	} else {
+		logger.Infof("e2e latency (submit start -> terminal poll)  count=0 timeouts=%d", pollErr)
+	}
 
 	// Log Vegeta's built-in metrics: latency percentiles, achieved rate,
 	// throughput (successful requests/s), and success ratio.
@@ -380,4 +422,18 @@ drainLoop:
 	}
 
 	return nil
+}
+
+func percentileDuration(sorted []time.Duration, p float64) time.Duration {
+	if len(sorted) == 0 {
+		return 0
+	}
+	if p <= 0 {
+		return sorted[0]
+	}
+	if p >= 1 {
+		return sorted[len(sorted)-1]
+	}
+	idx := int(float64(len(sorted)-1) * p)
+	return sorted[idx]
 }
