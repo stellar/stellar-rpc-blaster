@@ -271,8 +271,8 @@ The state model should be simple and flat. Preserve these fields or their equiva
 	"rpc_url": "https://...",
 	"network_passphrase": "...",
 	"fee_payer_hash": "hex-sha256",
-	"account_indices": [1, 2, 3],
-	"sac_holder_indices": [1, 2, 3],
+	"account_ranges": ["1-4500"],
+	"sac_holder_ranges": ["1-900"],
 	"assets": ["BLTA", "BLTB", "BLTC"],
 	"sacs": ["C...", "C...", "C..."],
 	"soroswap_factory_contract": "C...",
@@ -285,8 +285,22 @@ The state model should be simple and flat. Preserve these fields or their equiva
 
 State design requirements:
 
-- `account_indices` are the canonical source for re-deriving participant accounts
-- `sac_holder_indices` track the prefix/subset that must hold trustlines and token balances for SAC-style activity
+- participant account derivation indices are the canonical identity for the
+	pool; on disk they are stored as compact ranges (`account_ranges`), where
+	each entry is a single index (`"5"`) or an inclusive contiguous run
+	(`"1-4500"`), sorted ascending and non-overlapping. Ranges are a SET
+	encoding, not a contiguity assumption: gaps from `sync` pruning or partially
+	failed teardown batches simply produce more ranges. This keeps the file a
+	few hundred bytes regardless of pool size (thousands of accounts would
+	otherwise mean thousands of array elements), which matters for embedding
+	the file in orchestration config (e.g. a Kubernetes ConfigMap).
+- `sac_holder_ranges` track the subset that must hold trustlines and token
+	balances for SAC-style activity, in the same encoding
+- readers must also accept the legacy flat forms (`account_indices`,
+	`sac_holder_indices`) and upgrade to ranges on the next save; a file
+	carrying both encodings for the same field is rejected as ambiguous
+- the range codec must guard expansion size on load (a typo'd `"1-4000000000"`
+	must error, not allocate gigabytes)
 - fee payer secret must never appear in the file
 - the recorded network passphrase is part of state identity, not just metadata
 
