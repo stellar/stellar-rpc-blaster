@@ -35,8 +35,10 @@ type Config struct {
 	NumberOfAccounts int
 
 	// BaseReserveXLM is the per-account funding amount in XLM.
-	// 0.5 base reserve + 3 x 0.5 trustline entries = 2.0 XLM minimum; an extra
-	// 1.0 XLM is added as a safety margin, giving a default of 3.0 XLM.
+	// On networks with a 0.5 XLM base reserve, an account with three benchmark
+	// asset trustlines needs (2 account reserves + 3 trustline reserves) * 0.5 =
+	// 2.5 XLM locked as minimum balance. The 3.0 XLM default leaves about 0.5
+	// XLM of headroom for incidental fees and future reserve changes.
 	BaseReserveXLM float64
 
 	// LiquidityPerPool is the amount of each asset to deposit into each Soroswap pool.

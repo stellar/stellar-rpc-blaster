@@ -11,6 +11,7 @@ type RuntimePhase string
 
 const (
 	RuntimePhaseBench    RuntimePhase = "bench"
+	RuntimePhaseRestore  RuntimePhase = "restore"
 	RuntimePhaseTeardown RuntimePhase = "teardown"
 	RuntimePhaseSync     RuntimePhase = "sync"
 )
@@ -161,6 +162,8 @@ func validateRuntimeAccountsExist(
 func runtimePhaseHint(phase RuntimePhase) string {
 	switch phase {
 	case RuntimePhaseBench:
+		return "  -- run 'setup' first"
+	case RuntimePhaseRestore:
 		return "  -- run 'setup' first"
 	case RuntimePhaseTeardown:
 		return "  -- nothing to tear down"

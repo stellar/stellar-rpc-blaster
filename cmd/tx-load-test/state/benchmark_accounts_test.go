@@ -16,16 +16,16 @@ func TestAccountSizingFormula(t *testing.T) {
 		Duration:   2 * time.Minute,
 	}
 
-	require.Equal(t, 4000, AnySourceAccountCount(cfg))
-	require.Equal(t, 2000, SorobanSourceAccountCount(cfg))
+	require.Equal(t, 6000, AnySourceAccountCount(cfg))
+	require.Equal(t, 3000, SorobanSourceAccountCount(cfg))
 	require.Equal(t, 200, SimplePaymentTransactionRate(cfg))
-	require.Equal(t, 2000, SimplePaymentSourceAccountCount(cfg))
+	require.Equal(t, 3000, SimplePaymentSourceAccountCount(cfg))
 	require.Equal(t, 2, HolderAccountCount(cfg))
 
 	cfg.Mode = config.ModeSoroswap
-	require.Equal(t, 2000, HolderAccountCount(cfg))
-	require.Equal(t, 2000, BenchmarkSupersetHolderAccountCount(cfg))
-	require.Equal(t, 2000, RecommendedBenchmarkSupersetHolderAccountCount(cfg, 5000))
+	require.Equal(t, 3000, HolderAccountCount(cfg))
+	require.Equal(t, 3000, BenchmarkSupersetHolderAccountCount(cfg))
+	require.Equal(t, 3000, RecommendedBenchmarkSupersetHolderAccountCount(cfg, 5000))
 	require.Equal(t, 500, RecommendedBenchmarkSupersetHolderAccountCount(cfg, 500))
 }
 
@@ -37,8 +37,8 @@ func TestAccountSizingFormulaFiveMinuteNormal(t *testing.T) {
 		Duration:   5 * time.Minute,
 	}
 
-	require.Equal(t, 2650, AnySourceAccountCount(cfg))
-	require.Equal(t, 650, SorobanSourceAccountCount(cfg))
+	require.Equal(t, 3975, AnySourceAccountCount(cfg))
+	require.Equal(t, 975, SorobanSourceAccountCount(cfg))
 	require.Equal(t, 200, SimplePaymentTransactionRate(cfg))
-	require.Equal(t, 2000, SimplePaymentSourceAccountCount(cfg))
+	require.Equal(t, 3000, SimplePaymentSourceAccountCount(cfg))
 }

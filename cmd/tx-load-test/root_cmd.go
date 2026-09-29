@@ -15,6 +15,7 @@ func buildRootCmd() *cobra.Command {
 
 	root.AddCommand(buildSetupCmd())
 	root.AddCommand(buildBenchCmd())
+	root.AddCommand(buildRestoreCmd())
 	root.AddCommand(buildTeardownCmd())
 	root.AddCommand(buildSyncCmd())
 	return root

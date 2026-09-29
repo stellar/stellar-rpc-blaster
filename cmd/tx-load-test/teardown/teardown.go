@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/support/log"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
@@ -25,15 +26,27 @@ const mergeBatchSize = 12
 // account count.
 const maxCleanupTimeout = 10 * time.Minute
 
-// Teardown merges every participant account back into the fee-payer account,
-// recovering all reserved XLM. On full success it deletes the state file.
-// On partial success it updates the state file to reflect remaining accounts
-// and logs a suggestion to re-run teardown.
-func Teardown(ctx context.Context, logger *log.Entry, cfg config.Config, st *state.State, stateFile string) error {
+// Teardown merges participant accounts back into the fee-payer account,
+// recovering reserved XLM.
+//
+// When keep <= 0 it is a full teardown: every participant account is merged
+// and the state file is deleted on full success; on partial failure the file
+// is updated with the remaining accounts.
+//
+// When keep > 0 it is a partial teardown: only the tail of the pool
+// (AccountKPs[keep:]) is merged, the first keep accounts are retained, and the
+// state file is always kept and updated. force allows merging into the
+// benchmark holder subset (which also shrinks it); without it, a keep that
+// would merge holder accounts is refused.
+func Teardown(ctx context.Context, logger *log.Entry, cfg config.Config, st *state.State, stateFile string, keep int, force bool) error {
 	logger = logger.WithField("phase", "teardown")
 
 	if !cleanupStateReady(logger, st) {
 		return nil
+	}
+
+	if keep > 0 {
+		return partialTeardown(ctx, logger, cfg, st, stateFile, keep, force)
 	}
 
 	toMerge := existingCleanupAccounts(ctx, logger, st, true)
@@ -49,6 +62,49 @@ func Teardown(ctx context.Context, logger *log.Entry, cfg config.Config, st *sta
 	}
 
 	return finalizeTeardown(logger, st, stateFile)
+}
+
+// partialTeardown merges the tail of the pool (everything after the first
+// keep accounts) back into the fee payer, retaining the front and always
+// keeping the state file.
+func partialTeardown(ctx context.Context, logger *log.Entry, cfg config.Config, st *state.State, stateFile string, keep int, force bool) error {
+	pool := len(st.AccountKPs)
+	if keep >= pool {
+		logger.Infof("pool has %d accounts, at or below keep=%d -- nothing to merge", pool, keep)
+		return nil
+	}
+
+	if safe := minSafeKeep(st); keep < safe && !force {
+		return fmt.Errorf(
+			"keep=%d would merge benchmark holder accounts -- keep at least %d to preserve the holder subset, or pass --force to merge into it (shrinks the holder set)",
+			keep, safe)
+	}
+
+	tail := st.AccountKPs[keep:]
+
+	// Tail accounts that no longer exist on-chain are already gone; drop them
+	// from state so they don't count against the keep target or trigger a false
+	// "incomplete" result. Persist that pruning before merging.
+	toMerge := filterExistingAccounts(ctx, logger, st, tail, true)
+	if gone := accountsNotIn(tail, toMerge); len(gone) > 0 {
+		removeMergedAccounts(st, gone)
+		if err := saveStateSnapshot(cfg, st, stateFile); err != nil {
+			return fmt.Errorf("save state after pruning %d absent tail accounts: %w", len(gone), err)
+		}
+		logger.Infof("pruned %d tail accounts already absent on-chain", len(gone))
+	}
+
+	if len(toMerge) == 0 {
+		logger.Infof("no tail accounts to merge; pool now %d accounts (kept first %d)", len(st.AccountKPs), keep)
+		return nil
+	}
+
+	logger.Infof("partial teardown: merging %d tail accounts, keeping first %d", len(toMerge), keep)
+	if err := runCleanupBatches(ctx, logger, cfg, st, stateFile, toMerge); err != nil {
+		return err
+	}
+
+	return finalizePartialTeardown(logger, cfg, st, stateFile, keep)
 }
 
 // BestEffortCleanup is called on interrupt / panic during setup. It attempts
@@ -101,6 +157,48 @@ func finalizeTeardown(logger *log.Entry, st *state.State, stateFile string) erro
 	logger.Info("all accounts merged")
 	deleteStateFile(logger, stateFile)
 	return nil
+}
+
+func finalizePartialTeardown(logger *log.Entry, cfg config.Config, st *state.State, stateFile string, keep int) error {
+	// runCleanupBatches snapshots after each batch; snapshot once more so the
+	// final state is durable even if the last batch removed nothing.
+	if err := saveStateSnapshot(cfg, st, stateFile); err != nil {
+		return fmt.Errorf("save final state: %w", err)
+	}
+
+	remaining := len(st.AccountKPs)
+	if remaining > keep {
+		logger.Warnf("%d accounts remain but target was %d -- %d tail accounts could not be merged; re-run with the same --keep to finish",
+			remaining, keep, remaining-keep)
+		return fmt.Errorf("partial teardown incomplete: %d accounts remain, target %d", remaining, keep)
+	}
+
+	logger.Infof("partial teardown complete: pool now %d accounts (kept first %d); state file %s retained", remaining, keep, stateFile)
+	if holders := len(st.SACHolderKPs); holders > 0 && remaining < holders {
+		logger.Warnf("remaining pool %d is below the holder count %d -- benchmark capability may be reduced", remaining, holders)
+	}
+	return nil
+}
+
+// accountsNotIn returns the members of all that are absent from subset,
+// compared by address.
+func accountsNotIn(all, subset []*keypair.Full) []*keypair.Full {
+	present := make(map[string]struct{}, len(subset))
+	for _, kp := range subset {
+		if kp != nil {
+			present[kp.Address()] = struct{}{}
+		}
+	}
+	var missing []*keypair.Full
+	for _, kp := range all {
+		if kp == nil {
+			continue
+		}
+		if _, ok := present[kp.Address()]; !ok {
+			missing = append(missing, kp)
+		}
+	}
+	return missing
 }
 
 func finalizeBestEffortCleanup(logger *log.Entry, st *state.State, stateFile string) {
