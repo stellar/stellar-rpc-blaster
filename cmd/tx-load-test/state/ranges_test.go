@@ -57,9 +57,9 @@ func TestDecodeIndexRanges(t *testing.T) {
 			{"abc"},
 			{""},
 			{"1-"},
-			{"-3"},        // parses as empty start
-			{"3--5"},      // negative end
-			{"5-1"},       // end below start
+			{"-3"},         // parses as empty start
+			{"3--5"},       // negative end
+			{"5-1"},        // end below start
 			{"1-3", "2-6"}, // overlapping
 			{"1-3", "4-6"}, // adjacent: encoder would have merged, not canonical
 			{"5-9", "1-3"}, // descending
