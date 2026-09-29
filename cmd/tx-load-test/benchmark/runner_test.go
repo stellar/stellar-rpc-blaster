@@ -266,9 +266,42 @@ func TestPercentileDurationEdges(t *testing.T) {
 	require.Equal(t, 2*time.Second, percentileDuration(values, 0.5))
 }
 
+// txResultErrorXDR builds a base64-encoded TransactionResult XDR with the
+// given outer code and (optionally) inner code. Used to drive the ERROR
+// branch of handleSendTransactionEnvelope with realistic result XDRs.
+func txResultErrorXDR(t *testing.T, outer xdr.TransactionResultCode, inner *xdr.TransactionResultCode) string {
+	t.Helper()
+	r := xdr.TransactionResult{}
+	switch outer {
+	case xdr.TransactionResultCodeTxFeeBumpInnerSuccess, xdr.TransactionResultCodeTxFeeBumpInnerFailed:
+		require.NotNil(t, inner)
+		innerRR := xdr.InnerTransactionResultResult{Code: *inner}
+		switch *inner {
+		case xdr.TransactionResultCodeTxSuccess, xdr.TransactionResultCodeTxFailed:
+			empty := []xdr.OperationResult{}
+			innerRR.Results = &empty
+		}
+		pair := xdr.InnerTransactionResultPair{
+			Result: xdr.InnerTransactionResult{Result: innerRR},
+		}
+		r.Result = xdr.TransactionResultResult{Code: outer, InnerResultPair: &pair}
+	default:
+		require.Nil(t, inner)
+		r.Result = xdr.TransactionResultResult{Code: outer}
+	}
+	b64, err := xdr.MarshalBase64(r)
+	require.NoError(t, err)
+	return b64
+}
+
 func TestHandleSendTransactionEnvelopeTracksStatuses(t *testing.T) {
 	state := newAttackState(4)
 	leases := &fakeLeaseManager{}
+
+	innerBadSeq := xdr.TransactionResultCodeTxBadSeq
+	badSeqDirect := txResultErrorXDR(t, xdr.TransactionResultCodeTxBadSeq, nil)
+	badSeqWrapped := txResultErrorXDR(t, xdr.TransactionResultCodeTxFeeBumpInnerFailed, &innerBadSeq)
+	insufficientFee := txResultErrorXDR(t, xdr.TransactionResultCodeTxInsufficientFee, nil)
 
 	require.True(t, state.handleSendTransactionEnvelope(sendRespEnvelope{
 		ID: 11,
@@ -288,6 +321,7 @@ func TestHandleSendTransactionEnvelopeTracksStatuses(t *testing.T) {
 		ID:     12,
 		Result: protocol.SendTransactionResponse{Status: "TRY_AGAIN_LATER"},
 	}, time.Unix(2, 0), leases))
+	// ERROR with non-decodable XDR routes to retryable (default ERROR path).
 	require.True(t, state.handleSendTransactionEnvelope(sendRespEnvelope{
 		ID:     13,
 		Result: protocol.SendTransactionResponse{Status: "ERROR", ErrorResultXDR: "AAAA"},
@@ -296,14 +330,32 @@ func TestHandleSendTransactionEnvelopeTracksStatuses(t *testing.T) {
 		ID:     14,
 		Result: protocol.SendTransactionResponse{Status: "UNKNOWN"},
 	}, time.Unix(4, 0), leases))
+	// ERROR with a tx_bad_seq result XDR routes to ambiguous (recovery), not
+	// retryable, so the cached seq is reloaded from chain instead of looping
+	// on the same wrong seq.
+	require.True(t, state.handleSendTransactionEnvelope(sendRespEnvelope{
+		ID:     15,
+		Result: protocol.SendTransactionResponse{Status: "ERROR", ErrorResultXDR: badSeqDirect},
+	}, time.Unix(5, 0), leases))
+	// Same for tx_fee_bump_inner_failed wrapping tx_bad_seq.
+	require.True(t, state.handleSendTransactionEnvelope(sendRespEnvelope{
+		ID:     16,
+		Result: protocol.SendTransactionResponse{Status: "ERROR", ErrorResultXDR: badSeqWrapped},
+	}, time.Unix(6, 0), leases))
+	// ERROR with a non-bad_seq decodable XDR (e.g. insufficient_fee) still
+	// routes to retryable.
+	require.True(t, state.handleSendTransactionEnvelope(sendRespEnvelope{
+		ID:     17,
+		Result: protocol.SendTransactionResponse{Status: "ERROR", ErrorResultXDR: insufficientFee},
+	}, time.Unix(7, 0), leases))
 
 	_, _, queued, tryAgainLater, submitErrors, ambiguous := state.submissionSnapshot()
 	require.Equal(t, uint64(1), queued)
 	require.Equal(t, uint64(1), tryAgainLater)
-	require.Equal(t, uint64(1), submitErrors)
-	require.Equal(t, uint64(1), ambiguous)
-	require.Equal(t, []int64{12, 13}, leases.retryableReleases)
-	require.Equal(t, []int64{14}, leases.ambiguousReleases)
+	require.Equal(t, uint64(4), submitErrors) // IDs 13, 15, 16, 17.
+	require.Equal(t, uint64(1), ambiguous)    // submit-time ambiguous counter only — bad_seq routing uses ReleaseAmbiguous but doesn't bump this counter directly.
+	require.Equal(t, []int64{12, 13, 17}, leases.retryableReleases)
+	require.Equal(t, []int64{14, 15, 16}, leases.ambiguousReleases)
 }
 
 func TestHandlePollResponseTracksLedgerMetrics(t *testing.T) {

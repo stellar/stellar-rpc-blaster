@@ -65,13 +65,21 @@ func TestBuildSorobanSendTransactionBodyBuildsSignedJSONRPCRequest(t *testing.T)
 	feeBump, ok := gtx.FeeBump()
 	require.True(t, ok)
 	require.Equal(t, feePayer.Address(), feeBump.FeeAccount())
-	require.Equal(t, benchmarkBaseFee*2+int64(resourceFee), feeBump.MaxFee())
+	// BaseFee is randomly sampled from [benchmarkBaseFeeMin, benchmarkBaseFeeMax]
+	// per submission, so assert against the range rather than a fixed value.
+	require.GreaterOrEqual(t, feeBump.MaxFee(), benchmarkBaseFeeMin*2+int64(resourceFee))
+	require.LessOrEqual(t, feeBump.MaxFee(), benchmarkBaseFeeMax*2+int64(resourceFee))
 	require.Len(t, feeBump.Signatures(), 1)
 
 	tx := feeBump.InnerTransaction()
 	require.Equal(t, txSource.Address(), tx.SourceAccount().AccountID)
 	require.Equal(t, int64(41), tx.SequenceNumber())
-	require.Equal(t, benchmarkBaseFee+int64(resourceFee), tx.BaseFee())
+	require.GreaterOrEqual(t, tx.BaseFee(), benchmarkBaseFeeMin+int64(resourceFee))
+	require.LessOrEqual(t, tx.BaseFee(), benchmarkBaseFeeMax+int64(resourceFee))
+	// feeBump.MaxFee covers (innerOps+1) ops at the inner per-op rate plus the
+	// resource fee once: feeBump.MaxFee == 2*tx.BaseFee - resourceFee, since
+	// txnbuild reports tx.BaseFee as (per-op inclusion fee + resource fee).
+	require.Equal(t, feeBump.MaxFee(), tx.BaseFee()*2-int64(resourceFee))
 	require.Len(t, tx.Signatures(), 2)
 	operations := tx.Operations()
 	require.Len(t, operations, 1)

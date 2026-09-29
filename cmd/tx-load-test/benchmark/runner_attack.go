@@ -112,14 +112,34 @@ func (s *attackState) handleSendTransactionEnvelope(envelope sendRespEnvelope, s
 		return true
 	case "ERROR":
 		atomic.AddUint64(&s.submitErrors, 1)
-		s.errorCodes.inc(ledger.DecodeTransactionResultCode(envelope.Result.ErrorResultXDR))
-		for _, opResult := range txstate.DecodeOperationResults(envelope.Result.ErrorResultXDR) {
-			s.submitOpResults.inc(opResult)
+		// Decode the error XDR once and feed the parsed result to all the
+		// helpers that need it. Under heavy rejection rates this avoids three
+		// SafeUnmarshalBase64 calls per submitted tx.
+		var (
+			code     = "unknown"
+			isBadSeq bool
+		)
+		if result, ok := ledger.DecodeTxResult(envelope.Result.ErrorResultXDR); ok {
+			code = ledger.ResultCodeFromTxResult(&result)
+			for _, opResult := range txstate.OperationResultsFromTxResult(&result) {
+				s.submitOpResults.inc(opResult)
+			}
+			isBadSeq = ledger.IsBadSeqFromTxResult(&result)
+		} else if envelope.Result.ErrorResultXDR != "" {
+			code = "decode-error"
 		}
+		s.errorCodes.inc(code)
 		if summary := summarizeDiagnosticEvents(envelope.Result.DiagnosticEventsXDR); summary != "" {
 			s.submitDiagnostics.inc(summary)
 		}
-		releaseRetryable(accounts, envelope.ID)
+		if isBadSeq {
+			// Cached seq is out of sync with chain. Rolling back and retrying
+			// the same seq just reproduces the error, so route through recovery
+			// to reload chain truth before this account is reused.
+			releaseAmbiguous(accounts, envelope.ID)
+		} else {
+			releaseRetryable(accounts, envelope.ID)
+		}
 		return true
 	default:
 		atomic.AddUint64(&s.ambiguous, 1)
