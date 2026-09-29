@@ -96,6 +96,15 @@ func Teardown(ctx context.Context, logger *log.Entry, cfg config.Config, st *sta
 			}
 		}
 		st.AccountKPs = remaining
+		if len(st.SACHolderKPs) > 0 {
+			var remainingHolders []*keypair.Full
+			for _, kp := range st.SACHolderKPs {
+				if _, ok := mergedSet[kp.Address()]; !ok {
+					remainingHolders = append(remainingHolders, kp)
+				}
+			}
+			st.SACHolderKPs = remainingHolders
+		}
 		ps, err := st.ToPersistedState(cfg.RPCURL)
 		if err != nil {
 			return fmt.Errorf("build state after batch %d/%d: %w", b+1, batches, err)
@@ -192,6 +201,15 @@ func BestEffortCleanup(logger *log.Entry, cfg config.Config, st *state.State, st
 			}
 		}
 		st.AccountKPs = remaining
+		if len(st.SACHolderKPs) > 0 {
+			var remainingHolders []*keypair.Full
+			for _, kp := range st.SACHolderKPs {
+				if _, ok := mergedSet[kp.Address()]; !ok {
+					remainingHolders = append(remainingHolders, kp)
+				}
+			}
+			st.SACHolderKPs = remainingHolders
+		}
 		ps, err = st.ToPersistedState(cfg.RPCURL)
 		if err != nil {
 			logger.WithError(err).Errorf("build state after batch %d/%d", b+1, batches)
@@ -236,6 +254,8 @@ func cleanupBatch(
 
 	// --- pass 1: drain non-zero balances ---------------------------------
 	var drainOps []txnbuild.Operation
+	drainSignerSet := make(map[string]*keypair.Full, len(batch))
+	drainSignerSet[batch[0].Address()] = batch[0]
 	for j, kp := range batch {
 		srcAccount := ""
 		if j > 0 {
@@ -246,6 +266,7 @@ func cleanupBatch(
 			if !hasTrustline || bal == 0 {
 				continue
 			}
+			drainSignerSet[kp.Address()] = kp
 			drainOps = append(drainOps, &txnbuild.Payment{
 				Destination:   st.FeePayerKP.Address(),
 				Asset:         asset,
@@ -269,7 +290,13 @@ func cleanupBatch(
 		if err != nil {
 			return fmt.Errorf("build drain tx: %w", err)
 		}
-		drainTx, err = drainTx.Sign(cfg.NetworkPassphrase, batch...)
+		drainSigners := make([]*keypair.Full, 0, len(drainSignerSet))
+		for _, kp := range batch {
+			if signer, ok := drainSignerSet[kp.Address()]; ok {
+				drainSigners = append(drainSigners, signer)
+			}
+		}
+		drainTx, err = drainTx.Sign(cfg.NetworkPassphrase, drainSigners...)
 		if err != nil {
 			return fmt.Errorf("sign drain tx: %w", err)
 		}

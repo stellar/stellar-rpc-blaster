@@ -135,8 +135,10 @@ func TestToPersistedStatePreservesSparseIndicesAndMetadata(t *testing.T) {
 			{Code: "BLTB", Issuer: base.Address()},
 			{Code: "BLTC", Issuer: base.Address()},
 		},
-		AccountKPs: accountKPs,
-		SACs:       [3]string{"C1", "C2", "C3"},
+		AccountKPs:      accountKPs,
+		SACHolderKPs:    accountKPs[:3],
+		SACs:            [3]string{"C1", "C2", "C3"},
+		OZTokenContract: "COZTOKEN",
 	}
 
 	ps, err := st.ToPersistedState("https://rpc.example")
@@ -145,8 +147,10 @@ func TestToPersistedStatePreservesSparseIndicesAndMetadata(t *testing.T) {
 	require.Equal(t, st.NetworkPassphrase, ps.NetworkPassphrase)
 	require.Equal(t, HashSeed(base.Seed()), ps.FeePayerHash)
 	require.Equal(t, []int{1, 2, 4, 9}, ps.AccountIndices)
+	require.Equal(t, []int{1, 2, 4}, ps.SACHolderIndices)
 	require.Equal(t, [3]string{"BLTA", "BLTB", "BLTC"}, ps.Assets)
 	require.Equal(t, st.SACs, ps.SACs)
+	require.Equal(t, st.OZTokenContract, ps.OZTokenContract)
 }
 
 func TestFromPersistedStateRejectsWrongSeed(t *testing.T) {
@@ -174,14 +178,36 @@ func TestFromPersistedStateUsesOverrideRPCURL(t *testing.T) {
 		NetworkPassphrase: network.TestNetworkPassphrase,
 		FeePayerHash:      HashSeed(base.Seed()),
 		AccountIndices:    []int{1, 2},
+		SACHolderIndices:  []int{1, 2},
 		Assets:            [3]string{"BLTA", "BLTB", "BLTC"},
+		OZTokenContract:   "COZTOKEN",
 	}
 
 	st, err := FromPersistedState(ps, base.Seed(), srv.URL)
 	require.NoError(t, err)
+	require.Equal(t, ps.OZTokenContract, st.OZTokenContract)
+	require.Len(t, st.SACHolderKPs, 2)
 	netInfo, err := st.RPCClient.GetNetwork(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, ps.NetworkPassphrase, netInfo.Passphrase)
+}
+
+func TestFromPersistedStateDefaultsSACHolderSubset(t *testing.T) {
+	base := mustRandomKeypair(t)
+	ps := &PersistedState{
+		RPCURL:            "https://rpc.example",
+		NetworkPassphrase: network.TestNetworkPassphrase,
+		FeePayerHash:      HashSeed(base.Seed()),
+		AccountIndices:    []int{1, 2, 3},
+		Assets:            [3]string{"BLTA", "BLTB", "BLTC"},
+	}
+
+	st, err := FromPersistedState(ps, base.Seed(), ps.RPCURL)
+	require.NoError(t, err)
+	require.Len(t, st.SACHolderKPs, 3)
+	for i, kp := range st.SACHolderKPs {
+		require.Equal(t, st.AccountKPs[i].Address(), kp.Address())
+	}
 }
 
 func TestValidateRPCNetwork(t *testing.T) {
@@ -192,7 +218,7 @@ func TestValidateRPCNetwork(t *testing.T) {
 		defer srv.Close()
 
 		ps := &PersistedState{RPCURL: srv.URL, NetworkPassphrase: passphrase, FeePayerHash: "abc123"}
-			require.NoError(t, ps.ValidateRPCNetwork(context.Background(), ""))
+		require.NoError(t, ps.ValidateRPCNetwork(context.Background(), ""))
 	})
 
 	t.Run("uses override rpc url", func(t *testing.T) {
@@ -200,7 +226,7 @@ func TestValidateRPCNetwork(t *testing.T) {
 		defer srv.Close()
 
 		ps := &PersistedState{RPCURL: "https://stored.example", NetworkPassphrase: passphrase, FeePayerHash: "abc123"}
-			require.NoError(t, ps.ValidateRPCNetwork(context.Background(), srv.URL))
+		require.NoError(t, ps.ValidateRPCNetwork(context.Background(), srv.URL))
 	})
 
 	t.Run("rejects passphrase mismatch", func(t *testing.T) {
@@ -209,6 +235,6 @@ func TestValidateRPCNetwork(t *testing.T) {
 
 		ps := &PersistedState{RPCURL: srv.URL, NetworkPassphrase: passphrase, FeePayerHash: "abc123"}
 		err := ps.ValidateRPCNetwork(context.Background(), "")
-			require.Error(t, err)
+		require.Error(t, err)
 	})
 }

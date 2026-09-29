@@ -46,21 +46,92 @@ type sacTransferMode struct{}
 
 func (sacTransferMode) Label() string { return "sac-transfer" }
 
-func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *state.State) (vegeta.Targeter, SequenceResetFunc, error) {
-	if len(state.AccountKPs) < 2 {
-		return nil, nil, fmt.Errorf("need at least 2 accounts for SAC transfer benchmark, got %d", len(state.AccountKPs))
+func (sacTransferMode) VerifyReady(ctx context.Context, st *state.State) error {
+	holderAccounts := st.SACHolderKPs
+	if len(holderAccounts) == 0 {
+		holderAccounts = state.DefaultSACHolderKPs(st.AccountKPs)
 	}
-	for i, sac := range state.SACs {
+	if len(holderAccounts) < 2 {
+		return fmt.Errorf("need at least 2 SAC holder accounts, got %d", len(holderAccounts))
+	}
+	if len(st.AccountKPs) == 0 {
+		return fmt.Errorf("need at least 1 participant account for SAC tx sources")
+	}
+
+	for i, sacStr := range st.SACs {
+		if sacStr == "" {
+			return fmt.Errorf("SAC[%d] contract ID is empty -- run setup first", i)
+		}
+		contractID, err := decodeContractID(sacStr)
+		if err != nil {
+			return fmt.Errorf("decode SAC[%d] contract ID: %w", i, err)
+		}
+		exists, err := contractInstanceExists(ctx, st.RPCClient, contractID)
+		if err != nil {
+			return fmt.Errorf("check SAC[%d] contract instance: %w", i, err)
+		}
+		if !exists {
+			return fmt.Errorf("SAC[%d] contract %s is missing on-ledger -- rerun setup", i, sacStr)
+		}
+	}
+
+	balances, err := fetchTrustlineBalances(ctx, st, holderAccounts)
+	if err != nil {
+		return fmt.Errorf("fetch SAC holder trustlines: %w", err)
+	}
+
+	missingCount := 0
+	examples := make([]string, 0, 5)
+	for _, kp := range holderAccounts {
+		accountBalances := balances[kp.Address()]
+		for _, asset := range st.Assets {
+			balance, ok := accountBalances[asset.GetCode()]
+			if ok && balance > 0 {
+				continue
+			}
+			missingCount++
+			if len(examples) < cap(examples) {
+				reason := "missing trustline"
+				if ok && balance == 0 {
+					reason = "zero balance"
+				}
+				examples = append(examples, fmt.Sprintf("%s %s (%s)", kp.Address(), asset.GetCode(), reason))
+			}
+		}
+	}
+	if missingCount > 0 {
+		return fmt.Errorf(
+			"SAC benchmark state incomplete: %d holder trustlines/balances missing or zero; examples: %s -- rerun setup",
+			missingCount, formatExamples(examples),
+		)
+	}
+
+	return nil
+}
+
+func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state.State) (vegeta.Targeter, SequenceResetFunc, error) {
+	holderAccounts := st.SACHolderKPs
+	if len(holderAccounts) == 0 {
+		holderAccounts = state.DefaultSACHolderKPs(st.AccountKPs)
+	}
+	if len(holderAccounts) < 2 {
+		return nil, nil, fmt.Errorf("need at least 2 SAC holder accounts for benchmark, got %d", len(holderAccounts))
+	}
+	if len(st.AccountKPs) == 0 {
+		return nil, nil, fmt.Errorf("need at least 1 participant account for SAC tx sources")
+	}
+	for i, sac := range st.SACs {
 		if sac == "" {
 			return nil, nil, fmt.Errorf("SAC[%d] contract ID is empty -- run setup first", i)
 		}
 	}
 
-	n := len(state.AccountKPs)
+	txSourceCount := len(st.AccountKPs)
+	holderCount := len(holderAccounts)
 
 	// Decode SAC contract IDs from strkey C... to raw 32-byte arrays.
 	var sacIDs [3]xdr.ContractId
-	for i, sacStr := range state.SACs {
+	for i, sacStr := range st.SACs {
 		raw, err := strkey.Decode(strkey.VersionByteContract, sacStr)
 		if err != nil {
 			return nil, nil, fmt.Errorf("decode SAC[%d]: %w", i, err)
@@ -70,7 +141,7 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *st
 
 	// Convert classic assets to XDR for per-request footprint construction.
 	var assetsXDR [3]xdr.Asset
-	for i, a := range state.Assets {
+	for i, a := range st.Assets {
 		ax, err := a.ToXDR()
 		if err != nil {
 			return nil, nil, fmt.Errorf("asset[%d] to XDR: %w", i, err)
@@ -84,17 +155,27 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *st
 	// cannot cover all three; using the wrong instance produces the error
 	// "trying to access contract instance outside of the footprint".
 	// The per-SAC footprint is used as a template: only the two trustline
-	// keys are substituted per request; all ReadOnly entries (contract
-	// instance, issuer account, source account for auth) are kept as-is.
+	// keys are substituted per request; all ReadOnly entries returned by the
+	// simulator are kept as-is.
 	var (
 		simResources          xdr.SorobanResources
 		simResourceFee        xdr.Int64
 		simFootprintTemplates [3]xdr.LedgerFootprint
 	)
 	for i := range sacIDs {
+		simTxSource := st.AccountKPs[0]
+		if simTxSource.Address() == holderAccounts[0].Address() && len(st.AccountKPs) > 2 {
+			for _, candidate := range st.AccountKPs[1:] {
+				if candidate.Address() != holderAccounts[0].Address() && candidate.Address() != holderAccounts[1].Address() {
+					simTxSource = candidate
+					break
+				}
+			}
+		}
+
 		r, fee, tmpl, err := presimulate(
-			state, sacIDs[i],
-			state.AccountKPs[0], state.AccountKPs[1],
+			st, sacIDs[i],
+			simTxSource, holderAccounts[0], holderAccounts[1],
 		)
 		if err != nil {
 			return nil, nil, fmt.Errorf("pre-simulate SAC[%d] transfer: %w", i, err)
@@ -113,9 +194,9 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *st
 	// Pre-load the on-ledger sequence numbers for every participant account.
 	// These serve as the base for per-account atomic counters that track
 	// sequence progress independently.
-	seqBase, err := loadAllSeqNums(ctx, state)
+	seqBase, err := loadSeqNums(ctx, st, st.AccountKPs)
 	if err != nil {
-		return nil, nil, fmt.Errorf("load participant sequence numbers: %w", err)
+		return nil, nil, fmt.Errorf("load SAC tx-source sequence numbers: %w", err)
 	}
 
 	// Per-account sequence counters.  Each counter holds the last sequence
@@ -123,46 +204,49 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *st
 	// The targeter atomically increments a counter to obtain the next
 	// sequence; on a non-consuming failure the runner calls resetSeq to
 	// decrement it back so the sequence is reused on the next attempt.
-	seqCounters := make([]atomic.Int64, n)
+	seqCounters := make([]atomic.Int64, txSourceCount)
 	for i, base := range seqBase {
 		seqCounters[i].Store(base)
 	}
 
 	// resetSeq reverts the sequence counter for the account identified by
 	// the JSON-RPC ID.  The ID is set to slot+1 in the targeter and
-	// srcIdx = slot % n, so we can recover the account index.
+	// txSrcIdx = slot % txSourceCount, so we can recover the account index.
 	resetSeq := SequenceResetFunc(func(jsonRPCId int64) {
-		srcIdx := int((jsonRPCId - 1) % int64(n))
-		seqCounters[srcIdx].Add(-1)
+		txSrcIdx := int((jsonRPCId - 1) % int64(txSourceCount))
+		seqCounters[txSrcIdx].Add(-1)
 	})
 
-	networkPassphrase := state.NetworkPassphrase
+	networkPassphrase := st.NetworkPassphrase
 
-	// slotCounter is a global round-robin position.  Account index is
-	// slot % n; this guarantees each account appears at most once per n
-	// consecutive requests, eliminating within-ledger sequence collisions.
+	// slotCounter is a global round-robin position. Tx-source account index is
+	// slot % txSourceCount; this guarantees each transaction source appears at
+	// most once per txSourceCount consecutive requests, eliminating
+	// within-ledger sequence collisions.
 	var slotCounter int64
 
 	return func(t *vegeta.Target) error {
-		// Claim the next slot and derive the source account from it.
+		// Claim the next slot and derive the transaction source account from it.
 		slot := atomic.AddInt64(&slotCounter, 1) - 1
-		srcIdx := int(slot % int64(n))
-		seq := seqCounters[srcIdx].Add(1)
+		txSrcIdx := int(slot % int64(txSourceCount))
+		seq := seqCounters[txSrcIdx].Add(1)
 
-		// Pick a random SAC and a destination account distinct from src.
-		sacIdx := rand.IntN(len(state.SACs))
+		// Pick a random SAC and a source/destination holder pair.
+		sacIdx := rand.IntN(len(st.SACs))
 		sacID := sacIDs[sacIdx]
 		assetXDR := assetsXDR[sacIdx]
 
-		dstIdx := rand.IntN(n - 1)
-		if dstIdx >= srcIdx {
+		holderSrcIdx := rand.IntN(holderCount)
+		dstIdx := rand.IntN(holderCount - 1)
+		if dstIdx >= holderSrcIdx {
 			dstIdx++
 		}
-		srcKP := state.AccountKPs[srcIdx]
-		dstKP := state.AccountKPs[dstIdx]
+		txSourceKP := st.AccountKPs[txSrcIdx]
+		holderSrcKP := holderAccounts[holderSrcIdx]
+		dstKP := holderAccounts[dstIdx]
 
 		// Parse AccountIds needed for ScAddress args and footprint keys.
-		srcAccID, err := xdr.AddressToAccountId(srcKP.Address())
+		holderSrcAccID, err := xdr.AddressToAccountId(holderSrcKP.Address())
 		if err != nil {
 			return fmt.Errorf("parse src account: %w", err)
 		}
@@ -174,7 +258,7 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *st
 		// Build transfer(src, dst, amount) invocation arguments.
 		args := xdr.ScVec{
 			{Type: xdr.ScValTypeScvAddress, Address: &xdr.ScAddress{
-				Type: xdr.ScAddressTypeScAddressTypeAccount, AccountId: &srcAccID,
+				Type: xdr.ScAddressTypeScAddressTypeAccount, AccountId: &holderSrcAccID,
 			}},
 			{Type: xdr.ScValTypeScvAddress, Address: &xdr.ScAddress{
 				Type: xdr.ScAddressTypeScAddressTypeAccount, AccountId: &dstAccID,
@@ -192,15 +276,16 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *st
 			Args:         args,
 		}
 
-		footprint := buildFootprintFromTemplate(simFootprintTemplates[sacIdx], assetXDR, srcAccID, dstAccID)
+		footprint := buildFootprintFromTemplate(simFootprintTemplates[sacIdx], assetXDR, holderSrcAccID, dstAccID)
 
 		op := txnbuild.InvokeHostFunction{
 			HostFunction: xdr.HostFunction{
 				Type:           xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
 				InvokeContract: &invokeArgs,
 			},
-			// SorobanCredentialsSourceAccount: the tx-level signature from srcKP
-			// serves as the Soroban authorization; no extra signing step needed.
+			// SorobanCredentialsSourceAccount: the operation source account's
+			// signature authorizes the contract invocation. When the transaction
+			// source differs from the holder source, both accounts sign.
 			Auth: []xdr.SorobanAuthorizationEntry{{
 				Credentials: xdr.SorobanCredentials{
 					Type: xdr.SorobanCredentialsTypeSorobanCredentialsSourceAccount,
@@ -212,7 +297,7 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *st
 					},
 				},
 			}},
-			SourceAccount: srcKP.Address(),
+			SourceAccount: holderSrcKP.Address(),
 			Ext: xdr.TransactionExt{
 				V: 1,
 				SorobanData: &xdr.SorobanTransactionData{
@@ -231,7 +316,7 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *st
 		totalFee := benchmarkBaseFee + int64(simResourceFee)
 		tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
 			SourceAccount: &txnbuild.SimpleAccount{
-				AccountID: srcKP.Address(),
+				AccountID: txSourceKP.Address(),
 				Sequence:  seq,
 			},
 			IncrementSequenceNum: false,
@@ -243,7 +328,11 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *st
 			return fmt.Errorf("build transaction: %w", err)
 		}
 
-		tx, err = tx.Sign(networkPassphrase, srcKP)
+		signers := []*keypair.Full{txSourceKP}
+		if holderSrcKP.Address() != txSourceKP.Address() {
+			signers = append(signers, holderSrcKP)
+		}
+		tx, err = tx.Sign(networkPassphrase, signers...)
 		if err != nil {
 			return fmt.Errorf("sign transaction: %w", err)
 		}
@@ -275,12 +364,12 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, state *st
 // presimulate calls SimulateTransaction with the given src/dst keypair
 // and returns the resource budget plus the complete footprint as computed by
 // the simulator.  The footprint is the authoritative set of ledger entries the
-// host reads and writes, including entries (e.g. the source account for auth)
-// that a manually constructed footprint might miss.
+// host reads and writes, including any additional entries the simulator deems
+// necessary beyond the trustlines explicitly substituted later.
 func presimulate(
 	state *state.State,
 	sacID xdr.ContractId,
-	srcKP, dstKP *keypair.Full,
+	txSourceKP, srcKP, dstKP *keypair.Full,
 ) (xdr.SorobanResources, xdr.Int64, xdr.LedgerFootprint, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -336,7 +425,7 @@ func presimulate(
 	}
 
 	tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
-		SourceAccount:        &txnbuild.SimpleAccount{AccountID: srcKP.Address(), Sequence: 1},
+		SourceAccount:        &txnbuild.SimpleAccount{AccountID: txSourceKP.Address(), Sequence: 1},
 		IncrementSequenceNum: false,
 		Operations:           []txnbuild.Operation{&op},
 		BaseFee:              benchmarkBaseFee,
@@ -371,15 +460,15 @@ func presimulate(
 	return sorobanData.Resources, sorobanData.ResourceFee, sorobanData.Resources.Footprint, nil
 }
 
-// loadAllSeqNums fetches the current on-ledger sequence number for every
-// participant account using up to 50 concurrent LoadAccount calls.  The
-// returned slice is the same length as state.AccountKPs and is used as the
-// per-account atomic counter seed in the targeter closure.
-func loadAllSeqNums(ctx context.Context, state *state.State) ([]int64, error) {
+// loadSeqNums fetches the current on-ledger sequence number for every account
+// in accountKPs using up to 50 concurrent LoadAccount calls. The returned
+// slice is the same length/order as accountKPs and is used as the per-account
+// atomic counter seed in targeter closures.
+func loadSeqNums(ctx context.Context, state *state.State, accountKPs []*keypair.Full) ([]int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	n := len(state.AccountKPs)
+	n := len(accountKPs)
 	seqNums := make([]int64, n)
 	errs := make([]error, n)
 
@@ -394,7 +483,7 @@ func loadAllSeqNums(ctx context.Context, state *state.State) ([]int64, error) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			acct, err := state.RPCClient.LoadAccount(ctx, state.AccountKPs[i].Address())
+			acct, err := state.RPCClient.LoadAccount(ctx, accountKPs[i].Address())
 			if err != nil {
 				errs[i] = err
 				return

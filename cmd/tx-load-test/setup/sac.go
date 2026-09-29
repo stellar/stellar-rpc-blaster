@@ -40,7 +40,7 @@ func (sacStep) Run(ctx context.Context, logger *log.Entry, cfg config.Config, st
 		}
 		contractID := xdr.ContractId(contractIDBytes)
 
-		exists, err := sacContractExists(ctx, st.RPCClient, contractID)
+		exists, err := contractInstanceExists(ctx, st.RPCClient, contractID)
 		if err != nil {
 			return fmt.Errorf("asset[%d] check SAC existence: %w", i, err)
 		}
@@ -114,9 +114,10 @@ func deploySAC(
 	return state.SubmitSorobanAndWait(ctx, logger, st.RPCClient, networkPassphrase, st.FeePayerKP, op)
 }
 
-// sacContractExists returns true when the SAC contract instance ledger entry
-// is already present on the network (i.e. the SAC has been deployed before).
-func sacContractExists(ctx context.Context, rpc interface {
+// contractInstanceExists returns true when the contract instance ledger entry
+// is already present on the network (i.e. the contract has been deployed
+// before).
+func contractInstanceExists(ctx context.Context, rpc interface {
 	GetLedgerEntries(context.Context, protocol.GetLedgerEntriesRequest) (protocol.GetLedgerEntriesResponse, error)
 }, contractID xdr.ContractId) (bool, error) {
 	instanceKey := xdr.LedgerKey{
