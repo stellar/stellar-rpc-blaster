@@ -20,6 +20,7 @@ const requestIDURLFragmentPrefix = "blaster-rpc-id="
 type sorobanSendTransactionParams struct {
 	RPCID             int64
 	NetworkPassphrase string
+	FeePayerKP        *keypair.Full
 	TxSource          *keypair.Full
 	Sequence          int64
 	Signers           []*keypair.Full
@@ -57,20 +58,54 @@ func buildSorobanSendTransactionBody(params sorobanSendTransactionParams) ([]byt
 	if err != nil {
 		return nil, fmt.Errorf("build transaction: %w", err)
 	}
-	tx, err = tx.Sign(params.NetworkPassphrase, params.Signers...)
+	return buildBenchmarkSendTransactionBody(params.RPCID, params.NetworkPassphrase, params.FeePayerKP, tx, params.Signers...)
+}
+
+func buildBenchmarkSendTransactionBody(rpcID int64, networkPassphrase string, feePayerKP *keypair.Full, innerTx *txnbuild.Transaction, signers ...*keypair.Full) ([]byte, error) {
+	b64, err := buildBenchmarkEnvelope(networkPassphrase, feePayerKP, innerTx, signers...)
 	if err != nil {
-		return nil, fmt.Errorf("sign transaction: %w", err)
+		return nil, err
 	}
-	b64, err := tx.Base64()
-	if err != nil {
-		return nil, fmt.Errorf("marshal transaction: %w", err)
+	return marshalSendTransactionBody(rpcID, b64)
+}
+
+func buildBenchmarkEnvelope(networkPassphrase string, feePayerKP *keypair.Full, innerTx *txnbuild.Transaction, signers ...*keypair.Full) (string, error) {
+	if feePayerKP == nil {
+		return "", fmt.Errorf("missing fee payer keypair for benchmark submission")
+	}
+	if innerTx == nil {
+		return "", fmt.Errorf("missing inner transaction for benchmark submission")
 	}
 
+	signedInner, err := innerTx.Sign(networkPassphrase, signers...)
+	if err != nil {
+		return "", fmt.Errorf("sign inner transaction: %w", err)
+	}
+	feeBump, err := txnbuild.NewFeeBumpTransaction(txnbuild.FeeBumpTransactionParams{
+		Inner:      signedInner,
+		FeeAccount: feePayerKP.Address(),
+		BaseFee:    signedInner.BaseFee(),
+	})
+	if err != nil {
+		return "", fmt.Errorf("build fee-bump transaction: %w", err)
+	}
+	feeBump, err = feeBump.Sign(networkPassphrase, feePayerKP)
+	if err != nil {
+		return "", fmt.Errorf("sign fee-bump transaction: %w", err)
+	}
+	b64, err := feeBump.Base64()
+	if err != nil {
+		return "", fmt.Errorf("marshal fee-bump transaction: %w", err)
+	}
+	return b64, nil
+}
+
+func marshalSendTransactionBody(rpcID int64, transaction string) ([]byte, error) {
 	body, err := json.Marshal(rpcJSONBody{
 		JSONRPC: "2.0",
-		ID:      params.RPCID,
+		ID:      rpcID,
 		Method:  protocol.SendTransactionMethodName,
-		Params:  map[string]string{"transaction": b64},
+		Params:  map[string]string{"transaction": transaction},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal JSON-RPC body: %w", err)

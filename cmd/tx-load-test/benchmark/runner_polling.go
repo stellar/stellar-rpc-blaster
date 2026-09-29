@@ -12,6 +12,7 @@ import (
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/ledger"
+	txstate "github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
 
 // pollWorkerCount returns the number of goroutines for polling getTransaction
@@ -70,6 +71,9 @@ func handlePollResponse(logger *log.Entry, state *attackState, item pollItem, re
 		releaseConsumed(accounts, item.rpcID)
 		code := ledger.DecodeTransactionResultCode(resp.ResultXDR)
 		state.onChainErrorCodes.inc(code)
+		for _, opResult := range txstate.DecodeOperationResults(resp.ResultXDR) {
+			state.onChainOpResults.inc(opResult)
+		}
 		if summary := summarizeDiagnosticEvents(resp.DiagnosticEventsXDR); summary != "" {
 			state.onChainDiagnostics.inc(summary)
 		}

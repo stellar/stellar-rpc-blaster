@@ -213,6 +213,7 @@ func (sacTransferMode) NewTargeter(ctx context.Context, rpcURL string, st *state
 		body, err := buildSorobanSendTransactionBody(sorobanSendTransactionParams{
 			RPCID:             lease.RequestID,
 			NetworkPassphrase: networkPassphrase,
+			FeePayerKP:        st.FeePayerKP,
 			TxSource:          txSourceKP,
 			Sequence:          lease.Sequence,
 			Signers:           signers,

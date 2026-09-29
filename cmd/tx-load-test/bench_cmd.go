@@ -26,13 +26,14 @@ ledger (created by 'setup'):
 The load ramps linearly from 1 RPS to --target-rps over --ramp-up, then
 the selected Soroban workload and the parallel simple-payment stream hold
 constant for the remainder of --duration (~100 s / ~20 ledgers). The
-simple-payment stream uses native XLM payments batched at 100 operations per
-transaction, and --classic-rps is interpreted as operations/sec.
+simple-payment stream uses native XLM payments at 1 payment operation per
+transaction, and --classic-rps is interpreted as transactions/sec.
 
 Use --trace-file to capture every benchmark submit and poll request/response
 as NDJSON for post-run inspection.
 
-bench reads the state file produced by setup and does not modify ledger state.
+bench reads the state file produced by setup and drives benchmark transaction
+traffic against the target network without modifying local setup metadata.
 Run bench as many times as needed.`,
 		RunE: runBench,
 	}
@@ -46,7 +47,7 @@ Run bench as many times as needed.`,
 	cmd.Flags().Duration("duration", 100*time.Second, "Total benchmark duration")
 	cmd.Flags().Duration("ramp-up", 20*time.Second, "Ramp-up period (RPS increases linearly from 1 to target-rps)")
 	cmd.Flags().Int("target-rps", 50, "Steady-state requests per second after ramp-up")
-	cmd.Flags().Int("classic-rps", config.DefaultClassicRPS, "Steady-state simple-payment operations per second after ramp-up (must be a multiple of 100)")
+	cmd.Flags().Int("classic-rps", config.DefaultClassicRPS, "Steady-state simple-payment transactions per second after ramp-up (1 payment op per tx)")
 	cmd.Flags().String("trace-file", "", "Optional newline-delimited JSON file that captures every benchmark submit and poll request/response")
 	return cmd
 }

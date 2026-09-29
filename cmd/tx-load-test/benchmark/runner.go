@@ -69,11 +69,13 @@ loop:
 	close(state.hashes)
 	metrics.Close()
 
-	submitted, httpErr, queued, tryAgainLater, submitErrors := state.submissionSnapshot()
-	logger.Infof("attack complete  -- submitted=%d httpErr=%d queued=%d tryAgainLater=%d submitErrors=%d  -- waiting for poll workers",
-		submitted, httpErr, queued, tryAgainLater, submitErrors)
+	submitted, httpErr, queued, tryAgainLater, submitErrors, ambiguous := state.submissionSnapshot()
+	logger.Infof("attack complete  -- submitted=%d httpErr=%d queued=%d tryAgainLater=%d submitErrors=%d ambiguous=%d  -- waiting for poll workers",
+		submitted, httpErr, queued, tryAgainLater, submitErrors, ambiguous)
 	if submitErrors > 0 {
 		state.errorCodes.log(logger, "submit ERROR breakdown")
+		state.submitOpResults.log(logger, "submit ERROR op-result breakdown")
+		state.submitDiagnostics.log(logger, "submit diagnostic summary")
 	}
 
 	waitForPollWorkers(logger, queued, numPollWorkers, pollWg, state)
@@ -83,6 +85,7 @@ loop:
 		included, onChainFail, pollErr)
 	if onChainFail > 0 {
 		state.onChainErrorCodes.log(logger, "on-chain failure breakdown")
+		state.onChainOpResults.log(logger, "on-chain failure op-result breakdown")
 		state.onChainDiagnostics.log(logger, "on-chain diagnostic summary")
 	}
 
