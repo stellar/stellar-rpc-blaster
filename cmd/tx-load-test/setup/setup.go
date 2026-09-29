@@ -3,6 +3,7 @@ package setup
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/stellar/go-stellar-sdk/support/log"
 
@@ -54,9 +55,11 @@ func Setup(
 	}
 
 	steps := setupSteps(cfg)
+	setupStarted := time.Now()
 	for i, step := range steps {
 		scoped := logger.WithField("phase", step.Name())
-		scoped.Infof("step %d/%d", i+1, len(steps))
+		stepStarted := time.Now()
+		scoped.Infof("step %d/%d started", i+1, len(steps))
 		if err := step.Run(ctx, scoped, cfg, st); err != nil {
 			if persist != nil {
 				if saveErr := persist(st); saveErr != nil {
@@ -73,10 +76,11 @@ func Setup(
 				scoped.WithError(err).Error("failed to save state after step")
 				return st, fmt.Errorf("%s: save state: %w", step.Name(), err)
 			}
-			scoped.Debug("state snapshot saved")
+			scoped.Infof("state snapshot saved after %s", time.Since(stepStarted).Round(time.Millisecond))
 		}
+		scoped.Infof("step %d/%d complete in %s", i+1, len(steps), time.Since(stepStarted).Round(time.Millisecond))
 	}
 
-	logger.Info("all steps complete")
+	logger.Infof("all steps complete in %s", time.Since(setupStarted).Round(time.Millisecond))
 	return st, nil
 }

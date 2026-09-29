@@ -63,3 +63,36 @@ func TestPadSorobanResources(t *testing.T) {
 	padSorobanResources(&data, 1)
 	require.Equal(t, xdr.Uint32(110), data.Resources.Instructions)
 }
+
+func TestDecodeOpResultsTxFailed(t *testing.T) {
+	changeTrust := xdr.ChangeTrustResult{Code: xdr.ChangeTrustResultCodeChangeTrustLowReserve}
+	tr, err := xdr.NewOperationResultTr(xdr.OperationTypeChangeTrust, changeTrust)
+	require.NoError(t, err)
+	op, err := xdr.NewOperationResult(xdr.OperationResultCodeOpInner, tr)
+	require.NoError(t, err)
+	txResultResult, err := xdr.NewTransactionResultResult(xdr.TransactionResultCodeTxFailed, []xdr.OperationResult{op})
+	require.NoError(t, err)
+	resultXDR, err := xdr.MarshalBase64(xdr.TransactionResult{Result: txResultResult})
+	require.NoError(t, err)
+
+	require.Equal(t, []string{"ChangeTrust:ChangeTrustResultCodeChangeTrustLowReserve"}, decodeOpResults(resultXDR))
+}
+
+func TestDecodeOpResultsFeeBumpInnerFailed(t *testing.T) {
+	payment := xdr.PaymentResult{Code: xdr.PaymentResultCodePaymentNoDestination}
+	tr, err := xdr.NewOperationResultTr(xdr.OperationTypePayment, payment)
+	require.NoError(t, err)
+	op, err := xdr.NewOperationResult(xdr.OperationResultCodeOpInner, tr)
+	require.NoError(t, err)
+	innerResultResult, err := xdr.NewInnerTransactionResultResult(xdr.TransactionResultCodeTxFailed, []xdr.OperationResult{op})
+	require.NoError(t, err)
+	outerResultResult, err := xdr.NewTransactionResultResult(
+		xdr.TransactionResultCodeTxFeeBumpInnerFailed,
+		xdr.InnerTransactionResultPair{Result: xdr.InnerTransactionResult{Result: innerResultResult}},
+	)
+	require.NoError(t, err)
+	resultXDR, err := xdr.MarshalBase64(xdr.TransactionResult{Result: outerResultResult})
+	require.NoError(t, err)
+
+	require.Equal(t, []string{"Payment:PaymentResultCodePaymentNoDestination"}, decodeOpResults(resultXDR))
+}

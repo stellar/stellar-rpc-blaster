@@ -1,23 +1,37 @@
-package benchmark
+package ledger
 
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/stellar/go-stellar-sdk/keypair"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 	"github.com/stellar/go-stellar-sdk/strkey"
+	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
-
-	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/state"
 )
 
-const readinessBatchSize = 100
+const DefaultBatchSize = 100
 
-func contractInstanceExists(ctx context.Context, rpc interface {
+type LedgerEntriesClient interface {
 	GetLedgerEntries(context.Context, protocol.GetLedgerEntriesRequest) (protocol.GetLedgerEntriesResponse, error)
-}, contractID xdr.ContractId) (bool, error) {
+}
+
+func DecodeContractID(contractIDStr string) (xdr.ContractId, error) {
+	raw, err := strkey.Decode(strkey.VersionByteContract, contractIDStr)
+	if err != nil {
+		return xdr.ContractId{}, err
+	}
+	var contractID xdr.ContractId
+	copy(contractID[:], raw)
+	return contractID, nil
+}
+
+func EncodeContractID(contractID xdr.ContractId) (string, error) {
+	return strkey.Encode(strkey.VersionByteContract, contractID[:])
+}
+
+func ContractInstanceExists(ctx context.Context, rpc LedgerEntriesClient, contractID xdr.ContractId) (bool, error) {
 	instanceKey := xdr.LedgerKey{
 		Type: xdr.LedgerEntryTypeContractData,
 		ContractData: &xdr.LedgerKeyContractData{
@@ -42,16 +56,18 @@ func contractInstanceExists(ctx context.Context, rpc interface {
 	return len(resp.Entries) > 0, nil
 }
 
-func fetchLedgerEntriesByKey(
+func FetchLedgerEntriesByKey(
 	ctx context.Context,
-	rpc interface {
-		GetLedgerEntries(context.Context, protocol.GetLedgerEntriesRequest) (protocol.GetLedgerEntriesResponse, error)
-	},
+	rpc LedgerEntriesClient,
 	keys []string,
+	batchSize int,
 ) (map[string]protocol.LedgerEntryResult, error) {
+	if batchSize <= 0 {
+		batchSize = DefaultBatchSize
+	}
 	entries := make(map[string]protocol.LedgerEntryResult, len(keys))
-	for start := 0; start < len(keys); start += readinessBatchSize {
-		end := min(start+readinessBatchSize, len(keys))
+	for start := 0; start < len(keys); start += batchSize {
+		end := min(start+batchSize, len(keys))
 		resp, err := rpc.GetLedgerEntries(ctx, protocol.GetLedgerEntriesRequest{Keys: keys[start:end]})
 		if err != nil {
 			return nil, err
@@ -63,21 +79,23 @@ func fetchLedgerEntriesByKey(
 	return entries, nil
 }
 
-func fetchTrustlineBalances(
+func FetchTrustlineBalances(
 	ctx context.Context,
-	st *state.State,
+	rpc LedgerEntriesClient,
+	assets []txnbuild.CreditAsset,
 	accounts []*keypair.Full,
+	batchSize int,
 ) (map[string]map[string]xdr.Int64, error) {
 	type keyMeta struct{ account, assetCode string }
 
-	keys := make([]string, 0, len(accounts)*len(st.Assets))
-	metas := make([]keyMeta, 0, len(accounts)*len(st.Assets))
+	keys := make([]string, 0, len(accounts)*len(assets))
+	metas := make([]keyMeta, 0, len(accounts)*len(assets))
 	for _, kp := range accounts {
 		accountID, err := xdr.AddressToAccountId(kp.Address())
 		if err != nil {
 			return nil, fmt.Errorf("parse account %s: %w", kp.Address(), err)
 		}
-		for _, asset := range st.Assets {
+		for _, asset := range assets {
 			ax, err := asset.ToXDR()
 			if err != nil {
 				return nil, fmt.Errorf("asset %s to XDR: %w", asset.GetCode(), err)
@@ -102,7 +120,7 @@ func fetchTrustlineBalances(
 		}
 	}
 
-	entries, err := fetchLedgerEntriesByKey(ctx, st.RPCClient, keys)
+	entries, err := FetchLedgerEntriesByKey(ctx, rpc, keys, batchSize)
 	if err != nil {
 		return nil, fmt.Errorf("get trustline entries: %w", err)
 	}
@@ -133,11 +151,46 @@ func fetchTrustlineBalances(
 	return result, nil
 }
 
-func fetchOZBalances(ctx context.Context, st *state.State, contractID xdr.ContractId) (map[string]xdr.Int128Parts, error) {
-	keys := make([]string, 0, len(st.AccountKPs))
-	keyToAddress := make(map[string]string, len(st.AccountKPs))
-	for _, kp := range st.AccountKPs {
-		lk, err := ozBalanceLedgerKey(contractID, kp.Address())
+func OZBalanceLedgerKey(contractID xdr.ContractId, accountAddress string) (xdr.LedgerKey, error) {
+	accountID, err := xdr.AddressToAccountId(accountAddress)
+	if err != nil {
+		return xdr.LedgerKey{}, err
+	}
+
+	balanceVariant := xdr.ScSymbol("Balance")
+	balanceKeyVec := xdr.ScVec{
+		{Type: xdr.ScValTypeScvSymbol, Sym: &balanceVariant},
+		{Type: xdr.ScValTypeScvAddress, Address: &xdr.ScAddress{
+			Type:      xdr.ScAddressTypeScAddressTypeAccount,
+			AccountId: &accountID,
+		}},
+	}
+	balanceKeyRef := &balanceKeyVec
+
+	return xdr.LedgerKey{
+		Type: xdr.LedgerEntryTypeContractData,
+		ContractData: &xdr.LedgerKeyContractData{
+			Contract: xdr.ScAddress{
+				Type:       xdr.ScAddressTypeScAddressTypeContract,
+				ContractId: &contractID,
+			},
+			Key:        xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &balanceKeyRef},
+			Durability: xdr.ContractDataDurabilityPersistent,
+		},
+	}, nil
+}
+
+func FetchOZBalances(
+	ctx context.Context,
+	rpc LedgerEntriesClient,
+	contractID xdr.ContractId,
+	accounts []*keypair.Full,
+	batchSize int,
+) (map[string]xdr.Int128Parts, error) {
+	keys := make([]string, 0, len(accounts))
+	keyToAddress := make(map[string]string, len(accounts))
+	for _, kp := range accounts {
+		lk, err := OZBalanceLedgerKey(contractID, kp.Address())
 		if err != nil {
 			return nil, fmt.Errorf("build OZ balance key for %s: %w", kp.Address(), err)
 		}
@@ -149,7 +202,7 @@ func fetchOZBalances(ctx context.Context, st *state.State, contractID xdr.Contra
 		keyToAddress[b64] = kp.Address()
 	}
 
-	entries, err := fetchLedgerEntriesByKey(ctx, st.RPCClient, keys)
+	entries, err := FetchLedgerEntriesByKey(ctx, rpc, keys, batchSize)
 	if err != nil {
 		return nil, fmt.Errorf("get OZ balance entries: %w", err)
 	}
@@ -173,23 +226,31 @@ func fetchOZBalances(ctx context.Context, st *state.State, contractID xdr.Contra
 	return balances, nil
 }
 
-func hasPositiveBalance(balance xdr.Int128Parts) bool {
+func HasPositiveI128(balance xdr.Int128Parts) bool {
 	return balance.Hi > 0 || (balance.Hi == 0 && balance.Lo > 0)
 }
 
-func formatExamples(examples []string) string {
-	if len(examples) == 0 {
-		return ""
+func DecodeTransactionResultCode(resultXDR string) string {
+	if resultXDR == "" {
+		return "unknown"
 	}
-	return strings.Join(examples, "; ")
+	var result xdr.TransactionResult
+	if err := xdr.SafeUnmarshalBase64(resultXDR, &result); err != nil {
+		return "decode-error"
+	}
+	outer := result.Result.Code.String()
+	if result.Result.Code == xdr.TransactionResultCodeTxFeeBumpInnerFailed {
+		if inner, ok := result.Result.GetInnerResultPair(); ok {
+			innerCode := inner.Result.Result.Code.String()
+			return outer + " (inner: " + innerCode + ")"
+		}
+	}
+	return outer
 }
 
-func decodeContractID(contractIDStr string) (xdr.ContractId, error) {
-	raw, err := strkey.Decode(strkey.VersionByteContract, contractIDStr)
-	if err != nil {
-		return xdr.ContractId{}, err
+func min(a, b int) int {
+	if a < b {
+		return a
 	}
-	var contractID xdr.ContractId
-	copy(contractID[:], raw)
-	return contractID, nil
+	return b
 }
