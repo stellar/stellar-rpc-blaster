@@ -17,6 +17,8 @@ import (
 
 const requestIDURLFragmentPrefix = "blaster-rpc-id="
 
+const benchmarkTransactionTimeoutSecs = 25
+
 type sorobanSendTransactionParams struct {
 	RPCID             int64
 	NetworkPassphrase string
@@ -53,7 +55,7 @@ func buildSorobanSendTransactionBody(params sorobanSendTransactionParams) ([]byt
 		IncrementSequenceNum: false,
 		Operations:           []txnbuild.Operation{&op},
 		BaseFee:              benchmarkBaseFee,
-		Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(60)},
+		Preconditions:        txnbuild.Preconditions{TimeBounds: txnbuild.NewTimeout(benchmarkTransactionTimeoutSecs)},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build transaction: %w", err)
