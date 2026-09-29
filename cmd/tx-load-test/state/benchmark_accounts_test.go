@@ -20,4 +20,10 @@ func TestAccountSizingFormula(t *testing.T) {
 	require.Equal(t, 2, SimplePaymentTransactionRate(cfg))
 	require.Equal(t, 20, SimplePaymentSourceAccountCount(cfg))
 	require.Equal(t, 2, HolderAccountCount(cfg))
+
+	cfg.Mode = config.ModeSoroswap
+	require.Equal(t, 2000, HolderAccountCount(cfg))
+	require.Equal(t, 2000, BenchmarkSupersetHolderAccountCount(cfg))
+	require.Equal(t, 2000, RecommendedBenchmarkSupersetHolderAccountCount(cfg, 5000))
+	require.Equal(t, 500, RecommendedBenchmarkSupersetHolderAccountCount(cfg, 500))
 }

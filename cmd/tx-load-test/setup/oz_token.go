@@ -415,15 +415,25 @@ func i128ScVal(amount int64) xdr.ScVal {
 }
 
 func addressScVal(address string) (xdr.ScVal, error) {
-	accountID, err := xdr.AddressToAccountId(address)
+	if accountID, err := xdr.AddressToAccountId(address); err == nil {
+		return xdr.ScVal{
+			Type: xdr.ScValTypeScvAddress,
+			Address: &xdr.ScAddress{
+				Type:      xdr.ScAddressTypeScAddressTypeAccount,
+				AccountId: &accountID,
+			},
+		}, nil
+	}
+
+	contractID, err := decodeContractID(address)
 	if err != nil {
-		return xdr.ScVal{}, err
+		return xdr.ScVal{}, fmt.Errorf("decode address %s: not an account or contract address", address)
 	}
 	return xdr.ScVal{
 		Type: xdr.ScValTypeScvAddress,
 		Address: &xdr.ScAddress{
-			Type:      xdr.ScAddressTypeScAddressTypeAccount,
-			AccountId: &accountID,
+			Type:       xdr.ScAddressTypeScAddressTypeContract,
+			ContractId: &contractID,
 		},
 	}, nil
 }
