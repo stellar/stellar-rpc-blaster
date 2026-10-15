@@ -11,7 +11,6 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/log"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/tx-load-test/config"
-	"github.com/stellar/stellar-rpc-blaster/internal/run/engine"
 )
 
 // runVegetaAttack is the shared Vegeta harness used by all benchmark modes.
@@ -33,7 +32,7 @@ func runVegetaAttack(
 	accounts accountLeaseManager,
 	recorder *benchmarkTraceRecorder,
 ) (workloadMetricsReport, error) {
-	pacer := engine.RampToConstantPacer{
+	pacer := RampToConstantPacer{
 		StartRPS:      1,
 		MaxRPS:        cfg.TargetRPS,
 		RampDuration:  cfg.RampUp,
