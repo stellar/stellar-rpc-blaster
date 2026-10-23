@@ -52,10 +52,14 @@ func NewBlastEngine(
 			return nil, fmt.Errorf("failed to load seed data: %w", err)
 		}
 		sharedParams = p
+		sharedParams.QueryWindow = cfg.QueryWindow
 
 		// Run preflight validation to ensure seed data is fresh enough for the target RPC before blasting any endpoints
 		if err := sharedParams.ValidateConfiguredEndpoints(ctx, cfg.RpcClient, cfg.GetActiveEndpoints()); err != nil {
 			return nil, fmt.Errorf("preflight seed validation failed (try rerunning `generate`): %w", err)
+		}
+		if h := sharedParams.Head; h.Latest != 0 {
+			logger.Infof("Query window: [%d, %d] (target's oldest ledger: %d)", h.Floor(), h.Latest, h.Oldest)
 		}
 		for _, warning := range sharedParams.Warnings(cfg.GetActiveEndpoints()) {
 			logger.Warn(warning)

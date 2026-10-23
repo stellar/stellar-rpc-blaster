@@ -35,6 +35,7 @@ type Config struct {
 	Cooloff        time.Duration // delay between endpoints in serial mode so failures don't cascade
 	TestOutputPath string        // path to write JSON results
 	ErrorPercent   int           // threshold for error percentage to kill the test (e.g. 50 means 50%)
+	QueryWindow    []uint32      // START[,END] ledger range to place requests in; nil means the target's whole range
 
 	RngSeed uint64 `toml:"rng_seed"`
 
@@ -79,6 +80,7 @@ type RuntimeSettings struct {
 	Serial         bool
 	Cooloff        time.Duration
 	ErrorPercent   int
+	QueryWindow    []uint32
 
 	// Generate mode settings
 	OutputPath   string
@@ -136,6 +138,7 @@ func NewConfig(
 			cfg.RngSeed = uint64(time.Now().UnixNano()) // use random seed if not provided in the config
 		}
 		cfg.ErrorPercent = settings.ErrorPercent
+		cfg.QueryWindow = settings.QueryWindow
 		if err := cfg.validateEndpointConfig(); err != nil {
 			return Config{}, err
 		}

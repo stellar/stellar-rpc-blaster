@@ -12,9 +12,10 @@ import (
 )
 
 type Parameters struct {
-	Output  seed.SeedData
-	Head    HeadInfo
-	RngSeed uint64
+	Output      seed.SeedData
+	Head        HeadInfo
+	RngSeed     uint64
+	QueryWindow []uint32 // START[,END] the preflight-captured head is narrowed to; nil: none
 }
 
 // seed fields each endpoint draws from; endpoints absent here need none.
@@ -44,16 +45,41 @@ func (p *Parameters) missingSeedFields(endpointKeys []string) []string {
 	return slices.Sorted(maps.Keys(missing))
 }
 
-// HeadInfo is the target RPC's live ledger window, captured during preflight;
-// recency-sensitive request builders anchor to it rather than the seeded range.
+// HeadInfo is the target RPC's live ledger window, captured during preflight and
+// narrowed to any query window; recency-sensitive request builders anchor to it
+// rather than the seeded range.
 type HeadInfo struct {
 	Oldest, Latest uint32
+	Start          uint32 // query window start, raising Floor (0: none)
 }
 
 // Floor is the lowest safe startLedger: outside the left-edge margin of the
-// retention floor so in-flight requests can't age out mid-run.
+// retention floor so in-flight requests can't age out mid-run, and no lower than
+// the query window's start.
 func (h HeadInfo) Floor() uint32 {
-	return min(h.Oldest+util.LeftEdgeMargin, h.Latest)
+	return min(max(h.Oldest+util.LeftEdgeMargin, h.Start), h.Latest)
+}
+
+// narrow narrows the head to a query window given as START[,END], like generate's
+// --ledger-window, clamped into [Floor, Latest].
+func (h *HeadInfo) narrow(window []uint32) error {
+	if len(window) == 0 {
+		return nil
+	} else if len(window) > 2 {
+		return fmt.Errorf("query-window must have at most 2 values, got %d", len(window))
+	}
+	start, end := window[0], h.Latest
+	if len(window) == 2 {
+		end = window[1]
+	}
+	if start > end {
+		return fmt.Errorf("query-window start %d is after its end %d", start, end)
+	} else if start > h.Latest || end < h.Floor() {
+		return fmt.Errorf("query-window [%d, %d] is outside the target's queryable ledgers [%d, %d]",
+			start, end, h.Floor(), h.Latest)
+	}
+	h.Start, h.Latest = start, min(end, h.Latest)
+	return nil
 }
 
 // Clamp bounds a start into [Floor, Latest]; small retention windows degrade

@@ -52,6 +52,7 @@ func makeCommands() *cobra.Command {
 				cmd.Flags().Lookup("serial"),
 				cmd.Flags().Lookup("cooloff"),
 				cmd.Flags().Lookup("error-percent"),
+				cmd.Flags().Lookup("query-window"),
 			)
 			settings.Mode = config.Run
 			settings.Ctx = cmd.Context()
@@ -96,6 +97,7 @@ func makeCommands() *cobra.Command {
 	runCmd.Flags().Bool("serial", false, "Run endpoints one at a time sequentially instead of concurrently")
 	runCmd.Flags().Duration("cooloff", time.Duration(0), "Delay between endpoints in serial mode so one endpoint's failures don't cascade into the next (e.g. 30s)")
 	runCmd.Flags().Int("error-percent", 50, "Threshold for error percentage to kill the test (e.g. 50 means kill at 50%)")
+	runCmd.Flags().String("query-window", "", "Ledger range as START[,END] to place requests in, clamped to the target's [oldest+1000, latest] (default: all of it)")
 
 	generateCmd.Flags().String("output", "./output/seed.json", "Path to seed data file output by generate")
 	generateCmd.Flags().String("ledger-window", "", "Ledger range as START[,END] for data generation")
@@ -122,6 +124,7 @@ func bindRunCliParameters(
 	serial *pflag.Flag,
 	cooloff *pflag.Flag,
 	errorPercent *pflag.Flag,
+	queryWindow *pflag.Flag,
 ) config.RuntimeSettings {
 	bindFlag := func(flag *pflag.Flag) {
 		viper.BindPFlag(flag.Name, flag)
@@ -137,6 +140,7 @@ func bindRunCliParameters(
 	bindFlag(serial)
 	bindFlag(cooloff)
 	bindFlag(errorPercent)
+	bindFlag(queryWindow)
 	settings := config.RuntimeSettings{}
 	settings.ConfigPath = viper.GetString(cfgPath.Name)
 	settings.RpcUrl = viper.GetString(rpcUrl.Name)
@@ -148,6 +152,7 @@ func bindRunCliParameters(
 	settings.Serial = viper.GetBool(serial.Name)
 	settings.Cooloff = viper.GetViper().GetDuration(cooloff.Name)
 	settings.ErrorPercent = viper.GetInt(errorPercent.Name)
+	settings.QueryWindow = parseLedgerWindow(viper.GetString(queryWindow.Name))
 
 	return settings
 }
