@@ -3,10 +3,12 @@
 # [endpoints.ENDPOINT_NAME]
 #   rps          - requests per second
 #   start_rps    - starting requests per second, optional
-#   limit        - limit (only for paginated endpoints, optional)
+#   limit        - fixed page size, overriding the traffic model's (only for paginated endpoints, optional)
 # Specify the seed data input path for data dependent endpoints with:
-# data_path = "PATH/TO/INPUTDATA.json"
-# Using the default seed data output path, this is "./output/seed.json" 
+# input_data_path = "PATH/TO/INPUTDATA.json"
+# Using the default seed data output path, this is "./output/seed.json"
+# Fix the random draws behind request bodies, so a run's requests can be replayed, with:
+# rng_seed = 42
 
 [endpoints.getHealth]
 rps = 15
@@ -36,13 +38,17 @@ start_rps = 5
 rps = 15
 start_rps = 5
 
-# The paginated endpoints take a limit
+# The paginated endpoints may take a limit
 
-# Temporarily disabled due to highly-variable response times depending on query pattern
-# [endpoints.getEvents]
+[endpoints.getEvents]
+rps = 1
+start_rps = 1
+limit = 1
+
+# RPC Archive Node only; draws from the same traffic model as getEvents
+# [endpoints.queryEvents]
 # rps = 1
 # start_rps = 1
-# limit = 1
 
 [endpoints.getLedgers]
 rps = 1

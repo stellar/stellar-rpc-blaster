@@ -19,6 +19,7 @@ make build-rpc-blaster
 ./stellar-rpc-blaster run \
   --rpc-url http://127.0.0.1:8000 \
   --config-path ./cmd/stellar-rpc-blaster/internal/config/config.example.toml \
+  --input-data-path ./output/seed.json \
   --duration 60s \
   --ramp-up 30s
 ```
@@ -51,6 +52,15 @@ Execute a load test.
 | `--input-data-path` | string | — | `INPUT_DATA_PATH` | Path to seed data file (from `generate`) |
 | `--serial` | bool | `false` | `SERIAL` | Run endpoints one at a time instead of concurrently |
 | `--cooloff` | duration | `0` | `COOLOFF` | Delay between endpoints in serial mode so one endpoint's failures don't cascade into the next (e.g. `30s`); requires `--serial` |
+| `--error-percent` | int | `50` | `ERROR_PERCENT` | Kill switch: end the run early once any endpoint's error rate over a step interval exceeds this percentage |
+| `--query-window` | string | — | `QUERY_WINDOW` | Ledger range as `START[,END]` to place requests in |
+
+**Query window behavior:**
+- Omitted: `[oldest + 1000, latest]`, the target's retention minus a margin so in-flight requests can't age out mid-run
+- `START` only: `[START, latest]`
+- `START,END`: `[START, END]`, with head-relative requests (e.g. head polls) anchored at `END` instead of the live head
+- Always clamped into `[oldest + 1000, latest]`; a window entirely outside it fails preflight
+- Useful for making a full-history node look like one with shorter retention: e.g. to emulate a 7-day (120,960-ledger) node, pass `run` and `generate --ledger-window` the same `START = (latest - 120959) + 1000`
 
 ### `generate`
 
@@ -71,11 +81,14 @@ Collect seed data from an RPC instance for use with data-dependent endpoints.
 
 ## Configuration
 
-Endpoints are configured in a TOML file. Each endpoint block sets the target RPS and an optional starting RPS for ramp-up:
+Endpoints are configured in a TOML file. Each endpoint block sets the target RPS, an optional starting RPS for ramp-up, and for paginated endpoints an optional `limit`:
 
 ```toml
 # Path to seed data (required for data-dependent endpoints)
 input_data_path = "./output/seed.json"
+
+# Optional: fixes the random draws behind request bodies, so a run's requests can be replayed
+rng_seed = 42
 
 [endpoints.getHealth]
 rps = 100
@@ -83,7 +96,10 @@ rps = 100
 [endpoints.getLedgers]
 rps = 50
 start_rps = 10
+limit = 5
 ```
+
+Without a `limit`, paginated endpoints use their traffic model's per-request page sizes; with one, every request uses that fixed size instead. Without an `rng_seed`, each run draws a random one, recorded in the results as `seed`.
 
 ### Supported Endpoints
 
@@ -106,6 +122,12 @@ start_rps = 10
 | `getTransactions` | Live ledger head (captured at preflight) |
 | `getLedgers` | Live ledger head (captured at preflight) |
 | `getEvents` | Contract IDs, topics, parameters + live ledger head |
+| `queryEvents` | Contract IDs, topics, parameters + live ledger head (RPC Archive Node only) |
+
+`getEvents` and `queryEvents` draw from the same traffic model: a weighted mix of request archetypes observed in production `getEvents` traffic (head polls, deep pagers, transfer watchers, …), rendered into each method's own params. Each endpoint draws its own random stream, so the two never replay each other's requests, and results for both are broken down per archetype. Where `queryEvents` differs:
+- The exclusive `endLedger` becomes an inclusive `maxLedger`, and a configured `limit` is sent top-level (at most 1000)
+- A filter on several contracts becomes one filter per contract
+- `queryEvents` has no topic-count matching, so an exact-length topic filter becomes a prefix match and can match more events than its `getEvents` counterpart
 
 ### Validation Rules
 
@@ -114,7 +136,9 @@ start_rps = 10
 - At least one endpoint must have `rps > 0`
 - `start_rps` must be less than or equal to `rps` when set
 - If any endpoint sets `start_rps`, `--ramp-up` must be provided
-- Data-dependent endpoints require `input_data_path`
+- Data-dependent endpoints require `input_data_path`, set in the TOML or with `--input-data-path` but not both
+- `limit` is only allowed on paginated endpoints, up to their maximum: 200 for `getTransactions` and `getLedgers`, 10000 for `getEvents`, 1000 for `queryEvents`
+- `--error-percent` must be between 0 and 100
 
 ## Run Modes
 
@@ -163,7 +187,7 @@ The `generate` command samples ledgers from a live RPC and extracts:
 
 - **Transaction hashes** — used by `getTransaction`
 - **Ledger keys** — XDR-encoded keys used by `getLedgerEntries`
-- **Contract events** — contract IDs, event topics, and parameters used by `getEvents`
+- **Contract events** — contract IDs, event topics, and parameters used by `getEvents` and `queryEvents`
 
 This ensures load test requests hit realistic, existing on-chain data rather than synthetic inputs that may short-circuit server processing.
 
@@ -175,13 +199,16 @@ Results are written to `./output/test-results-<timestamp>.json`:
 {
   "start": "2026-04-02T21:07:45Z",
   "end": "2026-04-02T21:11:45Z",
+  "seed": 1775164065123456789,
   "duration_seconds": 240,
+  "aborted": false,
   "endpoints": {
     "getLedgers": {
       "total_requests": 6749,
       "success": 1332,
       "errors": 5417,
       "target_rps": 50,
+      "traffic_profile": 3,
       "percentiles_ms": {
         "p50.0": 15007.74,
         "p95.0": 15007.74,
@@ -222,14 +249,19 @@ Results are written to `./output/test-results-<timestamp>.json`:
 
 ### Key fields
 
+At the top level, `seed` is the RNG seed the run used (set it as `rng_seed` to replay the same requests), and `aborted` is `true` when the `--error-percent` kill switch ended the run early. Per endpoint:
+
 | Field | Description |
 |-------|-------------|
 | `total_requests` | Total requests sent to this endpoint |
 | `success` / `errors` | Count of successful (2xx + no JSON-RPC error) vs failed requests |
 | `target_rps` | Final target RPS for this endpoint |
+| `limit` | The configured `limit`, if any |
+| `traffic_profile` | Version of the endpoint's built-in traffic model, for comparing runs across blaster versions (modeled endpoints only) |
 | `percentiles_ms` | Overall latency percentiles across the full test (p50, p95, p99, p99.9) |
 | `error_types` | Errors grouped by message, with count and first/last seen timestamps |
 | `timeline` | Per-step-interval snapshots showing how the endpoint performed over time |
+| `archetypes` | `getEvents` / `queryEvents` only: the same fields for each traffic archetype's share of the endpoint's requests |
 
 ### Timeline snapshots
 
