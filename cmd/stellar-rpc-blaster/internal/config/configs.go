@@ -205,9 +205,9 @@ func (c *Config) validateEndpointConfig() error {
 			}
 		}
 		switch endpoint {
-		case "getTransactions", "getLedgers", "getEvents":
+		case "getTransactions", "getLedgers", "getEvents", "queryEvents":
 			if c.GetEndpointLimit(endpoint) > c.GetEndpointMaxLimit(endpoint) {
-				return fmt.Errorf("pagination limit for %s must not exceed %d", endpoint, c.GetEndpointMaxLimit(endpoint))
+				return fmt.Errorf("limit for %s must not exceed %d", endpoint, c.GetEndpointMaxLimit(endpoint))
 			}
 		default:
 			if c.GetEndpointLimit(endpoint) != 0 {
@@ -260,6 +260,8 @@ func (c *Config) GetEndpointMaxLimit(key string) uint32 {
 		return util.MaxLedgersPageLimit
 	case "getEvents":
 		return util.MaxEventsPageLimit
+	case "queryEvents":
+		return util.MaxQueryEventsPageLimit
 	default:
 		return 0 // for endpoints that don't support limits
 	}

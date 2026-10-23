@@ -140,9 +140,9 @@ func NewAggregator(logger *log.Entry, settings config.Config, cancel context.Can
 			return s
 		}
 		a.stats[endpointKey] = newStats(1)
-		// getEvents samples are also tracked per archetype, as sub-streams
-		// carrying their share of the endpoint's RPS
-		if endpointKey == "getEvents" {
+		// getEvents/queryEvents samples are also tracked per archetype, as
+		// sub-streams carrying their share of the endpoint's RPS
+		if parameters.HasArchetypes(endpointKey) {
 			for name, share := range parameters.EventsArchetypeShares() {
 				a.stats[endpointKey+"/"+name] = newStats(share)
 			}

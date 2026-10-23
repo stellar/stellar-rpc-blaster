@@ -9,9 +9,10 @@ const (
 	RequestTimeout = 15 * time.Second // (this isn't accessible from outside stellar-rpc)
 
 	// Hard-coded RPC endpoint pagination limits
-	MaxTxPageLimit      uint32 = 200
-	MaxLedgersPageLimit uint32 = 200
-	MaxEventsPageLimit  uint32 = 10000
+	MaxTxPageLimit          uint32 = 200
+	MaxLedgersPageLimit     uint32 = 200
+	MaxEventsPageLimit      uint32 = 10000
+	MaxQueryEventsPageLimit uint32 = 1000
 )
 
 // Configurable limits for generate

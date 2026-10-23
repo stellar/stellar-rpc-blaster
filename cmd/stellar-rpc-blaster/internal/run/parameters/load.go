@@ -22,6 +22,7 @@ var endpointSeedFields = map[string][]string{
 	"getTransaction":   {"tx_hashes"},
 	"getLedgerEntries": {"ledger_keys"},
 	"getEvents":        {"contract_events", "ledger_keys"},
+	"queryEvents":      {"contract_events", "ledger_keys"},
 }
 
 // missingSeedFields returns the seed fields the given endpoints need but the loaded
@@ -70,7 +71,7 @@ func (h HeadInfo) Back(depth uint32) uint32 {
 // traffic realism without blocking the run.
 func (p *Parameters) Warnings(endpointKeys []string) []string {
 	var warnings []string
-	if slices.Contains(endpointKeys, "getEvents") && len(collectWallets(p.Output.ContractEventData)) == 0 {
+	if slices.ContainsFunc(endpointKeys, HasArchetypes) && len(collectWallets(p.Output.ContractEventData)) == 0 {
 		warnings = append(warnings, "seed data has no account-address event params; transfer-watcher bodies degrade to head-polls")
 	}
 	return warnings
