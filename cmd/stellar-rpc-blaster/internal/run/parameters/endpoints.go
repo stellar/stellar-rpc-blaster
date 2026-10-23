@@ -13,7 +13,12 @@ import (
 // plus per-body labels (nil except for the events endpoints, whose results are reported
 // per archetype). A non-zero limit is a config override applied to every body (config
 // validation guarantees only paginated endpoints can carry one).
-func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Parameters, limit uint32) ([]map[string]any, []string, error) {
+func BuildEndpointParams(
+	endpointKey string,
+	maxNeededNumBodies int,
+	params *Parameters,
+	limit uint32,
+) ([]map[string]any, []string, error) {
 	result, labels, err := buildEndpointParams(endpointKey, maxNeededNumBodies, params)
 	if limit != 0 {
 		for _, body := range result {
@@ -27,7 +32,11 @@ func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 	return result, labels, err
 }
 
-func buildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Parameters) ([]map[string]any, []string, error) {
+func buildEndpointParams(
+	endpointKey string,
+	maxNeededNumBodies int,
+	params *Parameters,
+) ([]map[string]any, []string, error) {
 	if needs, err := EndpointNeedsData(endpointKey); err != nil {
 		return nil, nil, err
 	} else if !needs {
@@ -84,77 +93,82 @@ func buildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 			if endpointKey == "getTransactions" { // essentially always the max
 				entry["pagination"] = map[string]any{"limit": util.MaxTxPageLimit}
 			} else if l := chooseOne(rng, []uint{1, 5, 20, 0}, []float64{0.4, 0.28, 0.07, 0.25}); l != 0 {
-				entry["pagination"] = map[string]any{"limit": l} // getLedgers mix; 0 = key omitted (server default of 50)
+				entry["pagination"] = map[string]any{"limit": l} // getLedgers mix; 0 = key omitted (RPC default is 50)
 			}
 			result[i] = entry
 		}
 		return result, nil, nil
 
 	case "getEvents":
-		return sampleEvents(params, rng, count, func(q eventsQuery) map[string]any {
-			body := map[string]any{"startLedger": q.start, "pagination": map[string]any{"limit": q.limit}}
-			if q.end != 0 {
-				body["endLedger"] = q.end
-			}
-			if q.json {
-				body["xdrFormat"] = "json"
-			}
-			if q.filters != nil {
-				filters := make([]map[string]any, len(q.filters))
-				for i, f := range q.filters {
-					filters[i] = map[string]any{"type": "contract"}
-					if f.contractIDs != nil {
-						filters[i]["contractIds"] = f.contractIDs
-					}
-					if f.topic != nil {
-						filters[i]["topics"] = [][]string{f.topic}
-					}
-				}
-				body["filters"] = filters
-			}
-			return body
-		})
+		return sampleEvents(params, rng, count, renderGetEvents)
 
 	case "queryEvents":
-		return sampleEvents(params, rng, count, func(q eventsQuery) map[string]any {
-			body := map[string]any{"minLedger": q.start, "limit": q.limit}
-			if q.end != 0 {
-				body["maxLedger"] = q.end - 1 // inclusive, unlike getEvents' endLedger
-			}
-			if q.json {
-				body["xdrFormat"] = "json"
-			}
-			var filters []map[string]any
-			for _, f := range q.filters {
-				// Topic segments pin positions: a value pins topicN, "*" leaves it open, "**" leaves
-				// the rest open. queryEvents has no topic-count matching, so an exact-arity topic
-				// becomes a prefix match.
-				filter := map[string]any{"type": "contract"}
-				for i, seg := range f.topic {
-					if seg == "**" {
-						break
-					}
-					if seg != "*" {
-						filter[fmt.Sprintf("topic%d", i)] = seg
-					}
-				}
-				if f.contractIDs == nil {
-					filters = append(filters, filter)
-				}
-				for _, cid := range f.contractIDs { // queryEvents filters take one contractId each
-					perContract := maps.Clone(filter)
-					perContract["contractId"] = cid
-					filters = append(filters, perContract)
-				}
-			}
-			if filters != nil {
-				body["filters"] = filters
-			}
-			return body
-		})
+		return sampleEvents(params, rng, count, renderQueryEvents)
 	default:
 		return nil, nil, fmt.Errorf("unsupported endpoint %s", endpointKey)
 	}
+}
+
+// renderGetEvents renders a sampled events query as getEvents params.
+func renderGetEvents(q eventsQuery) map[string]any {
+	body := map[string]any{"startLedger": q.start, "pagination": map[string]any{"limit": q.limit}}
+	if q.end != 0 {
+		body["endLedger"] = q.end
+	}
+	if q.json {
+		body["xdrFormat"] = "json"
+	}
+	if q.filters != nil {
+		filters := make([]map[string]any, len(q.filters))
+		for i, f := range q.filters {
+			filters[i] = map[string]any{"type": "contract"}
+			if f.contractIDs != nil {
+				filters[i]["contractIds"] = f.contractIDs
+			}
+			if f.topic != nil {
+				filters[i]["topics"] = [][]string{f.topic}
+			}
+		}
+		body["filters"] = filters
+	}
+	return body
+}
+
+// renderQueryEvents renders a sampled events query as queryEvents params. Topic segments
+// pin positions: a value pins topicN, "*" leaves it open, "**" leaves the rest open.
+// queryEvents has no topic-count matching, so an exact-arity topic becomes a prefix match.
+func renderQueryEvents(q eventsQuery) map[string]any {
+	body := map[string]any{"minLedger": q.start, "limit": q.limit}
+	if q.end != 0 {
+		body["maxLedger"] = q.end - 1 // inclusive, unlike getEvents' endLedger
+	}
+	if q.json {
+		body["xdrFormat"] = "json"
+	}
+	var filters []map[string]any
+	for _, f := range q.filters {
+		filter := map[string]any{"type": "contract"}
+		for i, seg := range f.topic {
+			if seg == "**" {
+				break
+			}
+			if seg != "*" {
+				filter[fmt.Sprintf("topic%d", i)] = seg
+			}
+		}
+		if f.contractIDs == nil {
+			filters = append(filters, filter)
+		}
+		for _, cid := range f.contractIDs { // queryEvents filters take one contractId each
+			perContract := maps.Clone(filter)
+			perContract["contractId"] = cid
+			filters = append(filters, perContract)
+		}
+	}
+	if filters != nil {
+		body["filters"] = filters
+	}
+	return body
 }
 
 // endpointStream derives a per-endpoint PCG stream from the endpoint name, so one root
