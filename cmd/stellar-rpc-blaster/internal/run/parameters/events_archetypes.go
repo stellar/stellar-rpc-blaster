@@ -159,17 +159,20 @@ func newEventsSampler(params *Parameters, rng *rand.Rand) (*eventsSampler, error
 }
 
 // sampleEvents draws count events queries, rendering each into an endpoint's params
-// with render, and returns them with their archetype labels.
-func sampleEvents(params *Parameters, rng *rand.Rand, count int, render func(eventsQuery) map[string]any) ([]map[string]any, []string, error) {
+// with render, and returns them with their archetype labels. A non-zero limit overrides
+// the page size each query's archetype drew.
+func sampleEvents(params *Parameters, rng *rand.Rand, count int, render func(eventsQuery) map[string]any, limit uint32) ([]map[string]any, []string, error) {
 	s, err := newEventsSampler(params, rng)
 	if err != nil {
 		return nil, nil, fmt.Errorf("couldn't build events sampler: %w", err)
 	}
 	bodies, labels := make([]map[string]any, count), make([]string, count)
 	for i := range count {
-		var q eventsQuery
-		labels[i], q = s.sample()
-		bodies[i] = render(q)
+		label, q := s.sample()
+		if limit != 0 {
+			q.limit = uint(limit)
+		}
+		labels[i], bodies[i] = label, render(q)
 	}
 	return bodies, labels, nil
 }
@@ -181,12 +184,6 @@ func (s *eventsSampler) sample() (string, eventsQuery) {
 	q := a.build(s)
 	q.json = s.rng.Float64() < util.PrEventsJson
 	return a.name, q
-}
-
-// HasArchetypes reports whether the endpoint draws from the events archetype model,
-// so its results carry per-archetype sub-streams.
-func HasArchetypes(endpointKey string) bool {
-	return endpointKey == "getEvents" || endpointKey == "queryEvents"
 }
 
 // EventsArchetypeNames lists the archetype labels events results are keyed by.
@@ -213,7 +210,7 @@ func EventsArchetypeShares() map[string]float64 {
 // mostly cold contracts with a follower-on-emitter slice that catches fresh events.
 func (s *eventsSampler) headPoll() eventsQuery {
 	start := s.head.Back(chooseOne(s.rng, []uint32{0, 1}, []float64{0.47, 0.53}))
-	q := s.query(start, s.contractFilter(0.10, 0.379, headPollTopics))
+	q := query(start, s.contractFilter(0.10, 0.379, headPollTopics))
 	if s.rng.Float64() < 0.5 {
 		q.end = start + 1 // one-ledger window case
 	}
@@ -225,10 +222,10 @@ func (s *eventsSampler) headPoll() eventsQuery {
 // window 421), limit 1000. polls mostly cold pages and rarely emitters or topics
 func (s *eventsSampler) deepPager() eventsQuery {
 	start := s.placeDeep()
-	q := s.query(start, s.contractFilter(0.06, 0.005, deepTopics))
+	q := query(start, s.contractFilter(0.06, 0.005, deepTopics))
 	span := chooseOne(s.rng, []uint32{250, 2000}, []float64{0.9, 0.1})
 	q.end = min(start+span, s.head.Latest+1) // +1: end is exclusive
-	q.limit = chooseOne(s.rng, []uint{1000}, []float64{1})
+	q.limit = 1000
 	return q
 }
 
@@ -261,7 +258,7 @@ func (s *eventsSampler) tailPoll() eventsQuery {
 	if s.rng.Float64() < 0.03 {
 		filter.contractIDs = []string{s.coldContract(), s.coldContract()}
 	}
-	q := s.query(start, filter)
+	q := query(start, filter)
 	if bounded {
 		q.end = min(start+span, s.head.Latest+1) // +1: end is exclusive
 	}
@@ -277,18 +274,16 @@ func (s *eventsSampler) transferWatcher() eventsQuery {
 	}
 	start := s.head.Back(uint32(s.rng.IntN(3)))
 	wallet := s.wallets[s.rng.IntN(len(s.wallets))]
-	q := eventsQuery{start: start, filters: []eventsFilter{
-		topicsOnlyFilter(transferSym, wallet, "*"), // wallet as sender
-		topicsOnlyFilter(transferSym, "*", wallet), // wallet as receiver
+	return eventsQuery{start: start, limit: 100, filters: []eventsFilter{ // four-segment topics, as measured
+		{topic: []string{transferSym, wallet, "*", "*"}}, // wallet as sender
+		{topic: []string{transferSym, "*", wallet, "*"}}, // wallet as receiver
 	}}
-	q.limit = chooseOne(s.rng, []uint{100}, []float64{1})
-	return q
 }
 
 // catchUp: tuned-window catch-up reads on real emitters; the matching minority.
 func (s *eventsSampler) catchUp() eventsQuery {
 	start := s.head.Back(uint32(10 + s.rng.IntN(240)))
-	q := s.query(start, eventsFilter{contractIDs: []string{s.emitterContract()}})
+	q := query(start, eventsFilter{contractIDs: []string{s.emitterContract()}})
 	q.limit = chooseOne(s.rng, []uint{100, 200}, []float64{0.75, 0.25}) // near-head split is ~3:1 between limit=100 vs. 200
 	return q
 }
@@ -308,12 +303,12 @@ func (s *eventsSampler) deepScan() eventsQuery {
 		start = s.head.Back(30_000 + uint32(s.rng.IntN(5000)))
 	}
 
-	q := s.query(start, s.contractFilter(0, prWithTopic, deepTopics))
+	q := query(start, s.contractFilter(0, prWithTopic, deepTopics))
 	if s.rng.Float64() < prMatchEverything {
 		q.filters = nil
 	}
 
-	q.limit = chooseOne(s.rng, []uint{100}, []float64{1}) // nearly all observed used limit=100
+	q.limit = 100 // nearly all observed used limit=100
 	return q
 }
 
@@ -327,7 +322,8 @@ func (s *eventsSampler) firehose() eventsQuery {
 
 // ---- shared helpers ----
 
-func (s *eventsSampler) query(start uint32, filter eventsFilter) eventsQuery {
+// query is a single-filter events query starting at start.
+func query(start uint32, filter eventsFilter) eventsQuery {
 	return eventsQuery{start: start, filters: []eventsFilter{filter}}
 }
 
@@ -344,12 +340,6 @@ func (s *eventsSampler) contractFilter(prEmitter, prTopic float64, mix topicMix)
 		filter.topic = s.shapedTopic(cid, mix)
 	}
 	return filter
-}
-
-// topicsOnlyFilter builds a filter carrying just the given topic segments, padded with a
-// trailing wildcard to the four-segment shape these matchers are measured to have.
-func topicsOnlyFilter(segments ...string) eventsFilter {
-	return eventsFilter{topic: append(segments, "*")}
 }
 
 // shapedTopic fills one of the mix's shapes with a topic vector cid really emitted.

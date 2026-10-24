@@ -207,15 +207,10 @@ func (c *Config) validateEndpointConfig() error {
 				return fmt.Errorf("could not parse endpoint %s, need start_rps <= rps", endpoint)
 			}
 		}
-		switch endpoint {
-		case "getTransactions", "getLedgers", "getEvents", "queryEvents":
-			if c.GetEndpointLimit(endpoint) > c.GetEndpointMaxLimit(endpoint) {
-				return fmt.Errorf("limit for %s must not exceed %d", endpoint, c.GetEndpointMaxLimit(endpoint))
-			}
-		default:
-			if c.GetEndpointLimit(endpoint) != 0 {
-				return fmt.Errorf("endpoint %s does not support pagination, so limit must be omitted or 0", endpoint)
-			}
+		if limit, maxLimit := c.GetEndpointLimit(endpoint), c.GetEndpointMaxLimit(endpoint); maxLimit == 0 && limit != 0 {
+			return fmt.Errorf("endpoint %s does not support pagination, so limit must be omitted or 0", endpoint)
+		} else if limit > maxLimit {
+			return fmt.Errorf("limit for %s must not exceed %d", endpoint, maxLimit)
 		}
 	}
 	if !hasValidEndpoint {
@@ -255,6 +250,8 @@ func (c *Config) GetEndpointLimit(key string) uint32 {
 	return 0
 }
 
+// GetEndpointMaxLimit returns the endpoint's maximum page limit; 0 for endpoints that
+// aren't paginated.
 func (c *Config) GetEndpointMaxLimit(key string) uint32 {
 	switch key {
 	case "getTransactions":

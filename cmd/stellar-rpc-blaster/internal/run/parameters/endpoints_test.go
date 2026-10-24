@@ -198,12 +198,7 @@ func TestEndpointModel(t *testing.T) {
 			bodies, _, err = BuildEndpointParams(endpoint, 100, params, 77)
 			require.NoError(t, err)
 			for _, body := range bodies {
-				if endpoint == "queryEvents" { // the one paginated endpoint taking a top-level limit
-					require.EqualValues(t, uint32(77), body["limit"], "configured limit must override the model's")
-					continue
-				}
-				require.EqualValues(t, map[string]any{"limit": uint32(77)}, body["pagination"],
-					"configured limit must override the model's")
+				require.EqualValues(t, 77, limitOf(body), "configured limit must override the model's")
 			}
 		})
 	}
@@ -227,40 +222,33 @@ func eventsModelOk(t *testing.T, params *Parameters, _ []map[string]any) {
 	}
 }
 
-// TestEndpointModelTinyWindow pins the saturating placement: no uint32 wraparound
-// or below-floor starts when the ledger window is smaller than every placement band.
-func TestEndpointModelTinyWindow(t *testing.T) {
-	params := modelParams(t)
-	params.Head = HeadInfo{Oldest: 1, Latest: 5}
-	for _, endpoint := range []string{"getEvents", "queryEvents", "getTransactions", "getLedgers"} {
-		bodies, _, err := BuildEndpointParams(endpoint, 500, params, 0)
-		require.NoError(t, err, endpoint)
-		for _, body := range bodies {
-			start := startOf(body)
-			require.True(t, start >= 1 && start <= 5, "%s start %d out of window", endpoint, start)
-		}
-	}
-}
-
-// TestEndpointModelQueryWindow checks a narrowed query window bounds every placement:
-// starts within [Floor, Latest], and no requested window reaching past Latest.
-func TestEndpointModelQueryWindow(t *testing.T) {
-	params := modelParams(t)
-	require.NoError(t, params.Head.narrow([]uint32{testOldest + 50_000, testLatest - 20_000}))
-	floor, top := params.Head.Floor(), params.Head.Latest
-	for _, endpoint := range []string{"getEvents", "queryEvents", "getTransactions", "getLedgers"} {
-		bodies, _, err := BuildEndpointParams(endpoint, nModelBodies, params, 0)
-		require.NoError(t, err, endpoint)
-		for _, body := range bodies {
-			start := startOf(body)
-			require.True(t, start >= floor && start <= top, "%s start %d outside [%d, %d]", endpoint, start, floor, top)
-			if end, ok := body["endLedger"].(uint32); ok {
-				require.LessOrEqual(t, end, top+1, "%s endLedger is exclusive", endpoint)
+// TestEndpointModelWindow checks the head's window bounds every placement: starts within
+// [Floor, Latest] and no requested window reaching past Latest, both when narrowed to a
+// query window and when tiny (no uint32 wraparound or below-floor starts when the window
+// is smaller than every placement band).
+func TestEndpointModelWindow(t *testing.T) {
+	narrowed := modelParams(t).Head
+	require.NoError(t, narrowed.Narrow([]uint32{testOldest + 50_000, testLatest - 20_000}))
+	for name, head := range map[string]HeadInfo{"narrowed": narrowed, "tiny": {Oldest: 1, Latest: 5}} {
+		t.Run(name, func(t *testing.T) {
+			params := modelParams(t)
+			params.Head = head
+			floor, top := head.Floor(), head.Latest
+			for _, endpoint := range []string{"getEvents", "queryEvents", "getTransactions", "getLedgers"} {
+				bodies, _, err := BuildEndpointParams(endpoint, nModelBodies, params, 0)
+				require.NoError(t, err, endpoint)
+				for _, body := range bodies {
+					start := startOf(body)
+					require.True(t, start >= floor && start <= top, "%s start %d outside [%d, %d]", endpoint, start, floor, top)
+					if end, ok := body["endLedger"].(uint32); ok {
+						require.LessOrEqual(t, end, top+1, "%s endLedger is exclusive", endpoint)
+					}
+					if end, ok := body["maxLedger"].(uint32); ok {
+						require.LessOrEqual(t, end, top, endpoint)
+					}
+				}
 			}
-			if end, ok := body["maxLedger"].(uint32); ok {
-				require.LessOrEqual(t, end, top, endpoint)
-			}
-		}
+		})
 	}
 }
 
@@ -270,6 +258,14 @@ func startOf(body map[string]any) uint32 {
 		return start
 	}
 	return body["startLedger"].(uint32)
+}
+
+// limitOf returns a body's page limit, whichever method's params shape it has.
+func limitOf(body map[string]any) any {
+	if p, ok := body["pagination"].(map[string]any); ok {
+		return p["limit"]
+	}
+	return body["limit"] // queryEvents
 }
 
 // getTransaction: pin the never-land share, the one distributional knob of the hash stream.

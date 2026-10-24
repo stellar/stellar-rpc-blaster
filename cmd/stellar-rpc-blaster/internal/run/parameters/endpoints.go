@@ -13,30 +13,7 @@ import (
 // plus per-body labels (nil except for the events endpoints, whose results are reported
 // per archetype). A non-zero limit is a config override applied to every body (config
 // validation guarantees only paginated endpoints can carry one).
-func BuildEndpointParams(
-	endpointKey string,
-	maxNeededNumBodies int,
-	params *Parameters,
-	limit uint32,
-) ([]map[string]any, []string, error) {
-	result, labels, err := buildEndpointParams(endpointKey, maxNeededNumBodies, params)
-	if limit != 0 {
-		for _, body := range result {
-			if endpointKey == "queryEvents" { // the one paginated endpoint taking a top-level limit
-				body["limit"] = limit
-			} else {
-				body["pagination"] = map[string]any{"limit": limit}
-			}
-		}
-	}
-	return result, labels, err
-}
-
-func buildEndpointParams(
-	endpointKey string,
-	maxNeededNumBodies int,
-	params *Parameters,
-) ([]map[string]any, []string, error) {
+func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Parameters, limit uint32) ([]map[string]any, []string, error) {
 	if needs, err := EndpointNeedsData(endpointKey); err != nil {
 		return nil, nil, err
 	} else if !needs {
@@ -44,6 +21,9 @@ func buildEndpointParams(
 	}
 	rng := rand.New(rand.NewPCG(params.RngSeed, endpointStream(endpointKey)))
 	count := min(maxNeededNumBodies, util.MaxNumPrebuiltBodies)
+	if render, ok := eventsRenderers[endpointKey]; ok {
+		return sampleEvents(params, rng, count, render, limit)
+	}
 
 	switch endpointKey {
 	case "getTransaction":
@@ -95,15 +75,12 @@ func buildEndpointParams(
 			} else if l := chooseOne(rng, []uint{1, 5, 20, 0}, []float64{0.4, 0.28, 0.07, 0.25}); l != 0 {
 				entry["pagination"] = map[string]any{"limit": l} // getLedgers mix; 0 = key omitted (RPC default is 50)
 			}
+			if limit != 0 {
+				entry["pagination"] = map[string]any{"limit": limit}
+			}
 			result[i] = entry
 		}
 		return result, nil, nil
-
-	case "getEvents":
-		return sampleEvents(params, rng, count, renderGetEvents)
-
-	case "queryEvents":
-		return sampleEvents(params, rng, count, renderQueryEvents)
 	default:
 		return nil, nil, fmt.Errorf("unsupported endpoint %s", endpointKey)
 	}
@@ -171,6 +148,20 @@ func renderQueryEvents(q eventsQuery) map[string]any {
 	return body
 }
 
+// eventsRenderers maps each endpoint drawing from the events archetype model to the
+// renderer producing its params shape.
+var eventsRenderers = map[string]func(eventsQuery) map[string]any{
+	"getEvents":   renderGetEvents,
+	"queryEvents": renderQueryEvents,
+}
+
+// HasArchetypes reports whether the endpoint draws from the events archetype model,
+// so its results carry per-archetype sub-streams.
+func HasArchetypes(endpointKey string) bool {
+	_, ok := eventsRenderers[endpointKey]
+	return ok
+}
+
 // endpointStream derives a per-endpoint PCG stream from the endpoint name, so one root
 // seed gives every endpoint an independent draw sequence. Keyed by name, not position,
 // so enabling or reordering endpoints doesn't perturb the others.
@@ -193,8 +184,7 @@ func headStart(rng *rand.Rand, head HeadInfo, prNear float64) uint32 {
 // EndpointNeedsData reports whether the endpoint requires seed data to build requests.
 func EndpointNeedsData(endpointKey string) (bool, error) {
 	switch endpointKey {
-	case "getTransaction", "getLedgerEntries", "getTransactions", "getLedgers", "getEvents", "queryEvents",
-		"simulateTransaction":
+	case "getTransaction", "getLedgerEntries", "getTransactions", "getLedgers", "getEvents", "queryEvents", "simulateTransaction":
 		return true, nil
 	case "getHealth", "getNetwork", "getVersionInfo", "getLatestLedger", "getFeeStats":
 		return false, nil

@@ -125,7 +125,7 @@ Without a `limit`, paginated endpoints use their traffic model's per-request pag
 | `queryEvents` | Contract IDs, topics, parameters + live ledger head (RPC Archive Node only) |
 
 `getEvents` and `queryEvents` draw from the same traffic model: a weighted mix of request archetypes observed in production `getEvents` traffic (head polls, deep pagers, transfer watchers, …), rendered into each method's own params. Each endpoint draws its own random stream, so the two never replay each other's requests, and results for both are broken down per archetype. Where `queryEvents` differs:
-- The exclusive `endLedger` becomes an inclusive `maxLedger`, and a configured `limit` is sent top-level (at most 1000)
+- The exclusive `endLedger` becomes an inclusive `maxLedger`, and a configured `limit` is sent top-level
 - A filter on several contracts becomes one filter per contract
 - `queryEvents` has no topic-count matching, so an exact-length topic filter becomes a prefix match and can match more events than its `getEvents` counterpart
 

@@ -12,10 +12,9 @@ import (
 )
 
 type Parameters struct {
-	Output      seed.SeedData
-	Head        HeadInfo
-	RngSeed     uint64
-	QueryWindow []uint32 // START[,END] the preflight-captured head is narrowed to; nil: none
+	Output  seed.SeedData
+	Head    HeadInfo
+	RngSeed uint64
 }
 
 // seed fields each endpoint draws from; endpoints absent here need none.
@@ -60,9 +59,9 @@ func (h HeadInfo) Floor() uint32 {
 	return min(max(h.Oldest+util.LeftEdgeMargin, h.Start), h.Latest)
 }
 
-// narrow narrows the head to a query window given as START[,END], like generate's
+// Narrow narrows the head to a query window given as START[,END], like generate's
 // --ledger-window, clamped into [Floor, Latest].
-func (h *HeadInfo) narrow(window []uint32) error {
+func (h *HeadInfo) Narrow(window []uint32) error {
 	if len(window) == 0 {
 		return nil
 	} else if len(window) > 2 {
@@ -72,13 +71,12 @@ func (h *HeadInfo) narrow(window []uint32) error {
 	if len(window) == 2 {
 		end = window[1]
 	}
-	if start > end {
-		return fmt.Errorf("query-window start %d is after its end %d", start, end)
-	} else if start > h.Latest || end < h.Floor() {
-		return fmt.Errorf("query-window [%d, %d] is outside the target's queryable ledgers [%d, %d]",
+	lo, hi := max(start, h.Floor()), min(end, h.Latest)
+	if lo > hi {
+		return fmt.Errorf("query-window [%d, %d] has no ledgers in the target's queryable range [%d, %d]",
 			start, end, h.Floor(), h.Latest)
 	}
-	h.Start, h.Latest = start, min(end, h.Latest)
+	h.Start, h.Latest = lo, hi
 	return nil
 }
 
