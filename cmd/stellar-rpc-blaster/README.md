@@ -53,14 +53,14 @@ Execute a load test.
 | `--serial` | bool | `false` | `SERIAL` | Run endpoints one at a time instead of concurrently |
 | `--cooloff` | duration | `0` | `COOLOFF` | Delay between endpoints in serial mode so one endpoint's failures don't cascade into the next (e.g. `30s`); requires `--serial` |
 | `--error-percent` | int | `50` | `ERROR_PERCENT` | Kill switch: end the run early once any endpoint's error rate over a step interval exceeds this percentage |
-| `--query-window` | string | — | `QUERY_WINDOW` | Ledger range as `START[,END]` to place requests in |
+| `--query-window` | string | — | `QUERY_WINDOW` | Ledgers to place requests in, as `START` or `START,END` (e.g. `--query-window 55000000,55100000`); same syntax as `generate --ledger-window` |
 
-**Query window behavior:**
+**Query window behavior** (ranges are inclusive, written `[first, last]`):
 - Omitted: `[oldest + 1000, latest]`, the target's retention minus a margin so in-flight requests can't age out mid-run
-- `START` only: `[START, latest]`
+- `START`: `[START, latest]`
 - `START,END`: `[START, END]`, with `END` standing in for the live head: head-relative requests (e.g. head polls) anchor at it, and otherwise open-ended requests end at it rather than reading past it, as they would stop at the live head
-- Always clamped into `[oldest + 1000, latest]`; a window entirely outside it fails preflight
-- Useful for making a full-history node look like one with shorter retention: e.g. to emulate a 7-day (120,960-ledger) node, pass `run` and `generate --ledger-window` the same `START = (latest - 120959) + 1000`
+- Always clamped into `[oldest + 1000, latest]`; a window with no ledgers in that range, a value that isn't a ledger sequence number, or more than two values is an error
+- Useful for making a full-history node look like one with shorter retention: e.g. to emulate a 7-day (120,960-ledger) node, pass `run --query-window` and `generate --ledger-window` the same `START = (latest - 120959) + 1000`
 
 ### `generate`
 
@@ -70,12 +70,12 @@ Collect seed data from an RPC instance for use with data-dependent endpoints.
 |------|------|---------|---------|-------------|
 | `--rpc-url` | string | *(required)* | `RPC_URL` | Target RPC server URL |
 | `--output` | string | `./output/seed.json` | `OUTPUT` | Output path for seed data |
-| `--ledger-window` | string | — | `LEDGER_WINDOW` | Ledger range as `START[,END]` to sample from |
+| `--ledger-window` | string | — | `LEDGER_WINDOW` | Ledgers to sample from, as `START` or `START,END` (e.g. `--ledger-window 55000000,55100000`) |
 | `--count` | uint32 | `5000` | `COUNT` | Number of ledgers to sample |
 
-**Ledger window behavior:**
+**Ledger window behavior** (ranges are inclusive, written `[first, last]`):
 - Omitted: `[LatestCheckpoint - count, LatestCheckpoint]`
-- `START` only: `[START, LatestCheckpoint]`
+- `START`: `[START, LatestCheckpoint]`
 - `START,END`: `[START, END]`
 - If the window is larger than `count`, ledgers are uniformly sampled across the range
 
