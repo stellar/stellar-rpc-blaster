@@ -58,7 +58,7 @@ Execute a load test.
 **Query window behavior:**
 - Omitted: `[oldest + 1000, latest]`, the target's retention minus a margin so in-flight requests can't age out mid-run
 - `START` only: `[START, latest]`
-- `START,END`: `[START, END]`, with head-relative requests (e.g. head polls) anchored at `END` instead of the live head
+- `START,END`: `[START, END]`, with `END` standing in for the live head: head-relative requests (e.g. head polls) anchor at it, and otherwise open-ended requests end at it rather than reading past it, as they would stop at the live head
 - Always clamped into `[oldest + 1000, latest]`; a window entirely outside it fails preflight
 - Useful for making a full-history node look like one with shorter retention: e.g. to emulate a 7-day (120,960-ledger) node, pass `run` and `generate --ledger-window` the same `START = (latest - 120959) + 1000`
 

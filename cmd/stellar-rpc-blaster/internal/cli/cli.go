@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -42,7 +43,7 @@ func makeCommands() *cobra.Command {
 		Use:   "run",
 		Short: "Run a load test",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			settings := bindRunCliParameters(cmd.Flags().Lookup("config-path"),
+			settings, err := bindRunCliParameters(cmd.Flags().Lookup("config-path"),
 				cmd.Flags().Lookup("rpc-url"),
 				cmd.Flags().Lookup("duration"),
 				cmd.Flags().Lookup("ramp-up"),
@@ -54,6 +55,9 @@ func makeCommands() *cobra.Command {
 				cmd.Flags().Lookup("error-percent"),
 				cmd.Flags().Lookup("query-window"),
 			)
+			if err != nil {
+				return err
+			}
 			settings.Mode = config.Run
 			settings.Ctx = cmd.Context()
 			if settings.Ctx == nil {
@@ -68,11 +72,14 @@ func makeCommands() *cobra.Command {
 		Use:   "generate",
 		Short: "Generate load test data",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			settings := bindGenerateCliParameters(cmd.Flags().Lookup("rpc-url"),
+			settings, err := bindGenerateCliParameters(cmd.Flags().Lookup("rpc-url"),
 				cmd.Flags().Lookup("output"),
 				cmd.Flags().Lookup("ledger-window"),
 				cmd.Flags().Lookup("count"),
 			)
+			if err != nil {
+				return err
+			}
 			settings.Mode = config.Generate
 			settings.Ctx = cmd.Context()
 			if settings.Ctx == nil {
@@ -125,7 +132,7 @@ func bindRunCliParameters(
 	cooloff *pflag.Flag,
 	errorPercent *pflag.Flag,
 	queryWindow *pflag.Flag,
-) config.RuntimeSettings {
+) (config.RuntimeSettings, error) {
 	bindFlag := func(flag *pflag.Flag) {
 		viper.BindPFlag(flag.Name, flag)
 		viper.BindEnv(flag.Name, strutils.KebabToConstantCase(flag.Name))
@@ -152,9 +159,9 @@ func bindRunCliParameters(
 	settings.Serial = viper.GetBool(serial.Name)
 	settings.Cooloff = viper.GetViper().GetDuration(cooloff.Name)
 	settings.ErrorPercent = viper.GetInt(errorPercent.Name)
-	settings.QueryWindow = parseLedgerWindow(viper.GetString(queryWindow.Name))
-
-	return settings
+	var err error
+	settings.QueryWindow, err = parseLedgerWindow(queryWindow.Name, viper.GetString(queryWindow.Name))
+	return settings, err
 }
 
 // Binds CLI parameters for the 'generate' command into RuntimeSettings
@@ -164,7 +171,7 @@ func bindGenerateCliParameters(
 	outputPath *pflag.Flag,
 	ledgerWindow *pflag.Flag,
 	count *pflag.Flag,
-) config.RuntimeSettings {
+) (config.RuntimeSettings, error) {
 	bindFlag := func(flag *pflag.Flag) {
 		viper.BindPFlag(flag.Name, flag)
 		viper.BindEnv(flag.Name, strutils.KebabToConstantCase(flag.Name))
@@ -176,30 +183,30 @@ func bindGenerateCliParameters(
 	settings := config.RuntimeSettings{}
 	settings.RpcUrl = viper.GetString(rpcUrl.Name)
 	settings.OutputPath = viper.GetString(outputPath.Name)
-	settings.LedgerWindow = parseLedgerWindow(viper.GetString(ledgerWindow.Name))
 	settings.Count = viper.GetUint32(count.Name)
-
-	return settings
+	var err error
+	settings.LedgerWindow, err = parseLedgerWindow(ledgerWindow.Name, viper.GetString(ledgerWindow.Name))
+	return settings, err
 }
 
-// parseLedgerWindow parses a comma-separated string of up to 2 ledger sequence numbers.
-// Returns nil for an empty string (no window specified).
-func parseLedgerWindow(s string) []uint32 {
+// parseLedgerWindow parses the named flag's START[,END] ledger window; nil for an empty
+// string (no window specified). Anything that isn't a ledger sequence is an error, so a
+// mistyped window can't silently run as a different one.
+func parseLedgerWindow(flag, s string) ([]uint32, error) {
 	if s == "" {
-		return nil
+		return nil, nil
 	}
 	parts := strings.Split(s, ",")
-	result := make([]uint32, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		v, err := strconv.ParseUint(p, 10, 32)
-		if err != nil {
-			continue
-		}
-		result = append(result, uint32(v))
+	if len(parts) > 2 {
+		return nil, fmt.Errorf("%s must have at most 2 values, got %d", flag, len(parts))
 	}
-	return result
+	window := make([]uint32, len(parts))
+	for i, p := range parts {
+		v, err := strconv.ParseUint(strings.TrimSpace(p), 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %q is not a ledger sequence", flag, strings.TrimSpace(p))
+		}
+		window[i] = uint32(v)
+	}
+	return window, nil
 }

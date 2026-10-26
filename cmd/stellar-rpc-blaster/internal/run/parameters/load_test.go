@@ -19,7 +19,6 @@ func TestHeadNarrow(t *testing.T) {
 		"entirely below the floor":     {[]uint32{200, 900}, 0, 0, "query-window [200, 900] has no ledgers in the target's queryable range [1100, 50000]"},
 		"START past latest":            {[]uint32{60_000}, 0, 0, "query-window [60000, 50000] has no ledgers in the target's queryable range [1100, 50000]"},
 		"START after END":              {[]uint32{30_000, 20_000}, 0, 0, "query-window [30000, 20000] has no ledgers in the target's queryable range [1100, 50000]"},
-		"too many values":              {[]uint32{1, 2, 3}, 0, 0, "query-window must have at most 2 values, got 3"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -31,6 +30,7 @@ func TestHeadNarrow(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.Equal(t, [2]uint32{c.floor, c.latest}, [2]uint32{h.Floor(), h.Latest})
+			require.Equal(t, len(c.window) == 2, h.Pinned, "an END pins the head")
 		})
 	}
 }

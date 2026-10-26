@@ -183,6 +183,9 @@ func (s *eventsSampler) sample() (string, eventsQuery) {
 	a := chooseOne(s.rng, eventsArchetypes, archetypeWeights)
 	q := a.build(s)
 	q.json = s.rng.Float64() < util.PrEventsJson
+	if q.end == 0 && s.head.Pinned { // a pinned END ends open-ended queries, as the live head would
+		q.end = s.head.Latest + 1
+	}
 	return a.name, q
 }
 

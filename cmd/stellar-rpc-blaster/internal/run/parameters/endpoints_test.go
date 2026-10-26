@@ -224,8 +224,9 @@ func eventsModelOk(t *testing.T, params *Parameters, _ []map[string]any) {
 
 // TestEndpointModelWindow checks the head's window bounds every placement: starts within
 // [Floor, Latest] and no requested window reaching past Latest, both when narrowed to a
-// query window and when tiny (no uint32 wraparound or below-floor starts when the window
-// is smaller than every placement band).
+// query window (whose END also ends every otherwise open-ended events query) and when
+// tiny (no uint32 wraparound or below-floor starts when the window is smaller than every
+// placement band).
 func TestEndpointModelWindow(t *testing.T) {
 	narrowed := modelParams(t).Head
 	require.NoError(t, narrowed.Narrow([]uint32{testOldest + 50_000, testLatest - 20_000}))
@@ -240,11 +241,10 @@ func TestEndpointModelWindow(t *testing.T) {
 				for _, body := range bodies {
 					start := startOf(body)
 					require.True(t, start >= floor && start <= top, "%s start %d outside [%d, %d]", endpoint, start, floor, top)
-					if end, ok := body["endLedger"].(uint32); ok {
-						require.LessOrEqual(t, end, top+1, "%s endLedger is exclusive", endpoint)
-					}
-					if end, ok := body["maxLedger"].(uint32); ok {
-						require.LessOrEqual(t, end, top, endpoint)
+					end, bounded := endOf(body)
+					require.True(t, !bounded || end <= top, "%s end %d past %d", endpoint, end, top)
+					if head.Pinned && HasArchetypes(endpoint) {
+						require.True(t, bounded, "%s open-ended at a pinned END: %v", endpoint, body)
 					}
 				}
 			}
@@ -258,6 +258,18 @@ func startOf(body map[string]any) uint32 {
 		return start
 	}
 	return body["startLedger"].(uint32)
+}
+
+// endOf returns a body's last ledger (inclusive), whichever method's params shape it
+// has, and whether it has one.
+func endOf(body map[string]any) (uint32, bool) {
+	if end, ok := body["maxLedger"].(uint32); ok { // queryEvents
+		return end, true
+	}
+	if end, ok := body["endLedger"].(uint32); ok {
+		return end - 1, true // exclusive
+	}
+	return 0, false
 }
 
 // limitOf returns a body's page limit, whichever method's params shape it has.

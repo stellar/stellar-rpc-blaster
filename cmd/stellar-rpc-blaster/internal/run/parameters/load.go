@@ -50,6 +50,7 @@ func (p *Parameters) missingSeedFields(endpointKeys []string) []string {
 type HeadInfo struct {
 	Oldest, Latest uint32
 	Start          uint32 // query window start, raising Floor (0: none)
+	Pinned         bool   // Latest is a query window's END rather than the live head
 }
 
 // Floor is the lowest safe startLedger: outside the left-edge margin of the
@@ -60,12 +61,10 @@ func (h HeadInfo) Floor() uint32 {
 }
 
 // Narrow narrows the head to a query window given as START[,END], like generate's
-// --ledger-window, clamped into [Floor, Latest].
+// --ledger-window, clamped into [Floor, Latest]. An END stands in for the live head.
 func (h *HeadInfo) Narrow(window []uint32) error {
 	if len(window) == 0 {
 		return nil
-	} else if len(window) > 2 {
-		return fmt.Errorf("query-window must have at most 2 values, got %d", len(window))
 	}
 	start, end := window[0], h.Latest
 	if len(window) == 2 {
@@ -76,7 +75,7 @@ func (h *HeadInfo) Narrow(window []uint32) error {
 		return fmt.Errorf("query-window [%d, %d] has no ledgers in the target's queryable range [%d, %d]",
 			start, end, h.Floor(), h.Latest)
 	}
-	h.Start, h.Latest = lo, hi
+	h.Start, h.Latest, h.Pinned = lo, hi, len(window) == 2
 	return nil
 }
 
