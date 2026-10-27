@@ -23,6 +23,7 @@ type BlastEngine struct {
 	blastFn    func() *vegeta.Attacker
 	outCh      chan<- blasterMetrics.Sample
 	cfg        config.Config
+	Head       parameters.HeadInfo // the target's ledger window requests were placed in; zero without seed data
 }
 
 type EndpointBlastConfig struct {
@@ -103,12 +104,11 @@ func NewBlastEngine(
 			BlastPacer:  pacer,
 		})
 	}
-	return &BlastEngine{
-		BlastSpecs: endpointBlasts,
-		blastFn:    newBlaster,
-		outCh:      out,
-		cfg:        cfg,
-	}, nil
+	be := &BlastEngine{BlastSpecs: endpointBlasts, blastFn: newBlaster, outCh: out, cfg: cfg}
+	if sharedParams != nil {
+		be.Head = sharedParams.Head
+	}
+	return be, nil
 }
 
 // Run executes the blast according to the engine's configuration, sending results to the OutCh for aggregation

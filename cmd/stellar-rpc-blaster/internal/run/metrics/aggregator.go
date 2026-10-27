@@ -25,6 +25,7 @@ type Aggregator struct {
 	logger          *log.Entry
 	writeOutputPath string
 	rngSeed         uint64
+	head            parameters.HeadInfo // the ledger window requests were placed in; zero without seed data
 	cancel          context.CancelFunc
 
 	stats            map[string]*EndpointStats
@@ -105,7 +106,7 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 	}
 }
 
-func NewAggregator(logger *log.Entry, settings config.Config, cancel context.CancelFunc) *Aggregator {
+func NewAggregator(logger *log.Entry, settings config.Config, head parameters.HeadInfo, cancel context.CancelFunc) *Aggregator {
 	endpoints := settings.GetActiveEndpoints()
 	duration := settings.Duration
 	if settings.Serial {
@@ -121,6 +122,7 @@ func NewAggregator(logger *log.Entry, settings config.Config, cancel context.Can
 		errorPercent:    settings.ErrorPercent,
 		writeOutputPath: settings.TestOutputPath,
 		rngSeed:         settings.RngSeed,
+		head:            head,
 	}
 	stepInterval := max(5, settings.StepInterval)
 

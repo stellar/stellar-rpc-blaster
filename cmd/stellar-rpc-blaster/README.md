@@ -60,6 +60,7 @@ Execute a load test.
 - `START`: `[START, latest]`
 - `START,END`: `[START, END]`, with `END` standing in for the live head: head-relative requests (e.g. head polls) anchor at it, and otherwise open-ended requests end at it rather than reading past it, as they would stop at the live head
 - Always clamped into `[oldest + 1000, latest]`; a window with no ledgers in that range, a value that isn't a ledger sequence number, or more than two values is an error
+- The resolved window is recorded in the results file as `query_window`
 - Useful for making a full-history node look like one with shorter retention: e.g. to emulate a 7-day (120,960-ledger) node, pass `run --query-window` and `generate --ledger-window` the same `START = (latest - 120959) + 1000`
 
 ### `generate`
@@ -200,6 +201,12 @@ Results are written to `./output/test-results-<timestamp>.json`:
   "start": "2026-04-02T21:07:45Z",
   "end": "2026-04-02T21:11:45Z",
   "seed": 1775164065123456789,
+  "query_window": {
+    "first": 55001000,
+    "last": 55120959,
+    "oldest": 55000000,
+    "pinned": false
+  },
   "duration_seconds": 240,
   "aborted": false,
   "endpoints": {
@@ -249,7 +256,7 @@ Results are written to `./output/test-results-<timestamp>.json`:
 
 ### Key fields
 
-At the top level, `seed` is the RNG seed the run used (set it as `rng_seed` to replay the same requests), and `aborted` is `true` when the `--error-percent` kill switch ended the run early. Per endpoint:
+At the top level, `seed` is the RNG seed the run used (set it as `rng_seed` to replay the same requests), and `aborted` is `true` when the `--error-percent` kill switch ended the run early. `query_window` (runs with seed data only) is the ledger range requests were placed in: `[first, last]` after clamping, the target's `oldest` ledger at preflight, and `pinned` when `last` was a `--query-window` END rather than the live head. Per endpoint:
 
 | Field | Description |
 |-------|-------------|
