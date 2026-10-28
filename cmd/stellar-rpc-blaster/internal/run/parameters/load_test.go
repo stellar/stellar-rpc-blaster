@@ -18,17 +18,19 @@ func TestHeadMargin(t *testing.T) {
 
 func TestHeadNarrow(t *testing.T) {
 	cases := map[string]struct {
-		window        []uint32
+		window        []int64
 		floor, latest uint32
 		err           string
 	}{
 		"unset: [oldest+1000, latest]": {nil, 1100, 50_000, ""},
-		"START only":                   {[]uint32{20_000}, 20_000, 50_000, ""},
-		"START,END":                    {[]uint32{20_000, 30_000}, 20_000, 30_000, ""},
-		"clamped at both ends":         {[]uint32{500, 60_000}, 1100, 50_000, ""},
-		"entirely below the floor":     {[]uint32{200, 900}, 0, 0, "query-window [200, 900] has no ledgers in the target's queryable range [1100, 50000]"},
-		"START past latest":            {[]uint32{60_000}, 0, 0, "query-window [60000, 50000] has no ledgers in the target's queryable range [1100, 50000]"},
-		"START after END":              {[]uint32{30_000, 20_000}, 0, 0, "query-window [30000, 20000] has no ledgers in the target's queryable range [1100, 50000]"},
+		"START only":                   {[]int64{20_000}, 20_000, 50_000, ""},
+		"START,END":                    {[]int64{20_000, 30_000}, 20_000, 30_000, ""},
+		"clamped at both ends":         {[]int64{500, 60_000}, 1100, 50_000, ""},
+		"entirely below the floor":     {[]int64{200, 900}, 0, 0, "query-window [200, 900] has no ledgers in the target's queryable range [1100, 50000]"},
+		"START past latest":            {[]int64{60_000}, 0, 0, "query-window [60000, 50000] has no ledgers in the target's queryable range [1100, 50000]"},
+		"START after END":              {[]int64{30_000, 20_000}, 0, 0, "query-window [30000, 20000] has no ledgers in the target's queryable range [1100, 50000]"},
+		"-N: the newest N":             {[]int64{-100}, 49_901, 50_000, ""},
+		"-N past the floor":            {[]int64{-60_000}, 1100, 50_000, ""},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

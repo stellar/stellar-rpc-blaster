@@ -74,22 +74,26 @@ func DriftLedgers(runLength time.Duration) uint32 {
 	return uint32(3 * runLength / (2 * util.LedgerCloseTime))
 }
 
-// Narrow narrows the head to a query window given as START[,END], like generate's
-// --ledger-window, clamped into [Floor, Latest]. An END stands in for the live head.
-func (h *HeadInfo) Narrow(window []uint32) error {
+// Narrow clamps a --query-window into the queryable range [Floor, Latest]: START or
+// START,END as absolute ledgers, or -N for the newest N. An END stands in for the
+// live head.
+func (h *HeadInfo) Narrow(window []int64) error {
 	if len(window) == 0 {
 		return nil
 	}
-	start, end := window[0], h.Latest
+	start, end := window[0], int64(h.Latest)
+	if start < 0 { // -N: the newest N ledgers
+		start += int64(h.Latest) + 1
+	}
 	if len(window) == 2 {
 		end = window[1]
 	}
-	lo, hi := max(start, h.Floor()), min(end, h.Latest)
+	lo, hi := max(start, int64(h.Floor())), min(end, int64(h.Latest))
 	if lo > hi {
 		return fmt.Errorf("query-window [%d, %d] has no ledgers in the target's queryable range [%d, %d]",
 			start, end, h.Floor(), h.Latest)
 	}
-	h.Start, h.Latest, h.Pinned = lo, hi, len(window) == 2
+	h.Start, h.Latest, h.Pinned = uint32(lo), uint32(hi), len(window) == 2
 	return nil
 }
 

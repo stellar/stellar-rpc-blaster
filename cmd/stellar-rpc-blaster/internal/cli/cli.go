@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -104,10 +105,10 @@ func makeCommands() *cobra.Command {
 	runCmd.Flags().Bool("serial", false, "Run endpoints one at a time sequentially instead of concurrently")
 	runCmd.Flags().Duration("cooloff", time.Duration(0), "Delay between endpoints in serial mode so one endpoint's failures don't cascade into the next (e.g. 30s)")
 	runCmd.Flags().Int("error-percent", 50, "Threshold for error percentage to kill the test (e.g. 50 means kill at 50%)")
-	runCmd.Flags().String("query-window", "", "Ledgers to place requests in, as START or START,END; clamped to the target's retention minus a margin for ledgers aging out mid-run (default: all of it)")
+	runCmd.Flags().String("query-window", "", "Ledgers to place requests in, as START, START,END or -N for the newest N; clamped to the target's retention minus a margin for ledgers aging out mid-run (default: all of it)")
 
 	generateCmd.Flags().String("output", "./output/seed.json", "Path to seed data file output by generate")
-	generateCmd.Flags().String("ledger-window", "", "Ledgers to sample seed data from, as START or START,END")
+	generateCmd.Flags().String("ledger-window", "", "Ledgers to sample seed data from, as START, START,END or -N for the newest N")
 	generateCmd.Flags().Uint32("count", 5000, "Number of ledgers to sample from the ledger window")
 
 	runCmd.Flags().AddFlagSet(commonFlags)
@@ -189,10 +190,9 @@ func bindGenerateCliParameters(
 	return settings, err
 }
 
-// parseLedgerWindow parses the named flag's START[,END] ledger window; nil for an empty
-// string (no window specified). Anything that isn't a ledger sequence is an error, so a
-// mistyped window can't silently run as a different one.
-func parseLedgerWindow(flag, s string) ([]uint32, error) {
+// parseLedgerWindow parses the named flag's ledger window: START or START,END as
+// absolute ledgers, or -N for the newest N; nil for an empty value.
+func parseLedgerWindow(flag, s string) ([]int64, error) {
 	if s == "" {
 		return nil, nil
 	}
@@ -200,13 +200,17 @@ func parseLedgerWindow(flag, s string) ([]uint32, error) {
 	if len(parts) > 2 {
 		return nil, fmt.Errorf("%s must have at most 2 values, got %d", flag, len(parts))
 	}
-	window := make([]uint32, len(parts))
+	window := make([]int64, len(parts))
 	for i, p := range parts {
-		v, err := strconv.ParseUint(strings.TrimSpace(p), 10, 32)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %q is not a ledger sequence", flag, strings.TrimSpace(p))
+		p = strings.TrimSpace(p)
+		v, err := strconv.ParseInt(p, 10, 64)
+		if err != nil || v > math.MaxUint32 || v < 0 && i > 0 || v == 0 && strings.HasPrefix(p, "-") {
+			return nil, fmt.Errorf("%s: %q is not a ledger sequence", flag, p)
 		}
-		window[i] = uint32(v)
+		window[i] = v
+	}
+	if len(window) == 2 && window[0] < 0 {
+		return nil, fmt.Errorf("%s: -N (the newest N ledgers) takes no END", flag)
 	}
 	return window, nil
 }

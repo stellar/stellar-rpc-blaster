@@ -229,7 +229,7 @@ func eventsModelOk(t *testing.T, params *Parameters, _ []map[string]any) {
 // placement band).
 func TestEndpointModelWindow(t *testing.T) {
 	narrowed := modelParams(t).Head
-	require.NoError(t, narrowed.Narrow([]uint32{testOldest + 50_000, testLatest - 20_000}))
+	require.NoError(t, narrowed.Narrow([]int64{int64(testOldest) + 50_000, int64(testLatest) - 20_000}))
 	for name, head := range map[string]HeadInfo{"narrowed": narrowed, "tiny": {Oldest: 1, Latest: 5}} {
 		t.Run(name, func(t *testing.T) {
 			params := modelParams(t)

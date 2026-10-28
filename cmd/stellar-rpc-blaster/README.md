@@ -53,15 +53,16 @@ Execute a load test.
 | `--serial` | bool | `false` | `SERIAL` | Run endpoints one at a time instead of concurrently |
 | `--cooloff` | duration | `0` | `COOLOFF` | Delay between endpoints in serial mode so one endpoint's failures don't cascade into the next (e.g. `30s`); requires `--serial` |
 | `--error-percent` | int | `50` | `ERROR_PERCENT` | Kill switch: end the run early once any endpoint's error rate over a step interval exceeds this percentage |
-| `--query-window` | string | — | `QUERY_WINDOW` | Ledgers to place requests in, as `START` or `START,END` (e.g. `--query-window 55000000,55100000`); same syntax as `generate --ledger-window` |
+| `--query-window` | string | — | `QUERY_WINDOW` | Ledgers to place requests in, as `START`, `START,END` or `-N` for the newest N (e.g. `--query-window 55000000,55100000`, `--query-window -120960`); same syntax as `generate --ledger-window` |
 
 **Query window behavior** (ranges are inclusive, written `[first, last]`):
 - Omitted: `[oldest + margin, latest]`: the target's retention minus the ledgers expected to close during the run (at least 1,000), so requests built at startup can't age out before they're sent
 - `START`: `[START, latest]`
 - `START,END`: `[START, END]`, with `END` standing in for the live head: head-relative requests (e.g. head polls) anchor at it, and otherwise open-ended requests end at it rather than reading past it, as they would stop at the live head
-- Always clamped into `[oldest + margin, latest]`; a window with no ledgers in that range, a value that isn't a ledger sequence number, or more than two values is an error
+- `-N`: `[latest - N + 1, latest]`, the newest N ledgers, so a saved command doesn't drift as the head advances
+- Always clamped into `[oldest + margin, latest]`; a window with no ledgers in that range, a value that isn't a ledger sequence number, an END after `-N`, or more than two values is an error
 - The resolved window is recorded in the results file as `query_window`
-- Useful for making a full-history node look like one with shorter retention: e.g. to emulate a 7-day (120,960-ledger) node, pass `run --query-window` and `generate --ledger-window` the same `START = (latest - 120959) + 1000`
+- Useful for making a full-history node look like one with shorter retention: e.g. to emulate a 7-day (120,960-ledger) node, pass `run --query-window -120960` and `generate --ledger-window -120960` (on a real 7-day node, the same as omitting them)
 
 ### `generate`
 
@@ -71,13 +72,14 @@ Collect seed data from an RPC instance for use with data-dependent endpoints.
 |------|------|---------|---------|-------------|
 | `--rpc-url` | string | *(required)* | `RPC_URL` | Target RPC server URL |
 | `--output` | string | `./output/seed.json` | `OUTPUT` | Output path for seed data |
-| `--ledger-window` | string | — | `LEDGER_WINDOW` | Ledgers to sample from, as `START` or `START,END` (e.g. `--ledger-window 55000000,55100000`) |
+| `--ledger-window` | string | — | `LEDGER_WINDOW` | Ledgers to sample from, as `START`, `START,END` or `-N` for the newest N (e.g. `--ledger-window 55000000,55100000`) |
 | `--count` | uint32 | `5000` | `COUNT` | Number of ledgers to sample |
 
 **Ledger window behavior** (ranges are inclusive, written `[first, last]`):
 - Omitted: `[LatestCheckpoint - count, LatestCheckpoint]`
 - `START`: `[START, LatestCheckpoint]`
 - `START,END`: `[START, END]`
+- `-N`: `[LatestCheckpoint - N + 1, LatestCheckpoint]`, the newest N ledgers
 - If the window is larger than `count`, ledgers are uniformly sampled across the range
 
 ## Configuration

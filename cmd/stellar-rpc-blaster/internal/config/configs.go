@@ -35,13 +35,13 @@ type Config struct {
 	Cooloff        time.Duration // delay between endpoints in serial mode so failures don't cascade
 	TestOutputPath string        // path to write JSON results
 	ErrorPercent   int           // threshold for error percentage to kill the test (e.g. 50 means 50%)
-	QueryWindow    []uint32      // START[,END] ledger range to place requests in; nil means the target's whole range
+	QueryWindow    []int64       // START, START,END or -N (the newest N) ledgers to place requests in; nil means the target's whole range
 
 	RngSeed uint64 `toml:"rng_seed"`
 
 	// Generate mode settings
 	OutputPath   string
-	LedgerWindow []uint32
+	LedgerWindow []int64
 	Count        uint32
 
 	InputDataPath string `toml:"input_data_path"` // path to read seed data for data-dependent endpoints, output by generate mode
@@ -80,11 +80,11 @@ type RuntimeSettings struct {
 	Serial         bool
 	Cooloff        time.Duration
 	ErrorPercent   int
-	QueryWindow    []uint32
+	QueryWindow    []int64
 
 	// Generate mode settings
 	OutputPath   string
-	LedgerWindow []uint32
+	LedgerWindow []int64
 	Count        uint32
 
 	Mode Mode
