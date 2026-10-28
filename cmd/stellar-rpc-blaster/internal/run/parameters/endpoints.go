@@ -3,26 +3,17 @@ package parameters
 import (
 	"fmt"
 	"hash/fnv"
+	"maps"
 	"math/rand/v2"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
 )
 
 // Builds a list of params maps for a data-dependent endpoint to vary request payloads,
-// plus per-body labels (nil except for getEvents, whose results are reported per
-// archetype). A non-zero limit is a config override applied to every body (config
+// plus per-body labels (nil except for the events endpoints, whose results are reported
+// per archetype). A non-zero limit is a config override applied to every body (config
 // validation guarantees only paginated endpoints can carry one).
 func BuildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Parameters, limit uint32) ([]map[string]any, []string, error) {
-	result, labels, err := buildEndpointParams(endpointKey, maxNeededNumBodies, params)
-	if limit != 0 {
-		for _, body := range result {
-			body["pagination"] = map[string]any{"limit": limit}
-		}
-	}
-	return result, labels, err
-}
-
-func buildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Parameters) ([]map[string]any, []string, error) {
 	if needs, err := EndpointNeedsData(endpointKey); err != nil {
 		return nil, nil, err
 	} else if !needs {
@@ -30,6 +21,9 @@ func buildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 	}
 	rng := rand.New(rand.NewPCG(params.RngSeed, endpointStream(endpointKey)))
 	count := min(maxNeededNumBodies, util.MaxNumPrebuiltBodies)
+	if render, ok := eventsRenderers[endpointKey]; ok {
+		return sampleEvents(params, rng, count, render, limit)
+	}
 
 	switch endpointKey {
 	case "getTransaction":
@@ -79,26 +73,93 @@ func buildEndpointParams(endpointKey string, maxNeededNumBodies int, params *Par
 			if endpointKey == "getTransactions" { // essentially always the max
 				entry["pagination"] = map[string]any{"limit": util.MaxTxPageLimit}
 			} else if l := chooseOne(rng, []uint{1, 5, 20, 0}, []float64{0.4, 0.28, 0.07, 0.25}); l != 0 {
-				entry["pagination"] = map[string]any{"limit": l} // getLedgers mix; 0 = key omitted (server default of 50)
+				entry["pagination"] = map[string]any{"limit": l} // getLedgers mix; 0 = key omitted (RPC default is 50)
+			}
+			if limit != 0 {
+				entry["pagination"] = map[string]any{"limit": limit}
 			}
 			result[i] = entry
 		}
 		return result, nil, nil
-
-	case "getEvents":
-		s, err := newEventsSampler(params, rng)
-		if err != nil {
-			return nil, nil, fmt.Errorf("couldn't build %s sampler: %w", endpointKey, err)
-		}
-		result := make([]map[string]any, count)
-		labels := make([]string, count)
-		for i := range count {
-			labels[i], result[i] = s.sample()
-		}
-		return result, labels, nil
 	default:
 		return nil, nil, fmt.Errorf("unsupported endpoint %s", endpointKey)
 	}
+}
+
+// renderGetEvents renders a sampled events query as getEvents params.
+func renderGetEvents(q eventsQuery) map[string]any {
+	body := map[string]any{"startLedger": q.start, "pagination": map[string]any{"limit": q.limit}}
+	if q.end != 0 {
+		body["endLedger"] = q.end
+	}
+	if q.json {
+		body["xdrFormat"] = "json"
+	}
+	if q.filters != nil {
+		filters := make([]map[string]any, len(q.filters))
+		for i, f := range q.filters {
+			filters[i] = map[string]any{"type": "contract"}
+			if f.contractIDs != nil {
+				filters[i]["contractIds"] = f.contractIDs
+			}
+			if f.topic != nil {
+				filters[i]["topics"] = [][]string{f.topic}
+			}
+		}
+		body["filters"] = filters
+	}
+	return body
+}
+
+// renderQueryEvents renders a sampled events query as queryEvents params. Topic segments
+// pin positions: a value pins topicN, "*" leaves it open, "**" leaves the rest open.
+// queryEvents has no topic-count matching, so an exact-arity topic becomes a prefix match.
+func renderQueryEvents(q eventsQuery) map[string]any {
+	body := map[string]any{"minLedger": q.start, "limit": q.limit}
+	if q.end != 0 {
+		body["maxLedger"] = q.end - 1 // inclusive, unlike getEvents' endLedger
+	}
+	if q.json {
+		body["xdrFormat"] = "json"
+	}
+	var filters []map[string]any
+	for _, f := range q.filters {
+		filter := map[string]any{"type": "contract"}
+		for i, seg := range f.topic {
+			if seg == "**" {
+				break
+			}
+			if seg != "*" {
+				filter[fmt.Sprintf("topic%d", i)] = seg
+			}
+		}
+		if f.contractIDs == nil {
+			filters = append(filters, filter)
+		}
+		for _, cid := range f.contractIDs { // queryEvents filters take one contractId each
+			perContract := maps.Clone(filter)
+			perContract["contractId"] = cid
+			filters = append(filters, perContract)
+		}
+	}
+	if filters != nil {
+		body["filters"] = filters
+	}
+	return body
+}
+
+// eventsRenderers maps each endpoint drawing from the events archetype model to the
+// renderer producing its params shape.
+var eventsRenderers = map[string]func(eventsQuery) map[string]any{
+	"getEvents":   renderGetEvents,
+	"queryEvents": renderQueryEvents,
+}
+
+// HasArchetypes reports whether the endpoint draws from the events archetype model,
+// so its results carry per-archetype sub-streams.
+func HasArchetypes(endpointKey string) bool {
+	_, ok := eventsRenderers[endpointKey]
+	return ok
 }
 
 // endpointStream derives a per-endpoint PCG stream from the endpoint name, so one root
@@ -123,7 +184,7 @@ func headStart(rng *rand.Rand, head HeadInfo, prNear float64) uint32 {
 // EndpointNeedsData reports whether the endpoint requires seed data to build requests.
 func EndpointNeedsData(endpointKey string) (bool, error) {
 	switch endpointKey {
-	case "getTransaction", "getLedgerEntries", "getTransactions", "getLedgers", "getEvents", "simulateTransaction":
+	case "getTransaction", "getLedgerEntries", "getTransactions", "getLedgers", "getEvents", "queryEvents", "simulateTransaction":
 		return true, nil
 	case "getHealth", "getNetwork", "getVersionInfo", "getLatestLedger", "getFeeStats":
 		return false, nil
@@ -138,7 +199,7 @@ const trafficProfileVersion = 3 // bump when any endpoint's traffic model change
 // modeled endpoints (0 = endpoint has no model).
 func ProfileVersion(endpointKey string) int {
 	switch endpointKey {
-	case "getEvents", "getTransaction", "getTransactions", "getLedgers":
+	case "getEvents", "queryEvents", "getTransaction", "getTransactions", "getLedgers":
 		return trafficProfileVersion
 	}
 	return 0

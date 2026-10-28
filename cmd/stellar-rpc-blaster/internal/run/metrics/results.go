@@ -18,9 +18,19 @@ type Results struct {
 	Start           time.Time                  `json:"start"`
 	End             time.Time                  `json:"end"`
 	Seed            uint64                     `json:"seed"`
+	Window          *QueryWindow               `json:"query_window,omitempty"` // nil when the run had no seed data to anchor to
 	DurationSeconds float64                    `json:"duration_seconds"`
 	Aborted         bool                       `json:"aborted"` // the error-percent kill switch ended the run early
 	Endpoints       map[string]*EndpointResult `json:"-"`
+}
+
+// QueryWindow is the resolved ledger range requests were placed in (see --query-window),
+// recorded so runs can be compared and replayed without re-deriving it from the target.
+type QueryWindow struct {
+	First  uint32 `json:"first"`
+	Last   uint32 `json:"last"`
+	Oldest uint32 `json:"oldest"` // the target's oldest ledger at preflight
+	Pinned bool   `json:"pinned"` // Last was a --query-window END rather than the live head
 }
 
 // EndpointResult holds final stats for one endpoint
@@ -67,6 +77,9 @@ func (a *Aggregator) Results() *Results {
 		DurationSeconds: durationSeconds,
 		Aborted:         a.aborted,
 		Endpoints:       make(map[string]*EndpointResult, len(a.stats)),
+	}
+	if h := a.head; h.Latest != 0 {
+		results.Window = &QueryWindow{First: h.Floor(), Last: h.Latest, Oldest: h.Oldest, Pinned: h.Pinned}
 	}
 
 	a.mu.Lock()

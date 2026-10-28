@@ -23,6 +23,7 @@ type BlastEngine struct {
 	blastFn    func() *vegeta.Attacker
 	outCh      chan<- blasterMetrics.Sample
 	cfg        config.Config
+	Head       parameters.HeadInfo // the target's ledger window requests were placed in; zero without seed data
 }
 
 type EndpointBlastConfig struct {
@@ -56,6 +57,13 @@ func NewBlastEngine(
 		// Run preflight validation to ensure seed data is fresh enough for the target RPC before blasting any endpoints
 		if err := sharedParams.ValidateConfiguredEndpoints(ctx, cfg.RpcClient, cfg.GetActiveEndpoints()); err != nil {
 			return nil, fmt.Errorf("preflight seed validation failed (try rerunning `generate`): %w", err)
+		}
+		if h := &sharedParams.Head; h.Latest != 0 {
+			h.Drift = parameters.DriftLedgers(cfg.TotalDuration())
+			if err := h.Narrow(cfg.QueryWindow); err != nil {
+				return nil, err
+			}
+			logger.Infof("Query window: [%d, %d] (target's oldest ledger: %d, margin: %d)", h.Floor(), h.Latest, h.Oldest, h.Margin())
 		}
 		for _, warning := range sharedParams.Warnings(cfg.GetActiveEndpoints()) {
 			logger.Warn(warning)
@@ -97,12 +105,11 @@ func NewBlastEngine(
 			BlastPacer:  pacer,
 		})
 	}
-	return &BlastEngine{
-		BlastSpecs: endpointBlasts,
-		blastFn:    newBlaster,
-		outCh:      out,
-		cfg:        cfg,
-	}, nil
+	be := &BlastEngine{BlastSpecs: endpointBlasts, blastFn: newBlaster, outCh: out, cfg: cfg}
+	if sharedParams != nil {
+		be.Head = sharedParams.Head
+	}
+	return be, nil
 }
 
 // Run executes the blast according to the engine's configuration, sending results to the OutCh for aggregation

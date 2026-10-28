@@ -25,6 +25,7 @@ type Aggregator struct {
 	logger          *log.Entry
 	writeOutputPath string
 	rngSeed         uint64
+	head            parameters.HeadInfo // the ledger window requests were placed in; zero without seed data
 	cancel          context.CancelFunc
 
 	stats            map[string]*EndpointStats
@@ -105,22 +106,18 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 	}
 }
 
-func NewAggregator(logger *log.Entry, settings config.Config, cancel context.CancelFunc) *Aggregator {
+func NewAggregator(logger *log.Entry, settings config.Config, head parameters.HeadInfo, cancel context.CancelFunc) *Aggregator {
 	endpoints := settings.GetActiveEndpoints()
-	duration := settings.Duration
-	if settings.Serial {
-		duration *= time.Duration(len(endpoints))
-		duration += settings.Cooloff * time.Duration(max(len(endpoints)-1, 0)) // cooloff runs only between endpoints
-	}
 	a := Aggregator{
 		logger:          logger,
 		cancel:          cancel,
 		stats:           make(map[string]*EndpointStats),
 		start:           time.Now(),
-		duration:        duration,
+		duration:        settings.TotalDuration(),
 		errorPercent:    settings.ErrorPercent,
 		writeOutputPath: settings.TestOutputPath,
 		rngSeed:         settings.RngSeed,
+		head:            head,
 	}
 	stepInterval := max(5, settings.StepInterval)
 
@@ -140,9 +137,9 @@ func NewAggregator(logger *log.Entry, settings config.Config, cancel context.Can
 			return s
 		}
 		a.stats[endpointKey] = newStats(1)
-		// getEvents samples are also tracked per archetype, as sub-streams
-		// carrying their share of the endpoint's RPS
-		if endpointKey == "getEvents" {
+		// getEvents/queryEvents samples are also tracked per archetype, as
+		// sub-streams carrying their share of the endpoint's RPS
+		if parameters.HasArchetypes(endpointKey) {
 			for name, share := range parameters.EventsArchetypeShares() {
 				a.stats[endpointKey+"/"+name] = newStats(share)
 			}

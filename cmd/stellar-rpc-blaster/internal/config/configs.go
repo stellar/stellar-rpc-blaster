@@ -35,12 +35,13 @@ type Config struct {
 	Cooloff        time.Duration // delay between endpoints in serial mode so failures don't cascade
 	TestOutputPath string        // path to write JSON results
 	ErrorPercent   int           // threshold for error percentage to kill the test (e.g. 50 means 50%)
+	QueryWindow    []int64       // START, START,END or -N (the newest N) ledgers to place requests in; nil means the target's whole range
 
 	RngSeed uint64 `toml:"rng_seed"`
 
 	// Generate mode settings
 	OutputPath   string
-	LedgerWindow []uint32
+	LedgerWindow []int64
 	Count        uint32
 
 	InputDataPath string `toml:"input_data_path"` // path to read seed data for data-dependent endpoints, output by generate mode
@@ -79,10 +80,11 @@ type RuntimeSettings struct {
 	Serial         bool
 	Cooloff        time.Duration
 	ErrorPercent   int
+	QueryWindow    []int64
 
 	// Generate mode settings
 	OutputPath   string
-	LedgerWindow []uint32
+	LedgerWindow []int64
 	Count        uint32
 
 	Mode Mode
@@ -136,6 +138,7 @@ func NewConfig(
 			cfg.RngSeed = uint64(time.Now().UnixNano()) // use random seed if not provided in the config
 		}
 		cfg.ErrorPercent = settings.ErrorPercent
+		cfg.QueryWindow = settings.QueryWindow
 		if err := cfg.validateEndpointConfig(); err != nil {
 			return Config{}, err
 		}
@@ -204,15 +207,10 @@ func (c *Config) validateEndpointConfig() error {
 				return fmt.Errorf("could not parse endpoint %s, need start_rps <= rps", endpoint)
 			}
 		}
-		switch endpoint {
-		case "getTransactions", "getLedgers", "getEvents":
-			if c.GetEndpointLimit(endpoint) > c.GetEndpointMaxLimit(endpoint) {
-				return fmt.Errorf("pagination limit for %s must not exceed %d", endpoint, c.GetEndpointMaxLimit(endpoint))
-			}
-		default:
-			if c.GetEndpointLimit(endpoint) != 0 {
-				return fmt.Errorf("endpoint %s does not support pagination, so limit must be omitted or 0", endpoint)
-			}
+		if limit, maxLimit := c.GetEndpointLimit(endpoint), c.GetEndpointMaxLimit(endpoint); maxLimit == 0 && limit != 0 {
+			return fmt.Errorf("endpoint %s does not support pagination, so limit must be omitted or 0", endpoint)
+		} else if limit > maxLimit {
+			return fmt.Errorf("limit for %s must not exceed %d", endpoint, maxLimit)
 		}
 	}
 	if !hasValidEndpoint {
@@ -252,6 +250,8 @@ func (c *Config) GetEndpointLimit(key string) uint32 {
 	return 0
 }
 
+// GetEndpointMaxLimit returns the endpoint's maximum page limit; 0 for endpoints that
+// aren't paginated.
 func (c *Config) GetEndpointMaxLimit(key string) uint32 {
 	switch key {
 	case "getTransactions":
@@ -260,6 +260,8 @@ func (c *Config) GetEndpointMaxLimit(key string) uint32 {
 		return util.MaxLedgersPageLimit
 	case "getEvents":
 		return util.MaxEventsPageLimit
+	case "queryEvents":
+		return util.MaxQueryEventsPageLimit
 	default:
 		return 0 // for endpoints that don't support limits
 	}
@@ -275,4 +277,14 @@ func (c *Config) GetActiveEndpoints() []string {
 	}
 	slices.Sort(activeEndpoints)
 	return activeEndpoints
+}
+
+// TotalDuration is the wall-clock length of the whole run: every active endpoint's
+// duration plus the cooloffs between them in serial mode, the shared duration otherwise.
+func (c *Config) TotalDuration() time.Duration {
+	if !c.Serial {
+		return c.Duration
+	}
+	n := time.Duration(len(c.GetActiveEndpoints()))
+	return c.Duration*n + c.Cooloff*max(n-1, 0)
 }

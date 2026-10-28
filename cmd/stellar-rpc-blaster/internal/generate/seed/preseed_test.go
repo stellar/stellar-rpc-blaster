@@ -1,11 +1,44 @@
 package seed
 
 import (
+	"encoding/json"
 	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
 )
+
+func TestGetLedgerRange(t *testing.T) {
+	client := util.NewMockRPCClient(t, func(string, json.RawMessage) any { return map[string]any{"sequence": 10_000} })
+	ckpt, err := GetLatestCheckpointLedger(t.Context(), client)
+	require.NoError(t, err)
+	cases := map[string]struct {
+		window      []int64
+		first, last uint32
+		err         bool
+	}{
+		"unset: the newest count": {nil, ckpt - 499, ckpt, false},
+		"START":                   {[]int64{5000}, 5000, ckpt, false},
+		"START,END":               {[]int64{5000, 6000}, 5000, 6000, false},
+		"-N: the newest N":        {[]int64{-100}, ckpt - 99, ckpt, false},
+		"-N before ledger 1":      {[]int64{-100_000}, 0, 0, true},
+		"START after END":         {[]int64{6000, 5000}, 0, 0, true},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			r, err := GetLedgerRange(t.Context(), client, c.window, 500)
+			if c.err {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, Range{First: c.first, Last: c.last}, r)
+		})
+	}
+}
 
 // TestComputeSampledLedgers verifies that, given a window and count where the size of the window exceeds the
 // count, the generated ledger ranges are uniformly distributed across the window.

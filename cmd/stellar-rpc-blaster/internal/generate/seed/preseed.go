@@ -33,45 +33,37 @@ func GetLatestCheckpointLedger(ctx context.Context, rpcClient *rpcclient.Client)
 	return checkpointManager.PrevCheckpoint(latestLedger.Sequence), nil
 }
 
-// Parses raw CLI ledgerWindow value read in into a Range
+// GetLedgerRange resolves a --ledger-window against the latest checkpoint: START or
+// START,END as absolute ledgers, -N for the newest N, or the newest count when unset.
 func GetLedgerRange(
 	ctx context.Context,
 	rpcClient *rpcclient.Client,
-	ledgerWindow []uint32,
+	ledgerWindow []int64,
 	count uint32,
 ) (Range, error) {
 	latestCheckpointLedger, err := GetLatestCheckpointLedger(ctx, rpcClient)
 	if err != nil {
 		return Range{}, fmt.Errorf("failed to get latest checkpoint ledger: %w", err)
 	}
+	ckpt := int64(latestCheckpointLedger)
 
-	var first, last uint32
+	first, last := ckpt-int64(count)+1, ckpt
 	switch len(ledgerWindow) {
 	case 0:
-		// No window specified: [LatestCheckpoint - count, LatestCheckpoint]
-		if count > latestCheckpointLedger {
-			return Range{}, fmt.Errorf("count (%d) exceeds latest checkpoint ledger (%d)",
-				count, latestCheckpointLedger)
-		}
-		first = latestCheckpointLedger - count + 1
-		last = latestCheckpointLedger
 	case 1:
-		// Only START: [START, LatestCheckpoint]
 		first = ledgerWindow[0]
-		last = latestCheckpointLedger
 	case 2:
-		// Both START and END: [START, END]
-		first = ledgerWindow[0]
-		last = ledgerWindow[1]
+		first, last = ledgerWindow[0], ledgerWindow[1]
 	default:
 		return Range{}, fmt.Errorf("ledger-window must have at most 2 values, got %d", len(ledgerWindow))
 	}
-
-	if first > last {
-		return Range{}, fmt.Errorf("invalid ledger range: start (%d) > end (%d)", first, last)
+	if first < 0 { // -N: the newest N ledgers
+		first += ckpt + 1
 	}
-
-	return Range{First: first, Last: last}, nil
+	if first < 1 || first > last {
+		return Range{}, fmt.Errorf("ledger-window resolves to [%d, %d], not a valid ledger range (latest checkpoint: %d)", first, last, ckpt)
+	}
+	return Range{First: uint32(first), Last: uint32(last)}, nil
 }
 
 // This returns the range(s) to iterate over during seeding

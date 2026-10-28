@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -42,7 +44,7 @@ func makeCommands() *cobra.Command {
 		Use:   "run",
 		Short: "Run a load test",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			settings := bindRunCliParameters(cmd.Flags().Lookup("config-path"),
+			settings, err := bindRunCliParameters(cmd.Flags().Lookup("config-path"),
 				cmd.Flags().Lookup("rpc-url"),
 				cmd.Flags().Lookup("duration"),
 				cmd.Flags().Lookup("ramp-up"),
@@ -52,7 +54,11 @@ func makeCommands() *cobra.Command {
 				cmd.Flags().Lookup("serial"),
 				cmd.Flags().Lookup("cooloff"),
 				cmd.Flags().Lookup("error-percent"),
+				cmd.Flags().Lookup("query-window"),
 			)
+			if err != nil {
+				return err
+			}
 			settings.Mode = config.Run
 			settings.Ctx = cmd.Context()
 			if settings.Ctx == nil {
@@ -67,11 +73,14 @@ func makeCommands() *cobra.Command {
 		Use:   "generate",
 		Short: "Generate load test data",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			settings := bindGenerateCliParameters(cmd.Flags().Lookup("rpc-url"),
+			settings, err := bindGenerateCliParameters(cmd.Flags().Lookup("rpc-url"),
 				cmd.Flags().Lookup("output"),
 				cmd.Flags().Lookup("ledger-window"),
 				cmd.Flags().Lookup("count"),
 			)
+			if err != nil {
+				return err
+			}
 			settings.Mode = config.Generate
 			settings.Ctx = cmd.Context()
 			if settings.Ctx == nil {
@@ -96,9 +105,10 @@ func makeCommands() *cobra.Command {
 	runCmd.Flags().Bool("serial", false, "Run endpoints one at a time sequentially instead of concurrently")
 	runCmd.Flags().Duration("cooloff", time.Duration(0), "Delay between endpoints in serial mode so one endpoint's failures don't cascade into the next (e.g. 30s)")
 	runCmd.Flags().Int("error-percent", 50, "Threshold for error percentage to kill the test (e.g. 50 means kill at 50%)")
+	runCmd.Flags().String("query-window", "", "Ledgers to place requests in, as START, START,END or -N for the newest N; clamped to the target's retention minus a margin for ledgers aging out mid-run (default: all of it)")
 
 	generateCmd.Flags().String("output", "./output/seed.json", "Path to seed data file output by generate")
-	generateCmd.Flags().String("ledger-window", "", "Ledger range as START[,END] for data generation")
+	generateCmd.Flags().String("ledger-window", "", "Ledgers to sample seed data from, as START, START,END or -N for the newest N")
 	generateCmd.Flags().Uint32("count", 5000, "Number of ledgers to sample from the ledger window")
 
 	runCmd.Flags().AddFlagSet(commonFlags)
@@ -122,7 +132,8 @@ func bindRunCliParameters(
 	serial *pflag.Flag,
 	cooloff *pflag.Flag,
 	errorPercent *pflag.Flag,
-) config.RuntimeSettings {
+	queryWindow *pflag.Flag,
+) (config.RuntimeSettings, error) {
 	bindFlag := func(flag *pflag.Flag) {
 		viper.BindPFlag(flag.Name, flag)
 		viper.BindEnv(flag.Name, strutils.KebabToConstantCase(flag.Name))
@@ -137,6 +148,7 @@ func bindRunCliParameters(
 	bindFlag(serial)
 	bindFlag(cooloff)
 	bindFlag(errorPercent)
+	bindFlag(queryWindow)
 	settings := config.RuntimeSettings{}
 	settings.ConfigPath = viper.GetString(cfgPath.Name)
 	settings.RpcUrl = viper.GetString(rpcUrl.Name)
@@ -148,8 +160,9 @@ func bindRunCliParameters(
 	settings.Serial = viper.GetBool(serial.Name)
 	settings.Cooloff = viper.GetViper().GetDuration(cooloff.Name)
 	settings.ErrorPercent = viper.GetInt(errorPercent.Name)
-
-	return settings
+	var err error
+	settings.QueryWindow, err = parseLedgerWindow(queryWindow.Name, viper.GetString(queryWindow.Name))
+	return settings, err
 }
 
 // Binds CLI parameters for the 'generate' command into RuntimeSettings
@@ -159,7 +172,7 @@ func bindGenerateCliParameters(
 	outputPath *pflag.Flag,
 	ledgerWindow *pflag.Flag,
 	count *pflag.Flag,
-) config.RuntimeSettings {
+) (config.RuntimeSettings, error) {
 	bindFlag := func(flag *pflag.Flag) {
 		viper.BindPFlag(flag.Name, flag)
 		viper.BindEnv(flag.Name, strutils.KebabToConstantCase(flag.Name))
@@ -171,30 +184,33 @@ func bindGenerateCliParameters(
 	settings := config.RuntimeSettings{}
 	settings.RpcUrl = viper.GetString(rpcUrl.Name)
 	settings.OutputPath = viper.GetString(outputPath.Name)
-	settings.LedgerWindow = parseLedgerWindow(viper.GetString(ledgerWindow.Name))
 	settings.Count = viper.GetUint32(count.Name)
-
-	return settings
+	var err error
+	settings.LedgerWindow, err = parseLedgerWindow(ledgerWindow.Name, viper.GetString(ledgerWindow.Name))
+	return settings, err
 }
 
-// parseLedgerWindow parses a comma-separated string of up to 2 ledger sequence numbers.
-// Returns nil for an empty string (no window specified).
-func parseLedgerWindow(s string) []uint32 {
+// parseLedgerWindow parses the named flag's ledger window: START or START,END as
+// absolute ledgers, or -N for the newest N; nil for an empty value.
+func parseLedgerWindow(flag, s string) ([]int64, error) {
 	if s == "" {
-		return nil
+		return nil, nil
 	}
 	parts := strings.Split(s, ",")
-	result := make([]uint32, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		v, err := strconv.ParseUint(p, 10, 32)
-		if err != nil {
-			continue
-		}
-		result = append(result, uint32(v))
+	if len(parts) > 2 {
+		return nil, fmt.Errorf("%s must have at most 2 values, got %d", flag, len(parts))
 	}
-	return result
+	window := make([]int64, len(parts))
+	for i, p := range parts {
+		p = strings.TrimSpace(p)
+		v, err := strconv.ParseInt(p, 10, 64)
+		if err != nil || v > math.MaxUint32 || v < 0 && i > 0 || v == 0 && strings.HasPrefix(p, "-") {
+			return nil, fmt.Errorf("%s: %q is not a ledger sequence", flag, p)
+		}
+		window[i] = v
+	}
+	if len(window) == 2 && window[0] < 0 {
+		return nil, fmt.Errorf("%s: -N (the newest N ledgers) takes no END", flag)
+	}
+	return window, nil
 }
