@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"time"
 
 	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/generate/seed"
 	"github.com/stellar/stellar-rpc-blaster/cmd/stellar-rpc-blaster/internal/util"
@@ -50,14 +51,27 @@ func (p *Parameters) missingSeedFields(endpointKeys []string) []string {
 type HeadInfo struct {
 	Oldest, Latest uint32
 	Start          uint32 // query window start, raising Floor (0: none)
+	Drift          uint32 // ledgers the retention floor will pass during the run, widening Margin (0: none)
 	Pinned         bool   // Latest is a query window's END rather than the live head
 }
 
-// Floor is the lowest safe startLedger: outside the left-edge margin of the
-// retention floor so in-flight requests can't age out mid-run, and no lower than
-// the query window's start.
+// Margin is how many ledgers above Oldest stay clear of placements: request bodies
+// are built at startup, so anything the retention floor passes during the run would
+// age out before being sent. At least LeftEdgeMargin, or the run's expected Drift.
+func (h HeadInfo) Margin() uint32 {
+	return max(util.LeftEdgeMargin, h.Drift)
+}
+
+// Floor is the lowest safe startLedger: Margin above the retention floor, and no
+// lower than the query window's start.
 func (h HeadInfo) Floor() uint32 {
-	return min(max(h.Oldest+util.LeftEdgeMargin, h.Start), h.Latest)
+	return min(max(h.Oldest+h.Margin(), h.Start), h.Latest)
+}
+
+// DriftLedgers is how many ledgers the retention floor is expected to pass in a run
+// of the given length, with half again as headroom for faster-than-nominal closes.
+func DriftLedgers(runLength time.Duration) uint32 {
+	return uint32(3 * runLength / (2 * util.LedgerCloseTime))
 }
 
 // Narrow narrows the head to a query window given as START[,END], like generate's

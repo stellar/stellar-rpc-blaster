@@ -108,17 +108,12 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan Sample) {
 
 func NewAggregator(logger *log.Entry, settings config.Config, head parameters.HeadInfo, cancel context.CancelFunc) *Aggregator {
 	endpoints := settings.GetActiveEndpoints()
-	duration := settings.Duration
-	if settings.Serial {
-		duration *= time.Duration(len(endpoints))
-		duration += settings.Cooloff * time.Duration(max(len(endpoints)-1, 0)) // cooloff runs only between endpoints
-	}
 	a := Aggregator{
 		logger:          logger,
 		cancel:          cancel,
 		stats:           make(map[string]*EndpointStats),
 		start:           time.Now(),
-		duration:        duration,
+		duration:        settings.TotalDuration(),
 		errorPercent:    settings.ErrorPercent,
 		writeOutputPath: settings.TestOutputPath,
 		rngSeed:         settings.RngSeed,

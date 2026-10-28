@@ -2,9 +2,19 @@ package parameters
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestHeadMargin(t *testing.T) {
+	h := HeadInfo{Oldest: 100, Latest: 50_000}
+	require.EqualValues(t, 1100, h.Floor(), "at least the left-edge margin")
+	require.EqualValues(t, 180, DriftLedgers(10*time.Minute), "ledgers closing in 10m, plus half again")
+	h.Drift = DriftLedgers(2 * time.Hour)
+	require.EqualValues(t, 2160, h.Drift)
+	require.EqualValues(t, 2260, h.Floor(), "a long run widens the margin")
+}
 
 func TestHeadNarrow(t *testing.T) {
 	cases := map[string]struct {

@@ -59,10 +59,11 @@ func NewBlastEngine(
 			return nil, fmt.Errorf("preflight seed validation failed (try rerunning `generate`): %w", err)
 		}
 		if h := &sharedParams.Head; h.Latest != 0 {
+			h.Drift = parameters.DriftLedgers(cfg.TotalDuration())
 			if err := h.Narrow(cfg.QueryWindow); err != nil {
 				return nil, err
 			}
-			logger.Infof("Query window: [%d, %d] (target's oldest ledger: %d)", h.Floor(), h.Latest, h.Oldest)
+			logger.Infof("Query window: [%d, %d] (target's oldest ledger: %d, margin: %d)", h.Floor(), h.Latest, h.Oldest, h.Margin())
 		}
 		for _, warning := range sharedParams.Warnings(cfg.GetActiveEndpoints()) {
 			logger.Warn(warning)

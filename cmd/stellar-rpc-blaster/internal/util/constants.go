@@ -7,6 +7,8 @@ const (
 	CheckpointFrequency uint32 = 64
 	// Maximum time to wait for a single RPC response for most endpoints
 	RequestTimeout = 15 * time.Second // (this isn't accessible from outside stellar-rpc)
+	// Nominal ledger close time, for projecting how far the retention floor moves during a run
+	LedgerCloseTime = 5 * time.Second
 
 	// Hard-coded RPC endpoint pagination limits
 	MaxTxPageLimit          uint32 = 200
@@ -53,7 +55,7 @@ const (
 // run/parameters/events_archetypes.go; the rest inline in endpoints.go)
 const (
 	PrEventsJson        float64 = 0.015 // xdrFormat "json"; the key is omitted otherwise (base64 default)
-	LeftEdgeMargin      uint32  = 1000  // never place startLedger within this of the retention floor (all endpoints)
+	LeftEdgeMargin      uint32  = 1000  // least ledgers kept clear above the retention floor (all endpoints; see HeadInfo.Margin)
 	EventsDeepBandFloor uint32  = 10000 // "deep" placement means at least this far behind head
 	EventsColdPoolSize          = 50    // deployed-but-quiet contracts drawn from seed ledger keys
 

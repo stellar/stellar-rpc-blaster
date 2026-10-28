@@ -278,3 +278,13 @@ func (c *Config) GetActiveEndpoints() []string {
 	slices.Sort(activeEndpoints)
 	return activeEndpoints
 }
+
+// TotalDuration is the wall-clock length of the whole run: every active endpoint's
+// duration plus the cooloffs between them in serial mode, the shared duration otherwise.
+func (c *Config) TotalDuration() time.Duration {
+	if !c.Serial {
+		return c.Duration
+	}
+	n := time.Duration(len(c.GetActiveEndpoints()))
+	return c.Duration*n + c.Cooloff*max(n-1, 0)
+}

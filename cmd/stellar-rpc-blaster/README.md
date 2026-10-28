@@ -56,10 +56,10 @@ Execute a load test.
 | `--query-window` | string | — | `QUERY_WINDOW` | Ledgers to place requests in, as `START` or `START,END` (e.g. `--query-window 55000000,55100000`); same syntax as `generate --ledger-window` |
 
 **Query window behavior** (ranges are inclusive, written `[first, last]`):
-- Omitted: `[oldest + 1000, latest]`, the target's retention minus a margin so in-flight requests can't age out mid-run
+- Omitted: `[oldest + margin, latest]`: the target's retention minus the ledgers expected to close during the run (at least 1,000), so requests built at startup can't age out before they're sent
 - `START`: `[START, latest]`
 - `START,END`: `[START, END]`, with `END` standing in for the live head: head-relative requests (e.g. head polls) anchor at it, and otherwise open-ended requests end at it rather than reading past it, as they would stop at the live head
-- Always clamped into `[oldest + 1000, latest]`; a window with no ledgers in that range, a value that isn't a ledger sequence number, or more than two values is an error
+- Always clamped into `[oldest + margin, latest]`; a window with no ledgers in that range, a value that isn't a ledger sequence number, or more than two values is an error
 - The resolved window is recorded in the results file as `query_window`
 - Useful for making a full-history node look like one with shorter retention: e.g. to emulate a 7-day (120,960-ledger) node, pass `run --query-window` and `generate --ledger-window` the same `START = (latest - 120959) + 1000`
 

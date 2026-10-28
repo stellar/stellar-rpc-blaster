@@ -104,7 +104,7 @@ func makeCommands() *cobra.Command {
 	runCmd.Flags().Bool("serial", false, "Run endpoints one at a time sequentially instead of concurrently")
 	runCmd.Flags().Duration("cooloff", time.Duration(0), "Delay between endpoints in serial mode so one endpoint's failures don't cascade into the next (e.g. 30s)")
 	runCmd.Flags().Int("error-percent", 50, "Threshold for error percentage to kill the test (e.g. 50 means kill at 50%)")
-	runCmd.Flags().String("query-window", "", "Ledgers to place requests in, as START or START,END; clamped to the target's [oldest+1000, latest] (default: all of it)")
+	runCmd.Flags().String("query-window", "", "Ledgers to place requests in, as START or START,END; clamped to the target's retention minus a margin for ledgers aging out mid-run (default: all of it)")
 
 	generateCmd.Flags().String("output", "./output/seed.json", "Path to seed data file output by generate")
 	generateCmd.Flags().String("ledger-window", "", "Ledgers to sample seed data from, as START or START,END")
