@@ -62,7 +62,7 @@ Execute a load test.
 - `-N`: `[latest - N + 1, latest]`, the newest N ledgers, so a saved command doesn't drift as the head advances
 - Always clamped into `[oldest + margin, latest]`; a window with no ledgers in that range, a value that isn't a ledger sequence number, an END after `-N`, or more than two values is an error
 - The resolved window is recorded in the results file as `query_window`
-- Useful for making a full-history node look like one with shorter retention: e.g. to emulate a 7-day (120,960-ledger) node, pass `run --query-window -120960` and `generate --ledger-window -120960` (on a real 7-day node, the same as omitting them)
+- Useful for making a full-history node look like one with shorter retention: e.g. to emulate a 7-day (120,960-ledger) node, pass `run --query-window -120960` and `generate --ledger-window -120960`. The emulated window reaches `margin` ledgers deeper than a run on a real 7-day node, whose floor moves during the run; shrink N by the margin for parity
 
 ### `generate`
 
@@ -76,7 +76,7 @@ Collect seed data from an RPC instance for use with data-dependent endpoints.
 | `--count` | uint32 | `5000` | `COUNT` | Number of ledgers to sample |
 
 **Ledger window behavior** (ranges are inclusive, written `[first, last]`):
-- Omitted: `[LatestCheckpoint - count, LatestCheckpoint]`
+- Omitted: `[LatestCheckpoint - count + 1, LatestCheckpoint]`, the newest `count` ledgers
 - `START`: `[START, LatestCheckpoint]`
 - `START,END`: `[START, END]`
 - `-N`: `[LatestCheckpoint - N + 1, LatestCheckpoint]`, the newest N ledgers
