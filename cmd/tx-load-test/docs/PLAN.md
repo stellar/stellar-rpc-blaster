@@ -41,7 +41,7 @@ The reimplementation must preserve these behaviors.
 ### 2.1 CLI shape
 
 - Use `cobra` for the command tree.
-- Provide a root command `tx-load-test` with subcommands `setup`, `restore`, `extend-ttl`, `bench`, `teardown`, and `sync`.
+- Provide a root command `tx-load-test` with subcommands `setup`, `restore`, `extend-ttl`, `bench`, `run`, `teardown`, and `sync`.
 - Root command should print usage when invoked without a subcommand.
 - Build target must remain:
 
@@ -235,7 +235,43 @@ Validation rules:
 - account pool must be large enough for both the Soroban stream and the classic companion stream for the requested duration and rate
 - `sac-transfer` requires valid SAC holder subsets and trustlines in state
 
-### 3.4 `extend-ttl`
+### 3.4 `run`
+
+`run` executes the whole suite in one invocation: `sac-transfer`, `oz-transfer`,
+then `soroswap`. A scheduled job needs one command.
+
+Inputs:
+
+- requires `FEE_PAYER`
+- one rate flag per mode: `--sac-rps`, `--oz-rps`, `--soroswap-rps`
+- `--classic-rps`, `--duration`, `--ramp-up`, and `--pause` apply to every mode
+- a rate of `0` skips the mode
+- a negative rate, or skipping every mode, is an error
+
+Sequence:
+
+1. Check every enabled mode against the provisioned pools, before generating
+   load.
+2. Log the plan, including transactions per ledger for each rate.
+3. Run the modes one at a time, separated by `--pause`. They share the
+   derived account pool.
+4. Write each mode's metrics file when the mode finishes. Upload it if
+   `--metrics-gcs-url` is set.
+5. Stop at the first failed mode.
+
+Pool check:
+
+- the participant pool must cover the mode's rate plus the classic rate
+- the trustlined holder subset must cover `soroswap`
+- the error lists every shortfall, then the `setup` flags that fix all of them
+- the suggested `--target-rps` is the smallest rate whose holder count covers
+  the need. A holder-light mode's rate would provision unused trustlines,
+  and each one locks reserves.
+
+Rates are set explicitly in the deployment manifest. They are not derived
+from network configuration.
+
+### 3.5 `extend-ttl`
 
 `extend-ttl` is a periodic maintenance command that extends the TTL of every
 Soroban entry the benchmark can touch. Several footprint entries are extended
@@ -262,7 +298,7 @@ Behavior:
   in extension length, making this a roughly twice-a-year operation
 - `--dry-run` reports the classification without submitting
 
-### 3.5 `teardown`
+### 3.6 `teardown`
 
 Behavior:
 
@@ -280,7 +316,7 @@ Teardown mechanics to preserve:
 	- remove trustlines then account-merge
 - batching is conservative to avoid signature and operation limits
 
-### 3.6 `sync`
+### 3.7 `sync`
 
 Behavior:
 

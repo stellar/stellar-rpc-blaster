@@ -271,6 +271,90 @@ If Vegeta reports request errors, those remain as additional `vegeta_error` reco
 
 The metrics schema intentionally omits per-ledger count maps, progress snapshots, submit/on-chain breakdown records, and separate HTTP status-code records. Those details remain console or trace-file concerns where applicable.
 
+### `run`
+
+```bash
+export FEE_PAYER="S..."
+./tx-load-test run
+```
+
+Runs the whole suite in one invocation: `sac-transfer`, then `oz-transfer`, then `soroswap`. Each mode runs for `--duration` with a simple-payment stream alongside. Scheduled jobs (the Kubernetes CronJob) call this. Use `bench` to run a single mode.
+
+**Rates**
+
+| Flag | Default | Sets |
+|---|---|---|
+| `--sac-rps` | `60` | `sac-transfer` requests/sec. `0` skips the mode. |
+| `--oz-rps` | `55` | `oz-transfer` requests/sec. `0` skips the mode. |
+| `--soroswap-rps` | `30` | `soroswap` requests/sec. `0` skips the mode. |
+| `--classic-rps` | `100` | Simple payments/sec alongside every mode. `0` disables the stream. |
+
+**Timing**
+
+| Flag | Default | Sets |
+|---|---|---|
+| `--duration` | `5m` | Length of each mode. |
+| `--ramp-up` | `0s` | Ramp from 1 rps to the mode's rate. |
+| `--pause` | `30s` | Gap between modes. |
+
+`run` also accepts `--state-file`, `--rpc-url`, `--metrics-gcs-url`, `--log-level`, and the account-preflight flags. They work as in `bench`.
+
+Example: custom rates, with soroswap skipped.
+
+```bash
+./tx-load-test run --sac-rps 200 --oz-rps 180 --soroswap-rps 0
+```
+
+What `run` does, in order:
+
+1. Checks every enabled mode against the account pools in the state file. It exits before generating load if a pool is too small.
+2. Logs the plan, with the transactions per ledger each rate implies:
+   ```
+   suite plan: sac-transfer at 200 rps (~1000 tx/ledger) + classic at 100 rps (~500 tx/ledger) for 5m0s
+   suite plan: soroswap skipped (--soroswap-rps=0)
+   ```
+3. Runs the modes one at a time, with `--pause` between them. They share one account pool, so they never overlap.
+4. Writes one metrics NDJSON file per mode. With `--metrics-gcs-url`, it uploads each file when its mode finishes.
+5. Stops at the first failed mode.
+
+#### Changing the rates after a network limit change (SLP)
+
+1. Edit `--sac-rps`, `--oz-rps`, `--soroswap-rps`, and `--classic-rps` in the CronJob manifest.
+2. Check the new rates against the pool limits below.
+3. Merge.
+
+The tool needs no change.
+
+**Pool limits.** Each in-flight transaction needs its own source account. For the default 5-minute duration, the state file must hold 15 accounts per request/sec:
+
+| Pool | Minimum size |
+|---|---|
+| participant accounts | `15 x (mode rps + classic rps)`, for the fastest mode |
+| trustlined holders | `15 x soroswap rps` |
+
+`sac-transfer` needs 2 holders at any rate. Its transaction sources come from the participant pool.
+
+**If a pool is too small**, `run` exits before generating load and prints the cause and the fix:
+
+```
+account pools are too small for the configured rates:
+  - sac-transfer needs 7500 accounts; state has 4500 (400 rps + 100 classic rps for 5m0s)
+  - soroswap needs 1500 trustlined holder accounts; state has 900 (100 rps + 100 classic rps for 5m0s)
+fix: lower the rates, or grow the pools:
+  1. tx-load-test setup --accounts 7500 --target-rps 100 --classic-rps 100 --duration 5m0s <your usual --network/--rpc-url/--state-file/--soroswap-* flags>
+  2. redeploy the updated state file
+setup only creates the missing accounts and trustlines.
+```
+
+To grow the pools:
+
+1. Check the fee payer balance with `tools/pool-xlm`. `setup` funds each new account with 3 XLM from it. Each new holder locks 1.5 XLM of that in trustline reserves.
+2. Run the printed `setup` command against the same state file and fee payer.
+3. Redeploy the updated state file (the `tx-load-test-state` ConfigMap).
+4. Run again.
+
+Fees per run scale with the rates. Check the fee payer balance after raising them.
+
 ### `teardown`
 
 Merges all participant accounts back into the fee payer.

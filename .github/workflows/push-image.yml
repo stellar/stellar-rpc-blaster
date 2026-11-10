@@ -3,50 +3,67 @@
 # secrets; the action's IAM policy only allows pushes from this repository's
 # workflows).
 #
+# What each trigger does:
+#   push to main or dev    -- build, smoke-test, push to ECR
+#   pull request into dev  -- build and smoke-test only
+# A pull request never logs in to ECR. Nothing is published from unmerged
+# code, and pull requests from forks work.
+#
 # Tags pushed:
-#   <registry>/dev/tx-load-test:latest        -- tracks the default branch
 #   <registry>/dev/tx-load-test:sha-<short>   -- immutable, for pinning in k8s
+#   <registry>/dev/tx-load-test:latest        -- the most recent push to main or dev
 #
 # The weekly CronJob should pin the sha- tag, not :latest, so a run is never
 # silently retargeted by a new push.
 name: Build & push TPS tool image
 
+# Both triggers fire only when an input to the image changes: the binary's
+# source (cmd/tx-load-test/**), the module files, or the contract Wasm
+# artifacts. Keep the two path lists identical.
 on:
-  pull_request: 
-    branches: [load-tester]
-  push:
-    branches: [main, load-tester]
-    # Only rebuild when something that reaches the image changes. The binary
-    # pulls from cmd/tx-load-test/** and internal/** (run engine); the image
-    # also carries the flat contract Wasm artifacts.
+  pull_request:
+    branches: [dev]
     paths:
       - Dockerfile
       - .dockerignore
       - go.mod
       - go.sum
       - cmd/tx-load-test/**
-      - internal/**
+      - contracts/*.wasm
+      - .github/workflows/push-image.yml
+  push:
+    branches: [main, dev]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - go.mod
+      - go.sum
+      - cmd/tx-load-test/**
       - contracts/*.wasm
       - .github/workflows/push-image.yml
   workflow_dispatch: {}
 
-# One image push at a time; a superseded build of the same ref is cancelled.
+# One build at a time per ref. A newer push cancels the build in progress.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
-  id-token: write # OIDC token for sdf-ecr-login
+  id-token: write # OIDC token for sdf-ecr-login (unused on pull requests)
   contents: read
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    env:
+      # false on pull requests: they build and smoke-test only.
+      PUBLISH: ${{ github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Login to ECR
         id: ecr
+        if: env.PUBLISH == 'true'
         uses: stellar/actions/sdf-ecr-login@main
 
       - name: Compute image tags
@@ -54,9 +71,15 @@ jobs:
         run: |
           registry='${{ steps.ecr.outputs.ecr-registry }}'
           short_sha="$(git rev-parse --short=12 HEAD)"
-          # The dev/ namespace is required: ecr-push only auto-creates (and
-          # the push role only allows) repositories under dev/, stg/, prd/.
-          echo "image=${registry}/dev/tx-load-test" >> "$GITHUB_OUTPUT"
+          if [ -n "$registry" ]; then
+            # The dev/ namespace is required: ecr-push only auto-creates (and
+            # the push role only allows) repositories under dev/, stg/, prd/.
+            image="${registry}/dev/tx-load-test"
+          else
+            # Pull requests have no registry. The image stays on the runner.
+            image="tx-load-test"
+          fi
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
           echo "sha_tag=sha-${short_sha}" >> "$GITHUB_OUTPUT"
 
       - name: Build image
@@ -76,11 +99,13 @@ jobs:
       # the repository on first use (tagged with this GitHub repo for the IAM
       # push policy) and then pushes.
       - name: Push image
+        if: env.PUBLISH == 'true'
         run: |
           ecr-push '${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}'
           ecr-push '${{ steps.meta.outputs.image }}:latest'
 
       - name: Summary
+        if: env.PUBLISH == 'true'
         run: |
           {
             echo "### tx-load-test image pushed"
