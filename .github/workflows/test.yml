@@ -1,0 +1,43 @@
+# Runs build, vet, and the unit tests for the whole repository. The RPC
+# blaster and tx-load-test are one Go module, so one run covers both.
+#
+# The tests need no network, RPC endpoint, fee payer, or credentials. The
+# workflow therefore runs on every pull request, including from forks.
+name: Unit tests
+
+on:
+  pull_request: {}
+  push:
+    branches: [main, dev]
+  workflow_dispatch: {}
+
+# A newer push to the same ref cancels the run in progress.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Uses the Go version declared in go.mod.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # -race: the load generator is concurrent (lease manager, poll
+      # scheduler). Data races are its most likely class of bug.
+      - name: Test
+        run: go test -race ./...
