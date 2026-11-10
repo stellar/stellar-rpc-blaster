@@ -113,7 +113,9 @@ func runBench(cmd *cobra.Command, _ []string) error {
 	cfg.NetworkPassphrase = loaded.Persisted.NetworkPassphrase
 	cfg.NumberOfAccounts = len(loaded.Persisted.AccountIndices)
 
-	if err = benchmark.ValidateConfig(cfg); err != nil {
+	if err = benchmark.ValidatePoolCapacity(
+		[]config.Config{cfg}, cfg.NumberOfAccounts, benchmark.ProvisionedHolderCount(loaded.Live),
+	); err != nil {
 		return err
 	}
 

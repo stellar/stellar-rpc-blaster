@@ -22,6 +22,62 @@ var suiteModeOrder = []config.BenchmarkMode{
 	config.ModeSoroswap,
 }
 
+// suiteModeRateFlags maps each suite mode to its rate flag.
+var suiteModeRateFlags = map[config.BenchmarkMode]string{
+	config.ModeSACTransfer: "sac-rps",
+	config.ModeOZTransfer:  "oz-rps",
+	config.ModeSoroswap:    "soroswap-rps",
+}
+
+// planSuite returns the benchmark configs to run, in suite order, and the
+// modes it skipped.
+//
+// A rate of 0 skips the mode. A negative rate is an error. Skipping every
+// mode is an error.
+func planSuite(
+	rates map[config.BenchmarkMode]int,
+	duration, rampUp time.Duration,
+	classicRPS int,
+) ([]config.Config, []config.BenchmarkMode, error) {
+	cfgs := make([]config.Config, 0, len(suiteModeOrder))
+	var skipped []config.BenchmarkMode
+	for _, mode := range suiteModeOrder {
+		rps := rates[mode]
+		if rps < 0 {
+			return nil, nil, fmt.Errorf("--%s must be >= 0 (0 skips %s)", suiteModeRateFlags[mode], mode)
+		}
+		if rps == 0 {
+			skipped = append(skipped, mode)
+			continue
+		}
+		cfg := config.DefaultConfig()
+		cfg.Mode = mode
+		cfg.Duration = duration
+		cfg.RampUp = rampUp
+		cfg.TargetRPS = rps
+		cfg.ClassicRPS = classicRPS
+		if err := benchmark.ValidateCLIConfig(cfg); err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", mode, err)
+		}
+		cfgs = append(cfgs, cfg)
+	}
+	if len(cfgs) == 0 {
+		return nil, nil, fmt.Errorf("every mode is skipped: set at least one of --sac-rps, --oz-rps, --soroswap-rps above 0")
+	}
+	return cfgs, skipped, nil
+}
+
+// describeSuiteMode returns one line describing a mode's planned load. It
+// includes transactions per ledger because network limits use that unit.
+func describeSuiteMode(cfg config.Config) string {
+	perLedger := func(rps int) int { return rps * state.BenchmarkLedgerCloseSeconds }
+	desc := fmt.Sprintf("%s at %d rps (~%d tx/ledger)", cfg.Mode, cfg.TargetRPS, perLedger(cfg.TargetRPS))
+	if classic := state.SimplePaymentTransactionRate(cfg); classic > 0 {
+		desc += fmt.Sprintf(" + classic at %d rps (~%d tx/ledger)", classic, perLedger(classic))
+	}
+	return fmt.Sprintf("%s for %s", desc, cfg.Duration)
+}
+
 func buildRunCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -30,6 +86,11 @@ func buildRunCmd() *cobra.Command {
 initialized ledger (created by 'setup'): sac-transfer, then oz-transfer, then
 soroswap, each for --duration at its own per-mode rate, with the parallel
 simple-payment stream at --classic-rps alongside each.
+
+Set each mode's rate with --sac-rps, --oz-rps, and --soroswap-rps. A rate of
+0 skips that mode. Before generating load, run checks every enabled mode
+against the account pools in the state file. If a pool is too small, run
+exits and prints the setup command that fixes it.
 
 The modes share the derived account pool so they never run concurrently; a
 --pause settle gap separates them. Each mode writes its own timestamped
@@ -50,9 +111,9 @@ invocation for the whole suite; use 'bench' for a one-off single-mode run.`,
 	cmd.Flags().Duration("duration", 5*time.Minute, "Benchmark duration for each mode")
 	cmd.Flags().Duration("ramp-up", 0, "Ramp-up period for each mode (RPS increases linearly from 1 to the mode's rate)")
 	cmd.Flags().Duration("pause", 30*time.Second, "Settle gap between modes")
-	cmd.Flags().Int("sac-rps", 60, "Steady-state requests per second for sac-transfer")
-	cmd.Flags().Int("oz-rps", 55, "Steady-state requests per second for oz-transfer")
-	cmd.Flags().Int("soroswap-rps", 30, "Steady-state requests per second for soroswap")
+	cmd.Flags().Int("sac-rps", 60, "Steady-state requests per second for sac-transfer (0 skips the mode)")
+	cmd.Flags().Int("oz-rps", 55, "Steady-state requests per second for oz-transfer (0 skips the mode)")
+	cmd.Flags().Int("soroswap-rps", 30, "Steady-state requests per second for soroswap (0 skips the mode)")
 	cmd.Flags().Int("classic-rps", config.DefaultClassicRPS, "Steady-state simple-payment transactions per second alongside each mode (1 payment op per tx)")
 	cmd.Flags().String("metrics-gcs-url", "", "Optional gs://bucket/prefix/ destination; each mode's metrics file is uploaded there after the mode finishes (auth via Application Default Credentials)")
 	return cmd
@@ -84,50 +145,43 @@ func runSuite(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	modeRPS := map[config.BenchmarkMode]string{
-		config.ModeSACTransfer: "sac-rps",
-		config.ModeOZTransfer:  "oz-rps",
-		config.ModeSoroswap:    "soroswap-rps",
-	}
-
-	cfgs := make([]config.Config, 0, len(suiteModeOrder))
-	for _, mode := range suiteModeOrder {
-		targetRPS, err := cmd.Flags().GetInt(modeRPS[mode])
-		if err != nil {
+	rates := make(map[config.BenchmarkMode]int, len(suiteModeOrder))
+	for mode, flag := range suiteModeRateFlags {
+		if rates[mode], err = cmd.Flags().GetInt(flag); err != nil {
 			return err
 		}
-		cfg := config.DefaultConfig()
-		cfg.Mode = mode
-		cfg.Duration = duration
-		cfg.RampUp = rampUp
-		cfg.TargetRPS = targetRPS
-		cfg.ClassicRPS = classicRPS
-		if err := benchmark.ValidateCLIConfig(cfg); err != nil {
-			return fmt.Errorf("%s: %w", mode, err)
-		}
-		cfgs = append(cfgs, cfg)
+	}
+	cfgs, skipped, err := planSuite(rates, duration, rampUp, classicRPS)
+	if err != nil {
+		return err
 	}
 
 	stateFile, loaded, err := loadRuntimeStateFromCommand(cmd, state.RuntimePhaseBench)
 	if err != nil {
 		return err
 	}
-	// Validate every mode before the first one starts, so a config/pool
-	// problem in a later mode fails immediately instead of after most of the
-	// suite has already run.
+	// Check every enabled mode against the pools before the first mode
+	// starts. A later failure would waste the modes that already ran.
+	accounts := len(loaded.Persisted.AccountIndices)
 	for i := range cfgs {
 		cfgs[i].RPCURL = loaded.RPCURL
 		cfgs[i].NetworkPassphrase = loaded.Persisted.NetworkPassphrase
-		cfgs[i].NumberOfAccounts = len(loaded.Persisted.AccountIndices)
-		if err := benchmark.ValidateConfig(cfgs[i]); err != nil {
-			return fmt.Errorf("%s: %w", cfgs[i].Mode, err)
-		}
+		cfgs[i].NumberOfAccounts = accounts
+	}
+	if err := benchmark.ValidatePoolCapacity(cfgs, accounts, benchmark.ProvisionedHolderCount(loaded.Live)); err != nil {
+		return err
 	}
 
 	ctx, cancel := signalCommandContext(cmd, logger, true)
 	defer cancel()
 
-	logger.Infof("loaded state from %s (%d accounts, rpc=%s)", stateFile, cfgs[0].NumberOfAccounts, loaded.RPCURL)
+	logger.Infof("loaded state from %s (%d accounts, rpc=%s)", stateFile, accounts, loaded.RPCURL)
+	for _, mode := range skipped {
+		logger.Infof("suite plan: %s skipped (--%s=0)", mode, suiteModeRateFlags[mode])
+	}
+	for _, cfg := range cfgs {
+		logger.Infof("suite plan: %s", describeSuiteMode(cfg))
+	}
 
 	for i, cfg := range cfgs {
 		if i > 0 && pause > 0 {
